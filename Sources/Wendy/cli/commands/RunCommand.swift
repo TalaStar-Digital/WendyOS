@@ -641,6 +641,13 @@ extension RunCommand {
             }
         }
 
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
         let (imageName, container) = try await Noora().progressStep(
             message: "Building container",
             successMessage: "Container built successfully!",
@@ -719,13 +726,6 @@ extension RunCommand {
             }
 
             progress("Building final container image")
-            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString
-            )
-            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-            defer {
-                try? FileManager.default.removeItem(at: tempDir)
-            }
             let container = try await buildDockerContainer(
                 image: imageSpec,
                 imageName: imageName,
