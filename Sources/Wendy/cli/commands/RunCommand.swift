@@ -237,7 +237,8 @@ extension RunCommand {
                 // Construct the full path to the layer file
                 let layerFile = extractDir.appendingPathComponent(layerPath)
 
-                guard let info = try await FileSystem.shared.info(forFileAt: FilePath(layerFile.path()))
+                guard
+                    let info = try await FileSystem.shared.info(forFileAt: FilePath(layerFile.path()))
                 else {
                     logger.warning("Layer file not found: \(layerFile.path)")
                     continue
@@ -275,14 +276,18 @@ extension RunCommand {
         let diffID: String
         let size: Int64
         let gzip: Bool
+        let logger = Logger(label: "sh.wendy.cli.run.containerd.layer.stream")
 
         func withStream(_ write: (ArraySlice<UInt8>) async throws -> Void) async throws {
             switch source {
             case .path(let url):
+                logger.debug("Reading layer from path", metadata: ["path": .string(url.path())])
                 try await FileSystem.shared.withFileHandle(
                     forReadingAt: FilePath(url.path())
                 ) { fileHandle in
+                    logger.debug("Reading layer from file handle")
                     for try await chunk in fileHandle.readChunks() {
+                        logger.trace("Reading layer chunk", metadata: ["size": .string("\(chunk.readableBytesView.count) bytes")])
                         try await write(Array(buffer: chunk)[...])
                     }
                 }
@@ -475,8 +480,20 @@ extension RunCommand {
                                         }
                                     }
                                 ) { response in
-                                    for try await _ in response.messages {
-                                        // Ignore responses
+                                    do {
+                                        for try await message in response.messages {
+                                            // Ignore responses
+                                            logger.trace("Got unknown response", metadata: [
+                                                "digest": .string(layer.digest),
+                                                "response": .string("\(message)")
+                                            ])
+                                        }
+                                    } catch {
+                                        logger.error("Failed to get response", metadata: [
+                                            "digest": .string(layer.digest),
+                                            "error": .string("\(error)")
+                                        ])
+                                        throw error
                                     }
                                 }
                                 logger.debug("Uploaded layer successfully", metadata: ["digest": .string(layer.digest)])
@@ -486,6 +503,7 @@ extension RunCommand {
                                     "digest": .string(layer.digest),
                                     "error": .string("\(error)")
                                 ])
+                                logger.error("Failed to upload layer", metadata: ["error": .string("\(error)")])
                                 await layersUploaded.incrementFailedUploaded(error: error)
                             }
                         }
@@ -1040,9 +1058,9 @@ extension RunCommand {
 
     private func extractTar(from sourceURL: URL, to destinationURL: URL) async throws {
         _ = try await Subprocess.run(
-            Subprocess.Executable.path("/usr/bin/env"),
+            .name("tar"),
             arguments: Subprocess.Arguments([
-                "tar", "-xf", sourceURL.path, "-C", destinationURL.path,
+                "-xf", sourceURL.path, "-C", destinationURL.path,
             ]),
             output: .discarded
         )

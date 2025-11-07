@@ -82,7 +82,6 @@ struct Agent {
     func update(fromBinary path: String) async throws -> Bool {
         let logger = Logger(label: "sh.wendyengineer.agent.update")
         let agent = Wendy_Agent_Services_V1_WendyAgentService.Client(wrapping: client)
-        print("Pushing update...")
         return try await agent.updateAgent { writer in
             logger.debug("Opening file...")
             do {
@@ -113,15 +112,22 @@ struct Agent {
                 throw error
             }
         } onResponse: { response in
-            for try await event in response.messages {
-                switch event.responseType {
-                case .updated:
-                    return true
-                case .none:
-                    ()
+            do {
+                for try await event in response.messages {
+                    switch event.responseType {
+                    case .updated:
+                        return true
+                    case .none:
+                        ()
+                    }
                 }
+                return false
+            } catch {
+                logger.error("Failed to update agent", metadata: [
+                    "error": "\(error)"
+                ])
+                throw error
             }
-            return false
         }
     }
 }
