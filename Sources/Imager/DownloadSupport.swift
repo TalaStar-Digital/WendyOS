@@ -307,7 +307,9 @@ public actor ImageDownloader: ImageDownloading {
         let cacheDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
             ".wendy/cache/images"
         )
-        let metadataURL = cacheDir.appendingPathComponent(deviceName).appendingPathComponent("version.json")
+        let metadataURL = cacheDir.appendingPathComponent(deviceName).appendingPathComponent(
+            "version.json"
+        )
 
         let metadata = ImageVersionMetadata(version: version, timestamp: Date())
         let encoder = JSONEncoder()
@@ -322,7 +324,9 @@ public actor ImageDownloader: ImageDownloading {
         let cacheDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
             ".wendy/cache/images"
         )
-        let metadataURL = cacheDir.appendingPathComponent(deviceName).appendingPathComponent("version.json")
+        let metadataURL = cacheDir.appendingPathComponent(deviceName).appendingPathComponent(
+            "version.json"
+        )
 
         guard let data = try? Data(contentsOf: metadataURL) else {
             return nil
@@ -373,7 +377,7 @@ public actor ImageDownloader: ImageDownloading {
         let temporaryDirectory = fileManager.temporaryDirectory
         let tempFilename = UUID().uuidString
         let localZipURL = temporaryDirectory.appendingPathComponent("\(tempFilename).zip")
-        
+
         try await downloadFile(
             from: url,
             to: localZipURL.path,
