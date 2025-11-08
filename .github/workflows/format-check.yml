@@ -31,6 +31,29 @@ jobs:
           exit $status
         continue-on-error: true
 
+      - name: Remove Previous Format Comment
+        if: steps.format_check.outcome != 'success'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const targetHeader = '## Swift Format Check Failed';
+            for (const comment of comments) {
+              if (comment.user?.type === 'Bot' && comment.body?.includes(targetHeader)) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
+
       - name: Comment on PR
         if: steps.format_check.outcome != 'success'
         uses: actions/github-script@v6
