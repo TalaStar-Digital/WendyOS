@@ -199,6 +199,8 @@ struct WendyAgent: AsyncParsableCommand {
                 for server in servers {
                     server.beginGracefulShutdown()
                 }
+                // Stop the container monitor
+                Task { await containerMonitor.stopMonitoring() }
                 taskGroup.cancelAll()
             }
 
@@ -206,6 +208,11 @@ struct WendyAgent: AsyncParsableCommand {
                 taskGroup.addTask {
                     try await service.run()
                 }
+            }
+
+            // Start the container monitor service
+            taskGroup.addTask {
+                await containerMonitor.startMonitoring()
             }
 
             // taskGroup.addTask {
