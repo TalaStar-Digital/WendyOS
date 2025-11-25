@@ -8,37 +8,28 @@ import Testing
 @Suite("Consent Manager Environment Variables")
 struct ConsentManagerEnvironmentTests {
 
-    init() {
-        // Reset environment variables before each test
-        unsetenv("DO_NOT_TRACK")
-        unsetenv("WENDY_ANALYTICS")
-        unsetenv("CI")
-        unsetenv("NO_ANALYTICS")
-    }
-
-    deinit {
-        // Clean up environment variables after tests
-        unsetenv("DO_NOT_TRACK")
-        unsetenv("WENDY_ANALYTICS")
-        unsetenv("CI")
-        unsetenv("NO_ANALYTICS")
-    }
-
-    @Test("Should disable analytics with DO_NOT_TRACK", arguments: ["1", "true", "TRUE", "True"])
-    func shouldDisableAnalyticsWithDoNotTrack(value: String) {
-        setenv("DO_NOT_TRACK", value, 1)
+    @Test(
+        "Should disable analytics with WENDY_ANALYTICS set to non-true values",
+        arguments: [
+            "false", "0", "no", "False", "FALSE", "No", "NO", "off", "disabled", "random",
+        ]
+    )
+    func shouldDisableAnalyticsWithWendyAnalyticsFalse(value: String) {
+        setenv("WENDY_ANALYTICS", value, 1)
         #expect(ConsentManager.shouldDisableAnalytics() == true)
-        unsetenv("DO_NOT_TRACK")
+        unsetenv("WENDY_ANALYTICS")
     }
 
     @Test(
-        "Should not disable analytics with invalid DO_NOT_TRACK",
-        arguments: ["0", "false", "no", ""]
+        "Should not disable analytics with WENDY_ANALYTICS enabled",
+        arguments: [
+            "true", "1", "enabled", "TRUE", "True", "ENABLED", "Enabled",
+        ]
     )
-    func shouldNotDisableAnalyticsWithInvalidDoNotTrack(value: String) {
-        setenv("DO_NOT_TRACK", value, 1)
+    func shouldNotDisableAnalyticsWithWendyAnalyticsEnabled(value: String) {
+        setenv("WENDY_ANALYTICS", value, 1)
         #expect(ConsentManager.shouldDisableAnalytics() == false)
-        unsetenv("DO_NOT_TRACK")
+        unsetenv("WENDY_ANALYTICS")
     }
 
     @Test(
@@ -58,49 +49,27 @@ struct ConsentManagerEnvironmentTests {
         unsetenv(indicator)
     }
 
-    @Test(
-        "Should disable analytics with WENDY_ANALYTICS=false",
-        arguments: [
-            "false", "0", "no", "False", "FALSE", "No", "NO",
-        ]
-    )
-    func shouldDisableAnalyticsWithWendyAnalyticsFalse(value: String) {
-        setenv("WENDY_ANALYTICS", value, 1)
-        #expect(ConsentManager.shouldDisableAnalytics() == true)
-        unsetenv("WENDY_ANALYTICS")
-    }
-
-    @Test(
-        "Should not disable analytics with WENDY_ANALYTICS enabled",
-        arguments: [
-            "true", "1", "yes",
-        ]
-    )
-    func shouldNotDisableAnalyticsWithWendyAnalyticsEnabled(value: String) {
-        setenv("WENDY_ANALYTICS", value, 1)
-        #expect(ConsentManager.shouldDisableAnalytics() == false)
-        unsetenv("WENDY_ANALYTICS")
-    }
-
-    @Test(
-        "Should disable analytics with NO_ANALYTICS",
-        arguments: [
-            "true", "1", "yes", "True", "TRUE", "Yes", "YES",
-        ]
-    )
-    func shouldDisableAnalyticsWithNoAnalytics(value: String) {
-        setenv("NO_ANALYTICS", value, 1)
-        #expect(ConsentManager.shouldDisableAnalytics() == true)
-        unsetenv("NO_ANALYTICS")
-    }
-
-    @Test("DO_NOT_TRACK should take precedence over WENDY_ANALYTICS")
+    @Test("WENDY_ANALYTICS should take precedence over CI detection")
     func environmentVariablePriority() {
-        setenv("DO_NOT_TRACK", "1", 1)
+        setenv("CI", "true", 1)
         setenv("WENDY_ANALYTICS", "true", 1)
-        #expect(ConsentManager.shouldDisableAnalytics() == true)
-        unsetenv("DO_NOT_TRACK")
+        #expect(ConsentManager.shouldDisableAnalytics() == false)
+        unsetenv("CI")
         unsetenv("WENDY_ANALYTICS")
+    }
+
+    @Test("Should not disable analytics by default (no env vars set)")
+    func shouldNotDisableByDefault() {
+        // Ensure no relevant env vars are set
+        unsetenv("WENDY_ANALYTICS")
+        unsetenv("CI")
+        unsetenv("CONTINUOUS_INTEGRATION")
+        unsetenv("BUILD_ID")
+        unsetenv("JENKINS_URL")
+        unsetenv("GITHUB_ACTIONS")
+        unsetenv("GITLAB_CI")
+
+        #expect(ConsentManager.shouldDisableAnalytics() == false)
     }
 }
 
@@ -109,32 +78,22 @@ struct ConsentManagerEnvironmentTests {
 @Suite("Consent Manager Async Operations")
 struct ConsentManagerAsyncTests {
 
-    init() {
-        unsetenv("DO_NOT_TRACK")
-        unsetenv("WENDY_ANALYTICS")
-        unsetenv("CI")
-        unsetenv("NO_ANALYTICS")
-    }
-
-    deinit {
-        unsetenv("DO_NOT_TRACK")
-        unsetenv("WENDY_ANALYTICS")
-        unsetenv("CI")
-        unsetenv("NO_ANALYTICS")
-    }
-
-    @Test("Analytics should be disabled when DO_NOT_TRACK is set")
+    @Test("Analytics should be disabled when WENDY_ANALYTICS is false")
     func isAnalyticsEnabledWithEnvironmentOverride() async {
         let consentManager = ConsentManager()
 
-        setenv("DO_NOT_TRACK", "1", 1)
+        setenv("WENDY_ANALYTICS", "false", 1)
         let enabled = await consentManager.isAnalyticsEnabled()
         #expect(enabled == false)
-        unsetenv("DO_NOT_TRACK")
+        unsetenv("WENDY_ANALYTICS")
     }
 
     @Test("Analytics should be enabled by default (opt-out model)")
     func isAnalyticsEnabledByDefault() async {
+        // Ensure no relevant env vars are set
+        unsetenv("WENDY_ANALYTICS")
+        unsetenv("CI")
+
         let consentManager = ConsentManager()
 
         // Without any config or environment variables, should default to enabled
@@ -147,14 +106,16 @@ struct ConsentManagerAsyncTests {
         let consentManager = ConsentManager()
 
         // Test with no environment variables
+        unsetenv("WENDY_ANALYTICS")
+        unsetenv("CI")
         var status = await consentManager.getStatus()
         #expect(status.contains("Analytics:"))
 
-        // Test with DO_NOT_TRACK
-        setenv("DO_NOT_TRACK", "1", 1)
+        // Test with WENDY_ANALYTICS=false
+        setenv("WENDY_ANALYTICS", "false", 1)
         status = await consentManager.getStatus()
         #expect(status.contains("Disabled") && status.contains("environment variable"))
-        unsetenv("DO_NOT_TRACK")
+        unsetenv("WENDY_ANALYTICS")
     }
 }
 
