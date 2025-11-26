@@ -297,6 +297,8 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                 ) { _ in
                     try await docker.buildxAndPush(name: name, port: port, builder: builderName)
                 }
+
+                return port
             }
 
             // TODO: Create image might be needed here, but my tests didn't require it for some reason
