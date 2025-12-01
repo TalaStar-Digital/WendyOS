@@ -8,7 +8,6 @@ import GRPCNIOTransportHTTP2
 import Hummingbird
 import Logging
 import NIOSSL
-import OpenAPIHummingbird
 import ServiceLifecycle
 import WendyAgentGRPC
 import WendyCloudGRPC

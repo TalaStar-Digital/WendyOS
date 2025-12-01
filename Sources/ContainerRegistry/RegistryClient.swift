@@ -22,20 +22,25 @@ import HTTPTypes
     import FoundationNetworking
 #endif
 
-enum RegistryClientError: Error {
+/// An error encountered while communicating with a container registry.
+public enum RegistryClientError: Error {
     case registryParseError(String)
     case invalidRegistryPath(String)
     case invalidUploadLocation(String)
+    case invalidDigestAlgorithm(String)
+    case digestMismatch(expected: String, registry: String)
 }
 
 extension RegistryClientError: CustomStringConvertible {
-    var description: String {
+    /// Human-readable description of a RegistryClientError
+    public var description: String {
         switch self {
-        case .registryParseError(let reference): return "Unable to parse registry: \(reference)"
-        case .invalidRegistryPath(let path):
-            return "Unable to construct URL for registry path: \(path)"
-        case .invalidUploadLocation(let location):
-            return "Received invalid upload location from registry: \(location)"
+        case let .registryParseError(reference): return "Unable to parse registry: \(reference)"
+        case let .invalidRegistryPath(path): return "Unable to construct URL for registry path: \(path)"
+        case let .invalidUploadLocation(location): return "Received invalid upload location from registry: \(location)"
+        case let .invalidDigestAlgorithm(digest): return "Invalid or unsupported digest algorithm: \(digest)"
+        case let .digestMismatch(expected, registry):
+            return "Digest mismatch: expected \(expected), registry sent \(registry)"
         }
     }
 }
