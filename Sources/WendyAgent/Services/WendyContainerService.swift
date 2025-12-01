@@ -397,6 +397,20 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
                 }
             }
 
+            // Unpack the image from the content store into snapshots
+            // This is required when images are pushed via registry but not yet unpacked
+            do {
+                try await client.unpackImage(named: request.imageName)
+            } catch {
+                logger.warning(
+                    "Failed to unpack image, will attempt to create snapshots anyway",
+                    metadata: [
+                        "image-name": .stringConvertible(request.imageName),
+                        "error": .stringConvertible(error.localizedDescription),
+                    ]
+                )
+            }
+
             let snapshotKey: String?
 
             do {
@@ -519,15 +533,19 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
                         )
                         try await client.deleteTask(containerID: request.appName)
                         logger.debug(
-                            "Task removed",
+                            "Task removed, recreating",
                             metadata: [
                                 "container-id": .stringConvertible(request.appName)
                             ]
                         )
-                        // Mark the container as started in the monitor (reset explicitly stopped flag)
-                        await ContainerMonitor.shared.markContainerStarted(request.appName)
-                    } catch let error as RPCError where error.code == .notFound {
-                        logger.info("Container wasn't running")
+                        try await client.createTask(
+                            containerID: request.appName,
+                            appName: request.appName,
+                            mounts: snapshot.mounts,
+                            stdout: stdout,
+                            stderr: stderr,
+                            runtime: container.runtime.name
+                        )
                     } catch is RPCError {
                         logger.error(
                             "Failed to kill container",
@@ -553,6 +571,9 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
 
                     logger.info("Starting task")
                     try await client.runTask(containerID: request.appName)
+
+                    // Mark the container as started in the monitor (reset explicitly stopped flag)
+                    await ContainerMonitor.shared.markContainerStarted(request.appName)
 
                     try await writer.write(
                         .with {
