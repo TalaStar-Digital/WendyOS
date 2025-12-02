@@ -5,7 +5,6 @@ import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2
 import GRPCServiceLifecycle
-import Hummingbird
 import Logging
 import NIOSSL
 import ServiceLifecycle
