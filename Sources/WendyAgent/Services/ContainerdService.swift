@@ -1,3 +1,4 @@
+import ContainerRegistry
 import ContainerdGRPC
 import Crypto
 import Foundation
@@ -7,7 +8,6 @@ import Logging
 import NIOCore
 import NIOPosix
 import WendyAgentGRPC
-import ContainerRegistry
 
 #if canImport(Musl)
     import Musl
@@ -327,7 +327,9 @@ public struct Containerd: Sendable {
 
     /// Unpack an image from the content store into snapshots.
     /// This is required when images are pushed to the registry but not yet unpacked.
-    public func unpackImage(named imageName: String) async throws -> (snapshotKey: String?, mounts: [Containerd_Types_Mount]) {
+    public func unpackImage(
+        named imageName: String
+    ) async throws -> (snapshotKey: String?, mounts: [Containerd_Types_Mount]) {
         let images = Containerd_Services_Images_V1_Images.Client(wrapping: client)
         let snapshots = Containerd_Services_Snapshots_V1_Snapshots.Client(wrapping: client)
         let diffs = Containerd_Services_Diff_V1_Diff.Client(wrapping: client)
@@ -338,7 +340,10 @@ public struct Containerd: Sendable {
         let image = try await images.get(.with { $0.name = imageName }).image
 
         // Read the manifest
-        let manifest = try await self.readJSONContent(digest: image.target.digest, as: ImageManifest.self)
+        let manifest = try await self.readJSONContent(
+            digest: image.target.digest,
+            as: ImageManifest.self
+        )
 
         // Unpack each layer, reusing existing snapshots when possible
         var previousLayerKey: String? = nil
@@ -353,7 +358,9 @@ public struct Containerd: Sendable {
                     "layer-index": .stringConvertible("\(index + 1)/\(totalLayers)"),
                     "layer-digest": .stringConvertible(layer.digest),
                     "layer-size": .stringConvertible(layer.size),
-                    "layer-size-mb": .stringConvertible(String(format: "%.2f", Double(layer.size) / 1_000_000.0)),
+                    "layer-size-mb": .stringConvertible(
+                        String(format: "%.2f", Double(layer.size) / 1_000_000.0)
+                    ),
                     "layer-media-type": .stringConvertible(layer.mediaType),
                 ]
             )
@@ -361,10 +368,12 @@ public struct Containerd: Sendable {
             // Check if snapshot already exists
             let snapshotExists: Bool
             do {
-                _ = try await snapshots.stat(.with {
-                    $0.key = layerKey
-                    $0.snapshotter = "overlayfs"
-                })
+                _ = try await snapshots.stat(
+                    .with {
+                        $0.key = layerKey
+                        $0.snapshotter = "overlayfs"
+                    }
+                )
                 snapshotExists = true
             } catch let error as RPCError where error.code == .notFound {
                 snapshotExists = false
@@ -375,7 +384,7 @@ public struct Containerd: Sendable {
                     "Snapshot already exists, reusing",
                     metadata: [
                         "layer-index": .stringConvertible("\(index + 1)/\(totalLayers)"),
-                        "layer-key": .stringConvertible(layerKey)
+                        "layer-key": .stringConvertible(layerKey),
                     ]
                 )
                 previousLayerKey = layerKey
@@ -386,13 +395,15 @@ public struct Containerd: Sendable {
             let tmpKey = UUID().uuidString
 
             // Prepare snapshot
-            let snapshot = try await snapshots.prepare(.with {
-                $0.key = tmpKey
-                if let parent = previousLayerKey {
-                    $0.parent = parent
+            let snapshot = try await snapshots.prepare(
+                .with {
+                    $0.key = tmpKey
+                    if let parent = previousLayerKey {
+                        $0.parent = parent
+                    }
+                    $0.snapshotter = "overlayfs"
                 }
-                $0.snapshotter = "overlayfs"
-            })
+            )
 
             // Apply diff - this is the most expensive operation
             _ = try await diffs.apply(
@@ -409,7 +420,9 @@ public struct Containerd: Sendable {
                 "Applied diff",
                 metadata: [
                     "layer-index": .stringConvertible("\(index + 1)/\(totalLayers)"),
-                    "layer-size-mb": .stringConvertible(String(format: "%.2f", Double(layer.size) / 1_000_000.0))
+                    "layer-size-mb": .stringConvertible(
+                        String(format: "%.2f", Double(layer.size) / 1_000_000.0)
+                    ),
                 ]
             )
 
@@ -436,10 +449,12 @@ public struct Containerd: Sendable {
                         "layer-key": .stringConvertible(layerKey)
                     ]
                 )
-                _ = try await snapshots.remove(.with {
-                    $0.key = tmpKey
-                    $0.snapshotter = "overlayfs"
-                })
+                _ = try await snapshots.remove(
+                    .with {
+                        $0.key = tmpKey
+                        $0.snapshotter = "overlayfs"
+                    }
+                )
             }
 
             previousLayerKey = layerKey
@@ -449,7 +464,7 @@ public struct Containerd: Sendable {
             "Image unpacked successfully",
             metadata: [
                 "image": .stringConvertible(imageName),
-                "total-layers": .stringConvertible(totalLayers)
+                "total-layers": .stringConvertible(totalLayers),
             ]
         )
 
@@ -458,17 +473,21 @@ public struct Containerd: Sendable {
         }
 
         let ephemeralKey = UUID().uuidString
-        _ = try await snapshots.prepare(.with {
-            $0.key = ephemeralKey
-            $0.parent = previousLayerKey
-            $0.snapshotter = "overlayfs"
-        })
+        _ = try await snapshots.prepare(
+            .with {
+                $0.key = ephemeralKey
+                $0.parent = previousLayerKey
+                $0.snapshotter = "overlayfs"
+            }
+        )
 
         // Get mounts from the committed snapshot
-        let mountsResponse = try await snapshots.mounts(.with {
-            $0.key = ephemeralKey
-            $0.snapshotter = "overlayfs"
-        })
+        let mountsResponse = try await snapshots.mounts(
+            .with {
+                $0.key = ephemeralKey
+                $0.snapshotter = "overlayfs"
+            }
+        )
         return (snapshotKey: ephemeralKey, mounts: mountsResponse.mounts)
     }
 

@@ -31,11 +31,11 @@ struct WendyAgent: AsyncParsableCommand {
     func run() async throws {
         LoggingSystem.bootstrap { label in
             #if DEBUG
-            let defaultLogLevel = Logger.Level.debug
+                let defaultLogLevel = Logger.Level.debug
             #else
-            let defaultLogLevel = Logger.Level.info
+                let defaultLogLevel = Logger.Level.info
             #endif
-            
+
             let level =
                 ProcessInfo.processInfo.environment["LOG_LEVEL"]
                 .flatMap(Logger.Level.init) ?? defaultLogLevel
