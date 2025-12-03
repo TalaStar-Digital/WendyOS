@@ -421,46 +421,7 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
 
             // Unpack the image from the content store into snapshots
             // This is required when images are pushed via registry but not yet unpacked
-            do {
-                try await client.unpackImage(named: request.imageName)
-            } catch {
-                logger.warning(
-                    "Failed to unpack image, will attempt to create snapshots anyway",
-                    metadata: [
-                        "image-name": .stringConvertible(request.imageName),
-                        "error": .stringConvertible(error.localizedDescription),
-                    ]
-                )
-            }
-
-            let snapshotKey: String?
-
-            do {
-                (snapshotKey, _) = try await client.createSnapshot(
-                    imageName: request.imageName,
-                    appName: request.appName,
-                    layers: manifest.layers.enumerated().map { (index, layer) in
-                        return .with {
-                            $0.digest = layer.digest
-                            $0.size = layer.size
-                            $0.gzip = layer.mediaType.contains("gzip")
-                            // Use the correct diffID from the image config
-                            $0.diffID =
-                                index < imageConfig.rootfs.diff_ids.count
-                                ? imageConfig.rootfs.diff_ids[index].replacing("sha256:", with: "")
-                                : layer.digest.replacing("sha256:", with: "")
-                        }
-                    }
-                )
-            } catch let error as RPCError {
-                logger.error(
-                    "Failed to create snapshot",
-                    metadata: [
-                        "error": .stringConvertible(error.description)
-                    ]
-                )
-                throw error
-            }
+            let (snapshotKey, _) = try await client.unpackImage(named: request.imageName)
 
             do {
                 logger.info(

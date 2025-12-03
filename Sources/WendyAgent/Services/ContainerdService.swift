@@ -1,3 +1,4 @@
+import ContainerRegistry
 import ContainerdGRPC
 import Crypto
 import Foundation
@@ -324,11 +325,36 @@ public struct Containerd: Sendable {
         }
     }
 
+    /// Compute ChainID for a layer based on parent ChainID and current DiffID.
+    /// ChainID is a cryptographic identifier representing the cumulative state of all layers.
+    /// - For the first layer: ChainID = DiffID
+    /// - For subsequent layers: ChainID = SHA256(ChainID(parent) + " " + DiffID(current))
+    private func computeChainID(parent: String?, diffID: String) -> String {
+        // Normalize diffID to remove "sha256:" prefix if present
+        let normalizedDiffID = diffID.replacingOccurrences(of: "sha256:", with: "")
+
+        guard let parent = parent, !parent.isEmpty else {
+            // Base case: first layer's ChainID equals its DiffID
+            return "sha256:\(normalizedDiffID)"
+        }
+
+        // Normalize parent to remove "sha256:" prefix
+        let normalizedParent = parent.replacingOccurrences(of: "sha256:", with: "")
+
+        // Compute: SHA256(parent + " " + diffID)
+        let combined = "sha256:\(normalizedParent) sha256:\(normalizedDiffID)"
+        let hash = SHA256.hash(data: Data(combined.utf8))
+        let chainID = hash.map { String(format: "%02x", $0) }.joined()
+
+        return "sha256:\(chainID)"
+    }
+
     /// Unpack an image from the content store into snapshots.
     /// This is required when images are pushed to the registry but not yet unpacked.
-    public func unpackImage(named imageName: String) async throws {
+    public func unpackImage(
+        named imageName: String
+    ) async throws -> (snapshotKey: String?, mounts: [Containerd_Types_Mount]) {
         let images = Containerd_Services_Images_V1_Images.Client(wrapping: client)
-        let content = Containerd_Services_Content_V1_Content.Client(wrapping: client)
         let snapshots = Containerd_Services_Snapshots_V1_Snapshots.Client(wrapping: client)
         let diffs = Containerd_Services_Diff_V1_Diff.Client(wrapping: client)
 
@@ -338,64 +364,57 @@ public struct Containerd: Sendable {
         let image = try await images.get(.with { $0.name = imageName }).image
 
         // Read the manifest
-        let manifestData = try await content.read(.with { $0.digest = image.target.digest }) {
-            response in
-            var data = Data()
-            for try await message in response.messages {
-                data.append(message.data)
-            }
-            return data
+        let manifest = try await self.readJSONContent(
+            digest: image.target.digest,
+            as: ImageManifest.self
+        )
+
+        // Read the image config to get DiffIDs (uncompressed layer hashes)
+        let config = try await self.readJSONContent(
+            digest: manifest.config.digest,
+            as: ImageConfiguration.self
+        )
+
+        // Verify we have matching layer counts
+        guard manifest.layers.count == config.rootfs.diff_ids.count else {
+            throw RPCError(
+                code: .internalError,
+                message:
+                    "Manifest layer count (\(manifest.layers.count)) doesn't match config diff_ids count (\(config.rootfs.diff_ids.count))"
+            )
         }
 
-        struct ImageManifest: Codable {
-            let config: ManifestDescriptor
-            let layers: [ManifestDescriptor]
-
-            struct ManifestDescriptor: Codable {
-                let digest: String
-                let size: Int64
-                let mediaType: String
-            }
-        }
-
-        let manifest = try JSONDecoder().decode(ImageManifest.self, from: manifestData)
-
-        // Read the config to get diffIDs
-        let configData = try await content.read(.with { $0.digest = manifest.config.digest }) {
-            response in
-            var data = Data()
-            for try await message in response.messages {
-                data.append(message.data)
-            }
-            return data
-        }
-
-        struct ImageConfig: Codable {
-            let rootfs: RootFS
-
-            struct RootFS: Codable {
-                let diff_ids: [String]
-
-                enum CodingKeys: String, CodingKey {
-                    case diff_ids
-                }
-            }
-        }
-
-        let config = try JSONDecoder().decode(ImageConfig.self, from: configData)
-
-        // Unpack each layer
-        var previousLayerKey: String? = nil
+        // Unpack each layer, reusing existing snapshots when possible
+        var previousChainID: String? = nil
+        let totalLayers = manifest.layers.count
+        var snapshotsReused = 0
+        var snapshotsCreated = 0
 
         for (index, layer) in manifest.layers.enumerated() {
-            let diffID =
-                index < config.rootfs.diff_ids.count
-                ? config.rootfs.diff_ids[index].replacingOccurrences(of: "sha256:", with: "")
-                : layer.digest.replacingOccurrences(of: "sha256:", with: "")
+            // Get the DiffID for this layer from the config
+            let diffID = config.rootfs.diff_ids[index]
 
-            let layerKey = "\(imageName)-\(diffID)"
+            // Compute the ChainID for this layer
+            let chainID = computeChainID(parent: previousChainID, diffID: diffID)
+            let layerKey = chainID
+
+            logger.info(
+                "Processing layer",
+                metadata: [
+                    "layer-index": .stringConvertible("\(index + 1)/\(totalLayers)"),
+                    "layer-digest": .stringConvertible(layer.digest),
+                    "layer-diff-id": .stringConvertible(diffID),
+                    "layer-chain-id": .stringConvertible(chainID),
+                    "layer-size": .stringConvertible(layer.size),
+                    "layer-size-mb": .stringConvertible(
+                        String(format: "%.2f", Double(layer.size) / 1_000_000.0)
+                    ),
+                    "layer-media-type": .stringConvertible(layer.mediaType),
+                ]
+            )
 
             // Check if snapshot already exists
+            let snapshotExists: Bool
             do {
                 _ = try await snapshots.stat(
                     .with {
@@ -403,35 +422,53 @@ public struct Containerd: Sendable {
                         $0.snapshotter = "overlayfs"
                     }
                 )
-                logger.debug(
-                    "Snapshot already exists, skipping",
-                    metadata: ["layer-key": .stringConvertible(layerKey)]
-                )
-                previousLayerKey = layerKey
-                continue
+                snapshotExists = true
             } catch let error as RPCError where error.code == .notFound {
-                // Snapshot doesn't exist, need to create it
+                snapshotExists = false
+            } catch {
+                // Log unexpected errors but propagate them
+                logger.error(
+                    "Unexpected error checking snapshot existence",
+                    metadata: [
+                        "layer-index": .stringConvertible("\(index + 1)/\(totalLayers)"),
+                        "chain-id": .stringConvertible(chainID),
+                        "error": .stringConvertible(String(describing: error)),
+                    ]
+                )
+                throw error
             }
+
+            if snapshotExists {
+                snapshotsReused += 1
+                logger.debug(
+                    "Snapshot already exists, reusing",
+                    metadata: [
+                        "layer-index": .stringConvertible("\(index + 1)/\(totalLayers)"),
+                        "chain-id": .stringConvertible(chainID),
+                    ]
+                )
+                previousChainID = chainID
+                continue
+            }
+
+            // Snapshot doesn't exist, we'll create it
+            snapshotsCreated += 1
+
+            // Snapshot doesn't exist, create it
+            let tmpKey = UUID().uuidString
 
             // Prepare snapshot
-            let tmpKey = UUID().uuidString
-            let prepareRequest: Containerd_Services_Snapshots_V1_PrepareSnapshotRequest
-            if let parent = previousLayerKey {
-                prepareRequest = .with {
+            let snapshot = try await snapshots.prepare(
+                .with {
                     $0.key = tmpKey
-                    $0.parent = parent
+                    if let parent = previousChainID {
+                        $0.parent = parent
+                    }
                     $0.snapshotter = "overlayfs"
                 }
-            } else {
-                prepareRequest = .with {
-                    $0.key = tmpKey
-                    $0.snapshotter = "overlayfs"
-                }
-            }
+            )
 
-            let snapshot = try await snapshots.prepare(prepareRequest)
-
-            // Apply diff
+            // Apply diff - this is the most expensive operation
             _ = try await diffs.apply(
                 .with {
                     $0.diff = .with {
@@ -441,6 +478,15 @@ public struct Containerd: Sendable {
                     }
                     $0.mounts = snapshot.mounts
                 }
+            )
+            logger.info(
+                "Applied diff",
+                metadata: [
+                    "layer-index": .stringConvertible("\(index + 1)/\(totalLayers)"),
+                    "layer-size-mb": .stringConvertible(
+                        String(format: "%.2f", Double(layer.size) / 1_000_000.0)
+                    ),
+                ]
             )
 
             // Commit snapshot
@@ -454,233 +500,68 @@ public struct Containerd: Sendable {
                 )
                 logger.debug(
                     "Committed snapshot",
-                    metadata: ["layer-key": .stringConvertible(layerKey)]
+                    metadata: [
+                        "chain-id": .stringConvertible(chainID)
+                    ]
                 )
             } catch let error as RPCError where error.code == .alreadyExists {
+                // Race condition: snapshot was created by another process
                 logger.debug(
-                    "Snapshot already exists after commit",
-                    metadata: ["layer-key": .stringConvertible(layerKey)]
+                    "Snapshot was created concurrently, cleaning up temporary snapshot",
+                    metadata: [
+                        "chain-id": .stringConvertible(chainID)
+                    ]
                 )
+                do {
+                    _ = try await snapshots.remove(
+                        .with {
+                            $0.key = tmpKey
+                            $0.snapshotter = "overlayfs"
+                        }
+                    )
+                } catch let removeError as RPCError where removeError.code == .notFound {
+                    // Already cleaned up, this is fine
+                    logger.debug(
+                        "Temporary snapshot already removed",
+                        metadata: ["tmp-key": .stringConvertible(tmpKey)]
+                    )
+                }
             }
 
-            previousLayerKey = layerKey
+            previousChainID = chainID
         }
 
         logger.info(
             "Image unpacked successfully",
-            metadata: ["image": .stringConvertible(imageName)]
-        )
-    }
-
-    public func createSnapshot(
-        imageName: String,
-        appName: String,
-        layers: [Wendy_Agent_Services_V1_RunContainerLayerHeader]
-    ) async throws -> (snapshotKey: String?, mounts: [Containerd_Types_Mount]) {
-        let snapshots = Containerd_Services_Snapshots_V1_Snapshots.Client(wrapping: client)
-        let diffs = Containerd_Services_Diff_V1_Diff.Client(wrapping: client)
-        var layers = layers
-
-        if layers.isEmpty {
-            return (snapshotKey: nil, mounts: [])
-        }
-
-        var layer = layers.removeFirst()
-        var layerIndex = 0
-
-        logger.info(
-            "Preparing snapshot for layer",
             metadata: [
-                "layer-diff-id": .stringConvertible(layer.diffID)
-            ]
-        )
-
-        var layerKey = "\(appName)-\(layer.diffID)"
-
-        let tmpKey = UUID().uuidString
-        let snapshot = try await snapshots.prepare(
-            .with {
-                $0.key = tmpKey
-                $0.snapshotter = "overlayfs"
-            }
-        )
-        logger.info(
-            "Prepared snapshot",
-            metadata: [
-                "layer-diff-id": .stringConvertible(layer.diffID),
-                "layer-digest": .stringConvertible(layer.digest),
-                "layer-size": .stringConvertible(layer.size),
-                "layer-gzip": .stringConvertible(layer.gzip),
-                "layer-media-type": .stringConvertible(
-                    layer.gzip
-                        ? "application/vnd.oci.image.layer.v1.tar+gzip"
-                        : "application/vnd.oci.image.layer.v1.tar"
-                ),
-                "snapshot-mounts": .stringConvertible(
-                    snapshot.mounts.map { $0.source }.joined(separator: ", ")
-                ),
-            ]
-        )
-        _ = try await diffs.apply(
-            .with {
-                $0.diff = .with {
-                    $0.digest = layer.digest
-                    $0.size = layer.size
-                    $0.mediaType =
-                        layer.gzip
-                        ? "application/vnd.oci.image.layer.v1.tar+gzip"
-                        : "application/vnd.oci.image.layer.v1.tar"
-                }
-                $0.mounts = snapshot.mounts
-            }
-        )
-        logger.info(
-            "Applied diff",
-            metadata: [
-                "layer-diff-id": .stringConvertible(layer.diffID),
-                "layer-digest": .stringConvertible(layer.digest),
-                "layer-size": .stringConvertible(layer.size),
-                "layer-gzip": .stringConvertible(layer.gzip),
-                "layer-media-type": .stringConvertible(
-                    layer.gzip
-                        ? "application/vnd.oci.image.layer.v1.tar+gzip"
-                        : "application/vnd.oci.image.layer.v1.tar"
+                "image": .stringConvertible(imageName),
+                "total-layers": .stringConvertible(totalLayers),
+                "snapshots-reused": .stringConvertible(snapshotsReused),
+                "snapshots-created": .stringConvertible(snapshotsCreated),
+                "reuse-percentage": .stringConvertible(
+                    String(
+                        format: "%.1f%%",
+                        totalLayers > 0
+                            ? (Double(snapshotsReused) / Double(totalLayers)) * 100.0 : 0.0
+                    )
                 ),
             ]
         )
 
-        do {
-            _ = try await snapshots.commit(
-                .with {
-                    $0.key = tmpKey
-                    $0.name = layerKey
-                    $0.snapshotter = "overlayfs"
-                }
-            )
-            logger.info(
-                "Committed snapshot",
-                metadata: [
-                    "layer-diff-id": .stringConvertible(layer.diffID),
-                    "layer-digest": .stringConvertible(layer.digest),
-                    "layer-size": .stringConvertible(layer.size),
-                    "layer-gzip": .stringConvertible(layer.gzip),
-                    "layer-media-type": .stringConvertible(
-                        layer.gzip
-                            ? "application/vnd.oci.image.layer.v1.tar+gzip"
-                            : "application/vnd.oci.image.layer.v1.tar"
-                    ),
-                ]
-            )
-        } catch let error as RPCError where error.code == .alreadyExists {}
-
-        while !layers.isEmpty {
-            layerIndex += 1
-            let nextLayer = layers.removeFirst()
-            let nextLayerKey = "\(appName)-\(nextLayer.diffID)"
-
-            let tmpKey = UUID().uuidString
-            logger.info(
-                "Preparing snapshot for layer",
-                metadata: [
-                    "layer-diff-id": .stringConvertible(nextLayer.diffID)
-                ]
-            )
-            let snapshot = try await snapshots.prepare(
-                .with {
-                    $0.key = tmpKey
-                    $0.parent = layerKey
-                    $0.snapshotter = "overlayfs"
-                }
-            )
-
-            logger.info(
-                "Prepared snapshot",
-                metadata: [
-                    "layer-diff-id": .stringConvertible(nextLayer.diffID),
-                    "layer-digest": .stringConvertible(nextLayer.digest),
-                    "layer-size": .stringConvertible(nextLayer.size),
-                    "layer-gzip": .stringConvertible(nextLayer.gzip),
-                    "layer-media-type": .stringConvertible(
-                        nextLayer.gzip
-                            ? "application/vnd.oci.image.layer.v1.tar+gzip"
-                            : "application/vnd.oci.image.layer.v1.tar"
-                    ),
-                ]
-            )
-
-            _ = try await diffs.apply(
-                .with {
-                    $0.diff = .with {
-                        $0.digest = nextLayer.digest
-                        $0.size = nextLayer.size
-                        $0.mediaType =
-                            nextLayer.gzip
-                            ? "application/vnd.oci.image.layer.v1.tar+gzip"
-                            : "application/vnd.oci.image.layer.v1.tar"
-                    }
-                    $0.mounts = snapshot.mounts
-                }
-            )
-            logger.info(
-                "Applied diff",
-                metadata: [
-                    "layer-diff-id": .stringConvertible(nextLayer.diffID),
-                    "layer-digest": .stringConvertible(nextLayer.digest),
-                    "layer-size": .stringConvertible(nextLayer.size),
-                    "layer-gzip": .stringConvertible(nextLayer.gzip),
-                    "layer-media-type": .stringConvertible(
-                        nextLayer.gzip
-                            ? "application/vnd.oci.image.layer.v1.tar+gzip"
-                            : "application/vnd.oci.image.layer.v1.tar"
-                    ),
-                ]
-            )
-
-            do {
-                _ = try await snapshots.commit(
-                    .with {
-                        $0.key = tmpKey
-                        $0.name = nextLayerKey
-                        $0.snapshotter = "overlayfs"
-                    }
-                )
-                logger.info(
-                    "Committed snapshot",
-                    metadata: [
-                        "layer-diff-id": .stringConvertible(nextLayer.diffID),
-                        "layer-digest": .stringConvertible(nextLayer.digest),
-                        "layer-size": .stringConvertible(nextLayer.size),
-                        "layer-gzip": .stringConvertible(nextLayer.gzip),
-                        "layer-media-type": .stringConvertible(
-                            nextLayer.gzip
-                                ? "application/vnd.oci.image.layer.v1.tar+gzip"
-                                : "application/vnd.oci.image.layer.v1.tar"
-                        ),
-                    ]
-                )
-            } catch let error as RPCError where error.code == .alreadyExists {}
-
-            layer = nextLayer
-            layerKey = nextLayerKey
+        guard let previousChainID else {
+            throw RPCError(code: .internalError, message: "Failed to unpack image")
         }
 
         let ephemeralKey = UUID().uuidString
-
-        logger.info(
-            "Making ephemeral snapshot",
-            metadata: [
-                "snapshot-key": .stringConvertible(ephemeralKey),
-                "parent-digest": .stringConvertible(layerKey),
-            ]
-        )
         let ephemeralSnapshot = try await snapshots.prepare(
             .with {
                 $0.key = ephemeralKey
-                $0.parent = layerKey
+                $0.parent = previousChainID
                 $0.snapshotter = "overlayfs"
             }
         )
 
+        // Use mounts from the prepare response (optimization: avoid extra RPC call)
         return (snapshotKey: ephemeralKey, mounts: ephemeralSnapshot.mounts)
     }
 
