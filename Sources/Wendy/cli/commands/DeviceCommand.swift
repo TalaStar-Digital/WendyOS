@@ -91,7 +91,10 @@ struct DeviceCommand: AsyncParsableCommand {
         @Option(help: "The path to the new version of the Wendy agent.")
         var binary: String?
 
-        @Option(help: "Target platform for the agent binary (linux-aarch64 or linux-x86_64). Defaults to linux-aarch64.")
+        @Option(
+            help:
+                "Target platform for the agent binary (linux-aarch64 or linux-x86_64). Defaults to linux-aarch64."
+        )
         var platform: String?
 
         @OptionGroup var agentConnectionOptions: AgentConnectionOptions
@@ -111,7 +114,9 @@ struct DeviceCommand: AsyncParsableCommand {
                     case "linux-x86_64", "x86_64", "amd64":
                         targetPlatform = .linuxX86_64
                     default:
-                        Noora().error("Invalid platform '\(platformStr)'. Use 'linux-aarch64' or 'linux-x86_64'")
+                        Noora().error(
+                            "Invalid platform '\(platformStr)'. Use 'linux-aarch64' or 'linux-x86_64'"
+                        )
                         Self.exit(withError: nil)
                     }
                 } else {
