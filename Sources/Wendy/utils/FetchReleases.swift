@@ -235,7 +235,7 @@ func downloadAsset(_ asset: Release.Asset) async throws -> URL {
             )
             throw ReleasesError.fileTooLarge(actual: fileSize, maximum: maxFileSize)
         }
-        logger.info(
+        logger.debug(
             "Downloading asset",
             metadata: [
                 "asset": "\(asset.name)",
