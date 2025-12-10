@@ -757,6 +757,9 @@ public struct Containerd: Sendable {
                         $0.parent = parent
                     }
                     $0.snapshotter = "overlayfs"
+                    $0.labels = [
+                        "containerd.io/gc.root": Date().rfc3339Formatted()
+                    ]
                 }
             )
 
@@ -783,11 +786,16 @@ public struct Containerd: Sendable {
 
             // Commit snapshot
             do {
+                var labels = [String: String]()
+                if let parent = previousChainID {
+                    labels["containerd.io/gc.ref.snapshot.overlayfs"] = parent
+                }
                 _ = try await snapshots.commit(
                     .with {
                         $0.key = tmpKey
                         $0.name = layerKey
                         $0.snapshotter = "overlayfs"
+                        $0.labels = labels
                     }
                 )
                 logger.debug(
@@ -850,6 +858,9 @@ public struct Containerd: Sendable {
                 $0.key = ephemeralKey
                 $0.parent = previousChainID
                 $0.snapshotter = "overlayfs"
+                $0.labels = [
+                    "containerd.io/gc.root": Date().rfc3339Formatted()
+                ]
             }
         )
 
