@@ -91,7 +91,7 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
             try await Containerd.withClient { client in
                 // Add labels to prevent garbage collection of uploaded layers
                 let labels = [
-                    "containerd.io/gc.root": "true",
+                    "containerd.io/gc.root": Date().rfc3339Formatted(),
                     "sh.wendy.layer": "true",
                 ]
                 try await client.writeLayer(ref: firstChunk.digest, labels: labels) { writer in
