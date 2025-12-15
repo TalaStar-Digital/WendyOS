@@ -32,6 +32,8 @@ private func deviceUnreachable() async throws {
         try await deviceUnreachable(source: .commandLine(value: arguments[index + 1]))
     } else if let device = ProcessInfo.processInfo.environment["WENDY_AGENT"] {
         try await deviceUnreachable(source: .environment(key: "WENDY_AGENT", value: device))
+    } else if let device = getConfig().defaultDevice {
+        try await deviceUnreachable(source: .defaultConfig(value: device))
     } else {
         try await deviceUnreachable(source: .selected)
     }
@@ -40,6 +42,7 @@ private func deviceUnreachable() async throws {
 enum DeviceSource {
     case commandLine(value: String)
     case environment(key: String, value: String)
+    case defaultConfig(value: String)
     case selected
 }
 
@@ -72,6 +75,18 @@ private func deviceUnreachable(source: DeviceSource) async throws {
                 The hostname was found in the environment variable \(key.underline).
                 """,
                 takeaways: takeaways
+            )
+        )
+    case .defaultConfig(let value):
+        Noora().error(
+            .alert(
+                """
+                Device is unreachable: \(value.underline)
+                The hostname was set as a default in the CLI configuration.
+                """,
+                takeaways: [
+                    "Remove the default by running: \("wendy device unset-default".underline)"
+                ] + takeaways
             )
         )
     case .selected:

@@ -124,7 +124,7 @@ func withCertificates<R: Sendable>(
     forOrganizationId orgId: Int32,
     perform: @Sendable @escaping (Config.Auth.Certificates) async throws -> R
 ) async throws -> R {
-    let config = try getConfig()
+    let config = getConfig()
 
     for auth in config.auth {
         for certificate in auth.certificates {
@@ -210,7 +210,7 @@ func setupConfig(
     cloudDashboard: String,
     cloudGRPC: String
 ) async throws -> Config.Auth {
-    var config = try getConfig()
+    var config = getConfig()
 
     let endpoint = AgentConnectionOptions.Endpoint(
         host: cloudGRPC,
