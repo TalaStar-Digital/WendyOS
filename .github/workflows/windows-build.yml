@@ -13,15 +13,16 @@ permissions:
 jobs:
   build-windows:
     name: Build & Bundle (Windows)
-    runs-on: windows-2022
+    runs-on: windows-latest
     
     steps:
       # 1. Setup Swift
       - name: Setup Swift
         uses: compnerd/gha-setup-swift@main
         with:
-          swift-version: swift-6.2.1-release
-          swift-build: 6.2.1-RELEASE
+          swift-version: swift-6.2.3-release
+          swift-build: 6.2.3-RELEASE
+          update-sdk-modules: true
     
       # 2. Checkout
       - name: Checkout Wendy-Agent Repository
