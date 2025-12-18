@@ -176,10 +176,12 @@ struct AgentConnectionOptions: ParsableArguments {
                 omittingEmptySubsequences: false
             )
 
-            let interfaceLabel = parts.first.map(String.init)?.trimmingCharacters(
-                in: .whitespaces
-            ) ?? ""
-            let details = parts.count > 1
+            let interfaceLabel =
+                parts.first.map(String.init)?.trimmingCharacters(
+                    in: .whitespaces
+                ) ?? ""
+            let details =
+                parts.count > 1
                 ? parts[1].trimmingCharacters(in: .whitespaces)
                 : ""
 

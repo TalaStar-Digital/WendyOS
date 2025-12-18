@@ -220,7 +220,7 @@ public struct DevicesCollection: Encodable, Sendable {
         }
 
         public var lanHostname: String? {
-            guard case let .lan(device) = self else { return nil }
+            guard case .lan(let device) = self else { return nil }
             return device.hostname
         }
     }
