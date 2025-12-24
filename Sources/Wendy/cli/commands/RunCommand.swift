@@ -498,7 +498,7 @@ struct RunCommand: AsyncParsableCommand, Sendable {
 
         if !installedSDKs.contains(swiftSDK) {
             let installSDK: Bool
-            
+
             if autoAccept {
                 installSDK = true
             } else {
@@ -521,17 +521,17 @@ struct RunCommand: AsyncParsableCommand, Sendable {
 
         if !installedSwiftVersions.contains(where: { $0.version.name == swiftVersion }) {
             let installSwift: Bool
-            
+
             if autoAccept {
                 installSwift = true
             } else {
                 installSwift = Noora().yesOrNoChoicePrompt(
-                title: "Swift \(swiftVersion) version is not installed yet",
-                question: "Do you want to install Swift \(swiftVersion)?",
-                description: """
-                    WendyOS development is tied to a specific Swift toolchain.
-                    We update this version from time to time to ensure compatibility with the latest features.
-                    """
+                    title: "Swift \(swiftVersion) version is not installed yet",
+                    question: "Do you want to install Swift \(swiftVersion)?",
+                    description: """
+                        WendyOS development is tied to a specific Swift toolchain.
+                        We update this version from time to time to ensure compatibility with the latest features.
+                        """
                 )
             }
 
@@ -559,7 +559,8 @@ struct RunCommand: AsyncParsableCommand, Sendable {
         }) {
             Noora().info("Container plugin is not installed. Do you want to install it?")
 
-            guard autoAccept || Noora().yesOrNoChoicePrompt(question: "Do you want to install it?") else {
+            guard autoAccept || Noora().yesOrNoChoicePrompt(question: "Do you want to install it?")
+            else {
                 Noora().error(
                     "Container plugin is required to build and run Swift packages. Please install it manually."
                 )
