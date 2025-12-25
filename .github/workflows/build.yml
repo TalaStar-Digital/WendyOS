@@ -232,10 +232,128 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  package-linux:
+    name: Package Linux (${{ matrix.arch }})
+    runs-on: runs-on=${{ github.run_id }}/runner=2cpu-linux-x64
+    needs: [determine-version, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            artifact-suffix: x86_64
+            rpm-arch: x86_64
+          - arch: arm64
+            artifact-suffix: aarch64
+            rpm-arch: aarch64
+    steps:
+      - name: Install FPM dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev build-essential rpm
+          sudo gem install fpm
+
+      - name: Download CLI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wendy-cli-linux-static-musl-${{ matrix.artifact-suffix }}-${{ needs.determine-version.outputs.version }}.tar.gz
+
+      - name: Download Agent artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wendy-agent-linux-static-musl-${{ matrix.artifact-suffix }}-${{ needs.determine-version.outputs.version }}.tar.gz
+
+      - name: Extract artifacts
+        run: |
+          ls -la
+          tar -xzf wendy-cli-linux-static-musl-${{ matrix.artifact-suffix }}-${{ needs.determine-version.outputs.version }}.tar.gz
+          tar -xzf wendy-agent-linux-static-musl-${{ matrix.artifact-suffix }}-${{ needs.determine-version.outputs.version }}.tar.gz
+          ls -la
+
+      - name: Build .deb packages
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+
+          # Build wendy-cli .deb
+          fpm -s dir -t deb \
+            -n wendy \
+            -v "$VERSION" \
+            --architecture ${{ matrix.arch }} \
+            --description "Wendy CLI - Remote device debugging and deployment" \
+            --url "https://wendy.sh" \
+            --maintainer "Wendy Labs Inc. <support@wendy.sh>" \
+            --license "Proprietary" \
+            --vendor "Wendy Labs Inc." \
+            --category "devel" \
+            ./wendy-cli-linux-static-musl-${{ matrix.artifact-suffix }}/wendy=/usr/bin/wendy
+
+          # Build wendy-agent .deb
+          fpm -s dir -t deb \
+            -n wendy-agent \
+            -v "$VERSION" \
+            --architecture ${{ matrix.arch }} \
+            --description "Wendy Agent - Runs on target devices for remote debugging" \
+            --url "https://wendy.sh" \
+            --maintainer "Wendy Labs Inc. <support@wendy.sh>" \
+            --license "Proprietary" \
+            --vendor "Wendy Labs Inc." \
+            --category "devel" \
+            ./wendy-agent-linux-static-musl-${{ matrix.artifact-suffix }}/wendy-agent=/usr/bin/wendy-agent
+
+          ls -la *.deb
+
+      - name: Build .rpm packages
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          # RPM doesn't allow hyphens in version, replace with underscores
+          RPM_VERSION=$(echo "$VERSION" | tr '-' '_')
+
+          # Build wendy-cli .rpm
+          fpm -s dir -t rpm \
+            -n wendy \
+            -v "$RPM_VERSION" \
+            --architecture ${{ matrix.rpm-arch }} \
+            --description "Wendy CLI - Remote device debugging and deployment" \
+            --url "https://wendy.sh" \
+            --maintainer "Wendy Labs Inc. <support@wendy.sh>" \
+            --license "Proprietary" \
+            --vendor "Wendy Labs Inc." \
+            --category "Development/Tools" \
+            ./wendy-cli-linux-static-musl-${{ matrix.artifact-suffix }}/wendy=/usr/bin/wendy
+
+          # Build wendy-agent .rpm
+          fpm -s dir -t rpm \
+            -n wendy-agent \
+            -v "$RPM_VERSION" \
+            --architecture ${{ matrix.rpm-arch }} \
+            --description "Wendy Agent - Runs on target devices for remote debugging" \
+            --url "https://wendy.sh" \
+            --maintainer "Wendy Labs Inc. <support@wendy.sh>" \
+            --license "Proprietary" \
+            --vendor "Wendy Labs Inc." \
+            --category "Development/Tools" \
+            ./wendy-agent-linux-static-musl-${{ matrix.artifact-suffix }}/wendy-agent=/usr/bin/wendy-agent
+
+          ls -la *.rpm
+
+      - name: Upload .deb packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages-deb-${{ matrix.arch }}
+          path: "*.deb"
+          retention-days: 14
+
+      - name: Upload .rpm packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages-rpm-${{ matrix.arch }}
+          path: "*.rpm"
+          retention-days: 14
+
   release:
     name: Release
     runs-on: runs-on=${{ github.run_id }}/runner=2cpu-linux-arm64
-    needs: [determine-version, build]
+    needs: [determine-version, build, package-linux]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Download artifact
@@ -245,10 +363,10 @@ jobs:
       - name: List files
         run: |
           ls -la
-          # Create a newline-delimited list of tar.gz files
+          # Create a newline-delimited list of release files (tar.gz, deb, rpm)
           {
             echo 'FILES<<EOF'
-            find . -name "*.tar.gz" | sort
+            find . -name "*.tar.gz" -o -name "*.deb" -o -name "*.rpm" | sort
             echo 'EOF'
           } >> $GITHUB_ENV
       - name: Create Release
