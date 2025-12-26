@@ -664,3 +664,81 @@ jobs:
           This PR updates the wendy formula to version ${VERSION}.
 
           All platforms use pre-built binaries (signed and notarized for macOS ARM64)."
+
+  publish-aur:
+    name: Publish AUR Packages
+    runs-on: ubuntu-latest
+    needs: [determine-version, release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        include:
+          - pkgname: wendy
+            pkgbuild_path: packaging/arch/wendy/PKGBUILD
+            x86_64_artifact: wendy-cli-linux-static-musl-x86_64
+            aarch64_artifact: wendy-cli-linux-static-musl-aarch64
+          - pkgname: wendy-agent
+            pkgbuild_path: packaging/arch/wendy-agent/PKGBUILD
+            x86_64_artifact: wendy-agent-linux-static-musl-x86_64
+            aarch64_artifact: wendy-agent-linux-static-musl-aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Calculate checksums from release
+        id: checksums
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+
+          # Download and calculate SHA256 for x86_64
+          X86_64_URL="https://github.com/wendylabsinc/wendy-agent/releases/download/${VERSION}/${{ matrix.x86_64_artifact }}-${VERSION}.tar.gz"
+          echo "Downloading $X86_64_URL"
+          X86_64_SHA=$(curl -fsSL "$X86_64_URL" | sha256sum | awk '{print $1}')
+          echo "x86_64_sha=${X86_64_SHA}" >> $GITHUB_OUTPUT
+
+          # Download and calculate SHA256 for aarch64
+          AARCH64_URL="https://github.com/wendylabsinc/wendy-agent/releases/download/${VERSION}/${{ matrix.aarch64_artifact }}-${VERSION}.tar.gz"
+          echo "Downloading $AARCH64_URL"
+          AARCH64_SHA=$(curl -fsSL "$AARCH64_URL" | sha256sum | awk '{print $1}')
+          echo "aarch64_sha=${AARCH64_SHA}" >> $GITHUB_OUTPUT
+
+          echo "Checksums:"
+          echo "  x86_64:  ${X86_64_SHA}"
+          echo "  aarch64: ${AARCH64_SHA}"
+
+      - name: Update PKGBUILD
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          PKGBUILD="${{ matrix.pkgbuild_path }}"
+
+          # Update version
+          sed -i "s/pkgver=.*/pkgver=${VERSION}/" "$PKGBUILD"
+
+          # Update checksums
+          sed -i "s/sha256sums_x86_64=.*/sha256sums_x86_64=('${{ steps.checksums.outputs.x86_64_sha }}')/" "$PKGBUILD"
+          sed -i "s/sha256sums_aarch64=.*/sha256sums_aarch64=('${{ steps.checksums.outputs.aarch64_sha }}')/" "$PKGBUILD"
+
+          echo "Updated PKGBUILD:"
+          cat "$PKGBUILD"
+
+      - name: Generate .SRCINFO
+        uses: docker://archlinux:latest
+        with:
+          entrypoint: /bin/bash
+          args: |
+            -c "
+            pacman -Sy --noconfirm base-devel
+            cd $(dirname ${{ matrix.pkgbuild_path }})
+            chown -R nobody:nobody .
+            su nobody -s /bin/bash -c 'makepkg --printsrcinfo > .SRCINFO'
+            cat .SRCINFO
+            "
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: ${{ matrix.pkgname }}
+          pkgbuild: ${{ matrix.pkgbuild_path }}
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ needs.determine-version.outputs.version }}"
