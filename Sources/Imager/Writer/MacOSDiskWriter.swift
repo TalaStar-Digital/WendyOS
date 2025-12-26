@@ -128,11 +128,7 @@
 
                         // Write to dd's stdin (async) and propagate any write error
                         do {
-                            if #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) {
-                                totalWritten += try await Int64(stdinWriter.write(data.bytes))
-                            } else {
-                                totalWritten += try await Int64(stdinWriter.write(Array(data)))
-                            }
+                            totalWritten += try await Int64(stdinWriter.write(data.bytes))
                         } catch {
                             throw DiskWriterError.writeFailed(
                                 reason: "Failed piping data to dd: \(error.localizedDescription)"

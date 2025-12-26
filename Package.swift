@@ -1,10 +1,10 @@
-// swift-tools-version: 6.1.2
+// swift-tools-version: 6.2.0
 import PackageDescription
 
 let package = Package(
     name: "wendy-agent",
     platforms: [
-        .macOS(.v15)
+        .macOS(.v26)
     ],
     products: [
         .executable(name: "wendy-agent", targets: ["wendy-agent"]),
