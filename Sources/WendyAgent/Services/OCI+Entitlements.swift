@@ -56,16 +56,40 @@ extension OCI {
     }
 
     struct AvailableDevices: Sendable {
-        let devices: [String]
+        let devices: [Device]
 
-        init(devices: [String]) {
+        init(devices: [Device]) {
             self.devices = devices
         }
 
         static func detect() throws -> AvailableDevices {
             let fm = FileManager.default
             let devContents = try fm.contentsOfDirectory(atPath: "/dev")
-            return AvailableDevices(devices: devContents)
+            return AvailableDevices(
+                devices: devContents.compactMap { device -> Device? in
+                    let devicePath = "/dev/\(device)"
+
+                    // Get device info using stat to find major/minor numbers
+                    var statInfo = stat()
+                    guard stat(devicePath, &statInfo) == 0 else { return nil }
+
+                    // Extract major/minor numbers from st_rdev
+                    // On Linux: major = (rdev >> 8) & 0xfff, minor = (rdev & 0xff) | ((rdev >> 12) & ~0xff)
+                    let rdev = UInt64(statInfo.st_rdev)
+                    let deviceMajor = Int((rdev >> 8) & 0xfff)
+                    let deviceMinor = Int((rdev & 0xff) | ((rdev >> 12) & ~0xff))
+
+                    return Device(
+                        path: devicePath,
+                        type: "c",
+                        major: deviceMajor,
+                        minor: deviceMinor,
+                        fileMode: 0o666,
+                        uid: 0,
+                        gid: 0
+                    )
+                }
+            )
         }
     }
 
@@ -268,7 +292,7 @@ extension OCI {
             case .video(let video):
                 // Find all video devices in /dev
                 let videoDevices = availableDevices.devices.filter { device in
-                    guard device.hasPrefix("video") else {
+                    guard device.path.hasPrefix("/dev/video") else {
                         return false
                     }
 
@@ -277,42 +301,20 @@ extension OCI {
                         return true
                     case .allowlist:
                         return video.allowlist.contains { allowed in
-                            // Strip `/dev/` prefix for ease of use
-                            return allowed.replacingOccurrences(of: "/dev/", with: "") == device
+                            let allowedName = allowed.replacingOccurrences(of: "/dev/", with: "")
+                            let deviceName = device.path.replacingOccurrences(of: "/dev/", with: "")
+                            return deviceName == allowedName
                         }
                     }
-                }.sorted()
+                }
 
                 for device in videoDevices {
-                    let devicePath = "/dev/\(device)"
-
-                    // Get device info using stat to find major/minor numbers
-                    var statInfo = stat()
-                    guard stat(devicePath, &statInfo) == 0 else { continue }
-
-                    // Extract major/minor numbers from st_rdev
-                    // On Linux: major = (rdev >> 8) & 0xfff, minor = (rdev & 0xff) | ((rdev >> 12) & ~0xff)
-                    let rdev = UInt64(statInfo.st_rdev)
-                    let deviceMajor = Int((rdev >> 8) & 0xfff)
-                    let deviceMinor = Int((rdev & 0xff) | ((rdev >> 12) & ~0xff))
-
-                    self.linux.devices.append(
-                        Device(
-                            path: devicePath,
-                            type: "c",
-                            major: deviceMajor,
-                            minor: deviceMinor,
-                            fileMode: 0o666,
-                            uid: 0,
-                            gid: 0
-                        )
-                    )
-
+                    self.linux.devices.append(device)
                     self.mounts.append(
                         .init(
-                            destination: devicePath,
+                            destination: device.path,
                             type: "bind",
-                            source: devicePath,
+                            source: device.path,
                             options: ["rbind", "nosuid", "noexec"]
                         )
                     )

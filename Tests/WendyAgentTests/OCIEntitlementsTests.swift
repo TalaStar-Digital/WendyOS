@@ -221,8 +221,22 @@ struct OCIEntitlementsTests {
 
         // When: Applying video entitlement
         let entitlements: [Entitlement] = [.video(VideoEntitlements())]
-        let devices = OCI.AvailableDevices(devices: ["/dev/video0"])
-        ociSpec.applyEntitlements(entitlements: entitlements, appName: "test-app", availableDevices: devices)
+        let devices = OCI.AvailableDevices(devices: [
+            Device(
+                path: "/dev/video0",
+                type: "c",
+                major: 81,
+                minor: 17,
+                fileMode: 0o666,
+                uid: 0,
+                gid: 0
+            )
+        ])
+        ociSpec.applyEntitlements(
+            entitlements: entitlements,
+            appName: "test-app",
+            availableDevices: devices
+        )
 
         // Then: Video device should be added
         let videoDevice = ociSpec.linux.devices.first(where: { $0.path == "/dev/video0" })
@@ -268,6 +282,10 @@ extension OCI {
         appName: String
     ) {
         let availableDevices = OCI.AvailableDevices(devices: [])
-        self.applyEntitlements(entitlements: entitlements, appName: appName, availableDevices: availableDevices)
+        self.applyEntitlements(
+            entitlements: entitlements,
+            appName: appName,
+            availableDevices: availableDevices
+        )
     }
 }
