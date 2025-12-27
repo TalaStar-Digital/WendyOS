@@ -726,10 +726,13 @@ jobs:
           entrypoint: /bin/bash
           args: |
             -c "
-            pacman -Sy --noconfirm base-devel
+            pacman -Sy --noconfirm base-devel shadow
             cd $(dirname ${{ matrix.pkgbuild_path }})
-            chown -R nobody:nobody .
-            su nobody -s /bin/bash -c 'makepkg --printsrcinfo > .SRCINFO'
+            if ! id -u builder >/dev/null 2>&1; then
+              useradd -m builder
+            fi
+            chown -R builder:builder .
+            su builder -s /bin/bash -c 'makepkg --printsrcinfo > .SRCINFO'
             cat .SRCINFO
             "
 
