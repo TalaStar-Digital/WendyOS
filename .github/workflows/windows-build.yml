@@ -22,7 +22,7 @@ jobs:
       - name: Setup Swift
         uses: compnerd/gha-setup-swift@main
         with:
-          swift-version: swift-development
+          swift-version: swift-6.3-branch
           swift-build: 6.3-DEVELOPMENT-SNAPSHOT-2025-12-24-a
           update-sdk-modules: true
     
