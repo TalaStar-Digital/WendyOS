@@ -14,7 +14,7 @@ jobs:
   build-windows:
     name: Build & Bundle (Windows)
     runs-on:
-      - runs-on=${{ github.run_id }}/image=windows25-full-x64/family=m7i
+      - runs-on=${{ github.run_id }}/image=windows25-full-x64/cpu=8
       - spot=false
     
     steps:
