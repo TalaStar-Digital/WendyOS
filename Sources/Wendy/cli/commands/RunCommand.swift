@@ -555,7 +555,8 @@ struct RunCommand: AsyncParsableCommand, Sendable {
         let package = try await swiftPM.showDependencies()
 
         if !package.dependencies.contains(where: {
-            $0.url.hasSuffix("swift-container-plugin") || $0.url.hasSuffix("swift-container-plugin.git")
+            $0.url.hasSuffix("swift-container-plugin")
+                || $0.url.hasSuffix("swift-container-plugin.git")
         }) {
             Noora().info("Container plugin is not installed. Do you want to install it?")
 

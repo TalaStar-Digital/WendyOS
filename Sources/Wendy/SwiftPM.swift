@@ -283,7 +283,7 @@ public struct SwiftPM: Sendable {
         if let entrypoint {
             flags.append("--entrypoint=\(entrypoint)")
         }
-        
+
         if !entrypointArguments.isEmpty {
             flags.append("--cmd")
             flags.append(contentsOf: entrypointArguments)
