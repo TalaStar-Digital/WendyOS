@@ -1,6 +1,31 @@
 // swift-tools-version: 6.2.0
 import PackageDescription
 
+#if os(Windows)
+let packageDependencies: [Package.Dependency] = [
+    .package(path: "../async-http-client"),
+    .package(path: "../hummingbird"),
+    .package(path: "../DNSClient"),
+    .package(path: "../grpc-swift-nio-transport"),
+    .package(path: "../swift-nio"),
+    .package(path: "../swift-nio-ssl"),
+    .package(path: "../swift-nio-extras"),
+    .package(path: "../Rainbow"),
+]
+#else
+let packageDependencies: [Package.Dependency] = [
+        .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.25.2"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.2"),
+        .package(url: "https://github.com/orlandos-nl/DNSClient.git", from: "2.5.0"),
+        .package(
+            url: "https://github.com/grpc/grpc-swift-nio-transport.git",
+            from: "2.3.0"
+        ),
+        .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.7.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0"),
+]
+#endif
+
 let package = Package(
     name: "wendy-agent",
     platforms: [
@@ -12,27 +37,7 @@ let package = Package(
         .executable(name: "wendy-helper", targets: ["wendy-helper"]),
         .executable(name: "wendy-network-daemon", targets: ["wendy-network-daemon"]),
     ],
-    dependencies: [
-        #if os(Windows)
-        .package(path: "../async-http-client"),
-        .package(path: "../hummingbird"),
-        .package(path: "../DNSClient"),
-        .package(path: "../grpc-swift-nio-transport"),
-        .package(path: "../swift-nio"),
-        .package(path: "../swift-nio-ssl"),
-        .package(path: "../swift-nio-extras"),
-        .package(path: "../Rainbow"),
-        #else
-        .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.25.2"),
-        .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.2"),
-        .package(url: "https://github.com/orlandos-nl/DNSClient.git", from: "2.5.0"),
-        .package(
-            url: "https://github.com/grpc/grpc-swift-nio-transport.git",
-            from: "2.3.0"
-        ),
-        .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.7.0"),
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0"),
-        #endif
+    dependencies: packageDependencies + [
         .package(url: "https://github.com/vapor/jwt-kit.git", from: "5.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.3"),
