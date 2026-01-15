@@ -1,9 +1,11 @@
-#if os(Linux)
+#if os(Linux) || os(Windows)
     import DNSClient
     import NIOCore
     import Foundation
     import Logging
+    #if os(Linux)
     import Subprocess
+    #endif
 
     public struct PlatformDeviceDiscovery: DeviceDiscovery {
         private let logger: Logger
@@ -16,6 +18,7 @@
         }
 
         public func findUSBDevices() async -> [USBDevice] {
+            #if os(Linux)
             logger.info("Listing USB devices on Linux")
             var devices: [USBDevice] = []
 
@@ -86,9 +89,14 @@
             }
 
             return devices
+            #else
+            logger.warning("USB device listing is not yet supported on Windows")
+            return []
+            #endif
         }
 
         public func findEthernetInterfaces() async -> [EthernetInterface] {
+            #if os(Linux)
             logger.info("Listing Ethernet interfaces on Linux")
             var interfaces: [EthernetInterface] = []
 
@@ -171,25 +179,28 @@
             }
 
             return interfaces
+            #else
+            logger.warning("Ethernet interface listing is not yet supported on Windows")
+            return []
+            #endif
         }
 
         public func findLANDevices() async throws -> [LANDevice] {
             let dns = try await DNSClient.connectMulticast(
                 on: .singletonMultiThreadedEventLoopGroup
             ).get()
-            let wendyPTR = try? await dns.sendQuery(
+            let messages = try await dns.sendMulticastQuery(
                 forHost: "_wendyos._udp.local",
                 type: .any,
                 timeout: timeout
             ).get()
-            let messages = [wendyPTR]
             logger.debug(
-                "Going to process answers to PTR query",
+                "Going to process answers to multicast query",
                 metadata: ["answers": .stringConvertible(messages.count)]
             )
 
             var interfaces: [LANDevice] = []
-            for case .some(let message) in messages {
+            for message in messages {
                 let srv = message.answers.compactMap { answer in
                     switch answer {
                     case .srv(let srv):
