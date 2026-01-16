@@ -282,7 +282,7 @@ public struct DockerCLI: Sendable {
             let containerName = "buildx_buildkit_\(defaultBuilderName)0"
 
             // Check if the builder container is actually running
-            let isRunning = await isContainerRunning(containerName: containerName)
+            var isRunning = await isContainerRunning(containerName: containerName)
 
             if !isRunning {
                 // If it isn't, start it with bootstrap
@@ -292,22 +292,22 @@ public struct DockerCLI: Sendable {
                 let bootstrapResult = try await Subprocess.run(
                     Subprocess.Executable.name(self.command),
                     arguments: bootstrapArguments,
-                    output: .fileDescriptor(.standardOutput, closeAfterSpawningProcess: false),
-                    error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
+                    output: .discarded,
+                    error: .discarded
                 )
 
-                guard bootstrapResult.terminationStatus.isSuccess else {
-                    let exitCode: Int
-                    switch bootstrapResult.terminationStatus {
-                    case .exited(let code), .unhandledException(let code):
-                        exitCode = Int(code)
-                    }
-                    throw SubprocessError.nonZeroExit(
-                        command: bootstrapArguments.description,
-                        exitCode: exitCode,
-                        terminationReason: bootstrapResult.terminationStatus.description,
-                        output: "",
-                        error: ""
+                // Check if the container is now running after bootstrap
+                isRunning = await isContainerRunning(containerName: containerName)
+
+                // If bootstrap failed OR the container still doesn't exist, the builder
+                // is likely orphaned (pointing to a dead Docker context like desktop-linux
+                // when the user switched to OrbStack). Remove it and recreate.
+                if !bootstrapResult.terminationStatus.isSuccess || !isRunning {
+                    try? await removeBuildxBuilder(name: defaultBuilderName)
+                    // Fall through to create a new builder below
+                    return try await prepareBuildxBuilder(
+                        registryHostname: registryHostname,
+                        registryPort: registryPort
                     )
                 }
             }
