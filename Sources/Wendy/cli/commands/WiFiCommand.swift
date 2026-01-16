@@ -129,10 +129,7 @@ struct WiFiCommand: AsyncParsableCommand {
                 } else if json {
                     password = ""
                 } else {
-                    password = Noora().textPrompt(
-                        title: "Enter the password for the WiFi network",
-                        prompt: "Password"
-                    )
+                    password = securePasswordPrompt("Password for '\(ssid)': ")
                 }
 
                 let logger = Logger(label: "sh.wendy.cli.wifi.connect")
