@@ -119,8 +119,7 @@ struct WendyAgent: AsyncParsableCommand {
             )
             backgroundServices.append(cloudClient)
 
-            // Set up OTel receiver that forwards to cloud and broadcasts to CLI
-            // TODO: Also set up OTel on 4318
+            // Set up OTel gRPC receiver that forwards to cloud and broadcasts to CLI
             servers.append(
                 GRPCServer(
                     transport: HTTP2ServerTransport.Posix(
@@ -128,7 +127,8 @@ struct WendyAgent: AsyncParsableCommand {
                         transportSecurity: .plaintext
                     ),
                     services: [
-                        OpenTelemetryProxy(cloud: cloudClient, broadcaster: telemetryBroadcaster)
+                        OpenTelemetryLogsProxy(cloud: cloudClient, broadcaster: telemetryBroadcaster),
+                        OpenTelemetryMetricsProxy(cloud: cloudClient, broadcaster: telemetryBroadcaster),
                     ]
                 )
             )
@@ -160,7 +160,14 @@ struct WendyAgent: AsyncParsableCommand {
             }
         }
 
-        var authenticatedServices: [any GRPCCore.RegistrableRPCService] = [
+        // Set up OTLP/HTTP receiver on port 4318 (works with or without cloud enrollment)
+        let otlpHTTPReceiver = OTLPHTTPReceiver(
+            broadcaster: telemetryBroadcaster,
+            cloudClient: mTLS != nil ? nil : nil  // Cloud forwarding handled by gRPC proxy
+        )
+        backgroundServices.append(otlpHTTPReceiver.buildApplication())
+
+        let authenticatedServices: [any GRPCCore.RegistrableRPCService] = [
             WendyContainerService(persistenceBasePath: URL(filePath: storage)),
             WendyAgentService(shouldRestart: {
                 logger.info("Shutting down server")

@@ -34,7 +34,7 @@ struct DeviceCommand: AsyncParsableCommand {
                 name: "Observability",
                 subcommands: [
                     LogsCommand.self,
-                    MetricsCommand.self,
+                    MetricsDashboardCommand.self,
                 ]
             ),
             CommandGroup(
