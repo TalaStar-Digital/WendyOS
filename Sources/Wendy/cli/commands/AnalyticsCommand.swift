@@ -57,7 +57,9 @@ extension AnalyticsCommand {
                     let enabled: Bool
                 }
                 let response = Response(success: true, enabled: true)
-                let data = try JSONEncoder().encode(response)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = .prettyPrinted
+                let data = try encoder.encode(response)
                 print(String(data: data, encoding: .utf8)!)
             } else {
                 // Show what data we collect
@@ -100,7 +102,9 @@ extension AnalyticsCommand {
                     let enabled: Bool
                 }
                 let response = Response(success: true, enabled: false)
-                let data = try JSONEncoder().encode(response)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = .prettyPrinted
+                let data = try encoder.encode(response)
                 print(String(data: data, encoding: .utf8)!)
             } else {
                 Noora().info(
@@ -145,7 +149,9 @@ extension AnalyticsCommand {
                     configPath: FileManager.default.homeDirectoryForCurrentUser
                         .appendingPathComponent(".wendy/config.json").path
                 )
-                let data = try JSONEncoder().encode(response)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = .prettyPrinted
+                let data = try encoder.encode(response)
                 print(String(data: data, encoding: .utf8)!)
                 return
             }

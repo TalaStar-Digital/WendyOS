@@ -412,7 +412,7 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                         suggestion:
                             "Please start Docker Desktop or OrbStack before running this command"
                     ).print()
-                    _Exit(1)
+                    throw ExitCode.failure
                 }
 
                 Noora().warning("Docker is not running")
