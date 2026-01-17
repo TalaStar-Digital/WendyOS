@@ -303,8 +303,8 @@ struct DeviceCommand: AsyncParsableCommand {
                         while !Task.isCancelled {
                             let ssid = try await agent.discoverSSID()
 
-                            let password = Noora().textPrompt(
-                                title: "Enter the password for the WiFi network",
+                            let password = try secureTextPrompt(
+                                title: "Enter the password for '\(ssid)'",
                                 prompt: "Password"
                             )
 

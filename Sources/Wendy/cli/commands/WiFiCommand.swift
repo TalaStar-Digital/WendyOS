@@ -132,8 +132,8 @@ struct WiFiCommand: AsyncParsableCommand {
                 } else if JSONMode.isEnabled {
                     password = ""
                 } else {
-                    password = Noora().textPrompt(
-                        title: "Enter the password for the WiFi network",
+                    password = try secureTextPrompt(
+                        title: "Enter the password for '\(ssid)'",
                         prompt: "Password"
                     )
                 }
