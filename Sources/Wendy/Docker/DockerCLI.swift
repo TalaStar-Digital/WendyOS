@@ -304,11 +304,7 @@ public struct DockerCLI: Sendable {
                 // when the user switched to OrbStack). Remove it and recreate.
                 if !bootstrapResult.terminationStatus.isSuccess || !isRunning {
                     try? await removeBuildxBuilder(name: defaultBuilderName)
-                    // Fall through to create a new builder below
-                    return try await prepareBuildxBuilder(
-                        registryHostname: registryHostname,
-                        registryPort: registryPort
-                    )
+                    return try await createBuildxBuilder(configPath: configPath)
                 }
             }
 
@@ -379,7 +375,11 @@ public struct DockerCLI: Sendable {
             return
         }
 
-        // Create builder with configuration
+        try await createBuildxBuilder(configPath: configPath)
+    }
+
+    /// Creates a new buildx builder with the given configuration file.
+    private func createBuildxBuilder(configPath: String) async throws {
         let createArguments: Subprocess.Arguments = [
             "buildx", "create",
             "--name", defaultBuilderName,
