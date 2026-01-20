@@ -64,8 +64,42 @@ public final class BuildLock: Sendable {
 
     /// Acquires a shared lock for building
     /// Multiple builds can hold shared locks simultaneously, allowing parallel builds
-    /// Returns a file descriptor that must be passed to `release()` when done
-    public func acquireForBuild() throws -> Int32 {
+    /// The lock is automatically released when the closure completes or throws
+    public func withLock<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T
+    {
+        let fd = try acquireForBuild()
+        defer { release(fd: fd) }
+        return try await operation()
+    }
+
+    /// Checks if any builds are currently in progress
+    /// Returns true if one or more builds hold shared locks
+    public func isBuildInProgress() -> Bool {
+        let fd = open(lockPath, O_RDWR)
+        guard fd >= 0 else {
+            // Lock file doesn't exist, no build in progress
+            return false
+        }
+        defer { close(fd) }
+
+        #if os(macOS) || canImport(Glibc) || canImport(Musl)
+            // Try to acquire an exclusive lock (non-blocking)
+            // If we can't get it, shared locks are held by running builds
+            let result = flock(fd, LOCK_EX | LOCK_NB)
+            if result != 0 {
+                // Failed to get exclusive lock, builds are in progress
+                return true
+            }
+
+            // We got the exclusive lock, meaning no builds are running
+            // Release it and return false
+            flock(fd, LOCK_UN)
+        #endif
+
+        return false
+    }
+
+    private func acquireForBuild() throws -> Int32 {
         // Ensure directory exists
         let wendyDir = (lockPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(
@@ -91,38 +125,11 @@ public final class BuildLock: Sendable {
         return fd
     }
 
-    /// Releases the build lock.
-    public func release(fd: Int32) {
+    private func release(fd: Int32) {
         #if os(macOS) || canImport(Glibc) || canImport(Musl)
             flock(fd, LOCK_UN)
         #endif
         close(fd)
-    }
-
-    /// Checks if any builds are currently in progress
-    public func isBuildInProgress() -> Bool {
-        let fd = open(lockPath, O_RDWR)
-        guard fd >= 0 else {
-            // Lock file doesn't exist, no build in progress
-            return false
-        }
-        defer { close(fd) }
-
-        #if os(macOS) || canImport(Glibc) || canImport(Musl)
-            // Try to acquire an exclusive lock (non-blocking)
-            // If we can't get it, shared locks are held by running builds
-            let result = flock(fd, LOCK_EX | LOCK_NB)
-            if result != 0 {
-                // Failed to get exclusive lock - builds are in progress
-                return true
-            }
-
-            // We got the exclusive lock, meaning no builds are running
-            // Release it and return false
-            flock(fd, LOCK_UN)
-        #endif
-
-        return false
     }
 }
 
@@ -282,40 +289,39 @@ public struct DockerCLI: Sendable {
         registryPort: Int = 5000
     ) async throws {
         // Acquire shared build lock, allows parallel builds but prevents builder restarts
-        let lockFd = try BuildLock.shared.acquireForBuild()
-        defer { BuildLock.shared.release(fd: lockFd) }
+        try await BuildLock.shared.withLock {
+            let arguments = [
+                "buildx", "build",
+                "--builder", self.defaultBuilderName,
+                "--platform", "linux/arm64",
+                "--provenance=false",
+                "--sbom=false",
+                "--push",
+                "-t", "\(registryHostname):\(registryPort)/\(name):latest",
+                directory,
+            ]
 
-        let arguments = [
-            "buildx", "build",
-            "--builder", defaultBuilderName,
-            "--platform", "linux/arm64",
-            "--provenance=false",
-            "--sbom=false",
-            "--push",
-            "-t", "\(registryHostname):\(registryPort)/\(name):latest",
-            directory,
-        ]
-
-        let result = try await Subprocess.run(
-            Subprocess.Executable.name(self.command),
-            arguments: Subprocess.Arguments(arguments),
-            output: .fileDescriptor(.standardOutput, closeAfterSpawningProcess: false),
-            error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
-        )
-
-        guard result.terminationStatus.isSuccess else {
-            let exitCode: Int
-            switch result.terminationStatus {
-            case .exited(let code), .unhandledException(let code):
-                exitCode = Int(code)
-            }
-            throw SubprocessError.nonZeroExit(
-                command: ([self.command] + arguments).joined(separator: " "),
-                exitCode: exitCode,
-                terminationReason: result.terminationStatus.description,
-                output: "",
-                error: ""
+            let result = try await Subprocess.run(
+                Subprocess.Executable.name(self.command),
+                arguments: Subprocess.Arguments(arguments),
+                output: .fileDescriptor(.standardOutput, closeAfterSpawningProcess: false),
+                error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
             )
+
+            guard result.terminationStatus.isSuccess else {
+                let exitCode: Int
+                switch result.terminationStatus {
+                case .exited(let code), .unhandledException(let code):
+                    exitCode = Int(code)
+                }
+                throw SubprocessError.nonZeroExit(
+                    command: ([self.command] + arguments).joined(separator: " "),
+                    exitCode: exitCode,
+                    terminationReason: result.terminationStatus.description,
+                    output: "",
+                    error: ""
+                )
+            }
         }
     }
 
