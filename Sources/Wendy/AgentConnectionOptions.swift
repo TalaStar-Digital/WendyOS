@@ -256,7 +256,8 @@ extension AgentConnectionOptions {
     func readWithBluetooth(
         title: TerminalText?,
         readDefault: Bool = true,
-        preferBluetooth: Bool = false
+        preferBluetooth: Bool = false,
+        includeBluetooth: Bool = true
     ) async throws -> SelectedDevice {
         // If explicit device specified via CLI, use it as LAN
         if let device {
@@ -289,12 +290,12 @@ extension AgentConnectionOptions {
         ) { _ in
             while true {
                 try Task.checkCancellation()
-                let devices = try await discovery.findAllDevices()
+                let devices = try await discovery.findDevices(includeBluetooth: includeBluetooth)
                     .groupedDevices()
                     .filter { device in
                         // Include devices with LAN or Bluetooth interfaces
                         device.interfaces.contains { interface in
-                            interface.type == .lan || interface.type == .bluetooth
+                            interface.type == .lan || (includeBluetooth && interface.type == .bluetooth)
                         }
                     }
 
