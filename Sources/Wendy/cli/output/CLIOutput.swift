@@ -52,6 +52,19 @@ public protocol CLIOutput: Sendable {
         message: String,
         operation: @escaping @Sendable (@escaping (Double) -> Void) async throws -> T
     ) async throws -> T
+
+    /// Execute an operation with streaming output displayed in a collapsible box.
+    /// In interactive mode, shows a scrollable bordered box with the output.
+    /// In JSON mode, just runs the operation silently.
+    /// - Parameters:
+    ///   - title: Title for the output section
+    ///   - maxLines: Maximum lines to show in the scrolling view
+    ///   - operation: The operation to run, receives a callback to emit each line
+    func withStreamingOutput<T: Sendable>(
+        title: String,
+        maxLines: Int,
+        operation: @escaping @Sendable (@escaping @Sendable (String) async -> Void) async throws -> T
+    ) async throws -> T
 }
 
 // MARK: - Default implementations
@@ -109,6 +122,17 @@ extension CLIOutput {
     ) async throws -> T {
         // Default: just run the operation with no-op progress callback
         try await operation({ _ in })
+    }
+
+    public func withStreamingOutput<T: Sendable>(
+        title: String,
+        maxLines: Int,
+        operation: @escaping @Sendable (@escaping @Sendable (String) async -> Void) async throws -> T
+    ) async throws -> T {
+        // Default: just print each line as it comes
+        try await operation { @Sendable line in
+            print(line)
+        }
     }
 }
 

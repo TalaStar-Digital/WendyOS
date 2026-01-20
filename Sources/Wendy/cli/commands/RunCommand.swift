@@ -229,18 +229,18 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                 runtime: "dockerfile",
                 additionalProperties: buildPhaseProperties
             ) {
-                try await Noora().progressStep(
-                    message: "Building and uploading container",
-                    successMessage: "Container built and uploaded successfully!",
-                    errorMessage: "Failed to build and upload container",
-                    showSpinner: true
-                ) { _ in
+                try await cliOutput.withStreamingOutput(
+                    title: "Building and uploading container",
+                    maxLines: 20
+                ) { emit in
                     try await docker.buildxAndPush(
                         name: name,
                         registryHostname: endpoint.host,
-                        registryPort: 5000
+                        registryPort: 5000,
+                        onOutput: emit
                     )
                 }
+                cliOutput.success("Container built and uploaded successfully!")
             }
 
             try await executePhase(phase: "prepare_container", runtime: "dockerfile") {
@@ -415,7 +415,7 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                     throw ExitCode.failure
                 }
 
-                Noora().warning("Docker is not running")
+                cliOutput.warning("Docker is not running")
 
                 #if os(macOS)
                     // Check if Docker.app, OrbStack.app is installed
@@ -474,7 +474,7 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                         }
                         return
                     } else {
-                        Noora().warning("Docker.app or OrbStack.app is not installed")
+                        cliOutput.warning("Docker.app or OrbStack.app is not installed")
                         guard
                             Noora().yesOrNoChoicePrompt(
                                 question: "Do you want to open the installation guide?"
@@ -635,7 +635,6 @@ struct RunCommand: AsyncParsableCommand, Sendable {
             agentConnectionOptions,
             title: "Which device do you want to run this app on?"
         ) { client, endpoint in
-            Noora().info("Building Swift app")
             try await executePhase(phase: "build_swift_app", runtime: "swift") {
                 var resources: [(source: String, destination: String)] = []
                 var entrypoint: String?
@@ -670,32 +669,49 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                             entrypoint = "/bin/ds2"
                             arguments = debugArguments
                         } else {
-                            Noora().warning(
+                            cliOutput.warning(
                                 "ds2 binary not found. Debugging will not be available."
                             )
                         }
                     }
                 }
 
-                try await swiftPM.buildAndPushContainer(
-                    swiftSDK: swiftSDK,
-                    product: executableTarget,
-                    device: endpoint.host,
-                    entrypoint: entrypoint,
-                    arguments: arguments,
-                    resources: resources
-                )
+                // Copy to let for Sendable closure capture
+                let finalEntrypoint = entrypoint
+                let finalArguments = arguments
+                let finalResources = resources
+
+                try await cliOutput.withStreamingOutput(
+                    title: "Building Swift app",
+                    maxLines: 20
+                ) { emit in
+                    try await swiftPM.buildAndPushContainer(
+                        swiftSDK: swiftSDK,
+                        product: executableTarget,
+                        device: endpoint.host,
+                        entrypoint: finalEntrypoint,
+                        arguments: finalArguments,
+                        resources: finalResources,
+                        onOutput: emit
+                    )
+                }
+                cliOutput.success("Swift app built successfully!")
             }
 
-            Noora().info("Creating Container")
             try await executePhase(phase: "create_container", runtime: "swift") {
-                try await createContainerdContainer(
-                    appName: appName,
-                    client: client
-                )
+                try await cliOutput.withProgress(
+                    message: "Creating container",
+                    successMessage: "Container created",
+                    errorMessage: "Failed to create container"
+                ) {
+                    try await createContainerdContainer(
+                        appName: appName,
+                        client: client
+                    )
+                }
             }
 
-            Noora().info("Starting Container")
+            cliOutput.info("Starting container")
             try await executePhase(phase: "start_container", runtime: "swift") {
                 try await startContainerdContainer(imageName: appName, client: client)
             }

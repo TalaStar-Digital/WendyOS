@@ -263,7 +263,8 @@ public struct SwiftPM: Sendable {
         device: String,
         entrypoint: String?,
         arguments entrypointArguments: [String],
-        resources: [(source: String, destination: String)]
+        resources: [(source: String, destination: String)],
+        onOutput: @escaping @Sendable (String) async -> Void
     ) async throws {
         var flags = [
             "package",
@@ -291,18 +292,35 @@ public struct SwiftPM: Sendable {
 
         let result = try await Subprocess.run(
             Subprocess.Executable.name(executableName),
-            arguments: arguments(flags),
-            output: .standardOutput,
-            error: .standardError
-        )
+            arguments: arguments(flags)
+        ) { execution, stdin, stdout, stderr in
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    for try await line in stdout.lines() {
+                        await onOutput(line)
+                    }
+                }
+                group.addTask {
+                    for try await line in stderr.lines() {
+                        await onOutput(line)
+                    }
+                }
+                try await group.waitForAll()
+            }
+        }
 
         guard result.terminationStatus.isSuccess else {
-            throw SubprocessError.nonZeroExit(
-                command: executableName + " " + arguments(flags).description,
-                exitCode: Int(result.terminationStatus.description) ?? -1,
-                output: "",
-                error: ""
-            )
+            switch result.terminationStatus {
+            case .unhandledException(2):
+                throw CancellationError()
+            case .exited(let code), .unhandledException(let code):
+                throw SubprocessError.nonZeroExit(
+                    command: executableName + " " + arguments(flags).description,
+                    exitCode: Int(code),
+                    output: "",
+                    error: ""
+                )
+            }
         }
     }
 

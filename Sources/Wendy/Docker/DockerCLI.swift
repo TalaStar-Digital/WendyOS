@@ -286,7 +286,8 @@ public struct DockerCLI: Sendable {
         name: String,
         directory: String = ".",
         registryHostname: String = "host.docker.internal",
-        registryPort: Int = 5000
+        registryPort: Int = 5000,
+        onOutput: @escaping @Sendable (String) async -> Void
     ) async throws {
         // Acquire shared build lock, allows parallel builds but prevents builder restarts
         try await BuildLock.shared.withLock {
@@ -303,24 +304,36 @@ public struct DockerCLI: Sendable {
 
             let result = try await Subprocess.run(
                 Subprocess.Executable.name(self.command),
-                arguments: Subprocess.Arguments(arguments),
-                output: .fileDescriptor(.standardOutput, closeAfterSpawningProcess: false),
-                error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
-            )
+                arguments: Subprocess.Arguments(arguments)
+            ) { execution, stdin, stdout, stderr in
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    group.addTask {
+                        for try await line in stdout.lines() {
+                            await onOutput(line)
+                        }
+                    }
+                    group.addTask {
+                        for try await line in stderr.lines() {
+                            await onOutput(line)
+                        }
+                    }
+                    try await group.waitForAll()
+                }
+            }
 
             guard result.terminationStatus.isSuccess else {
-                let exitCode: Int
                 switch result.terminationStatus {
+                case .unhandledException(2):
+                    throw CancellationError()
                 case .exited(let code), .unhandledException(let code):
-                    exitCode = Int(code)
+                    throw SubprocessError.nonZeroExit(
+                        command: ([self.command] + arguments).joined(separator: " "),
+                        exitCode: Int(code),
+                        terminationReason: result.terminationStatus.description,
+                        output: "",
+                        error: ""
+                    )
                 }
-                throw SubprocessError.nonZeroExit(
-                    command: ([self.command] + arguments).joined(separator: " "),
-                    exitCode: exitCode,
-                    terminationReason: result.terminationStatus.description,
-                    output: "",
-                    error: ""
-                )
             }
         }
     }
