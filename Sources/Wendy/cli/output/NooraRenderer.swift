@@ -1,6 +1,16 @@
 import Foundation
 import Noora
 
+// Helper to flush stdout in Swift 6
+@inline(__always)
+private func flushStdout() {
+    #if os(Linux)
+        fflush(nil)
+    #else
+        fflush(stdout)
+    #endif
+}
+
 /// Interactive CLI output renderer using Noora TUI library.
 public struct NooraRenderer: CLIOutput, Sendable {
     public init() {}
@@ -176,7 +186,7 @@ private actor BorderedBox {
         frame += "\u{1B}[2K└\(String(repeating: "─", count: width - 2))┘"
 
         print(frame)
-        fflush(stdout)
+        flushStdout()
         hasDrawn = true
     }
 
@@ -201,7 +211,7 @@ private actor BorderedBox {
         frame += "\u{1B}[2K└\(String(repeating: "─", count: width - 2))┘"
 
         print(frame)
-        fflush(stdout)
+        flushStdout()
     }
 
     private func formatLine(_ text: String) -> String {
@@ -242,6 +252,6 @@ private actor BorderedBox {
         }
         // Move cursor back up to where the box started
         print("\u{1B}[\(height + 2)A", terminator: "")
-        fflush(stdout)
+        flushStdout()
     }
 }
