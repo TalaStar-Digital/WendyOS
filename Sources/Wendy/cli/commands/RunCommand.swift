@@ -229,18 +229,18 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                 runtime: "dockerfile",
                 additionalProperties: buildPhaseProperties
             ) {
-                try await Noora().progressStep(
-                    message: "Building and uploading container",
-                    successMessage: "Container built and uploaded successfully!",
-                    errorMessage: "Failed to build and upload container",
-                    showSpinner: true
-                ) { _ in
+                try await cliOutput.withStreamingOutput(
+                    title: "Building and uploading container",
+                    maxLines: 20
+                ) { emit in
                     try await docker.buildxAndPush(
                         name: name,
                         registryHostname: endpoint.host,
-                        registryPort: 5000
+                        registryPort: 5000,
+                        onOutput: emit
                     )
                 }
+                cliOutput.success("Container built and uploaded successfully!")
             }
 
             try await executePhase(phase: "prepare_container", runtime: "dockerfile") {
@@ -415,7 +415,7 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                     throw ExitCode.failure
                 }
 
-                Noora().warning("Docker is not running")
+                cliOutput.warning("Docker is not running")
 
                 #if os(macOS)
                     // Check if Docker.app, OrbStack.app is installed
@@ -438,7 +438,9 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                                 do {
                                     _ = try await docker.getServerVersion()
                                     return
-                                } catch {}
+                                } catch {
+                                    try await Task.sleep(for: .milliseconds(100))
+                                }
                             }
                         } else {
                             Noora().info(
@@ -465,7 +467,9 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                                 do {
                                     _ = try await docker.getServerVersion()
                                     return
-                                } catch {}
+                                } catch {
+                                    try await Task.sleep(for: .milliseconds(100))
+                                }
                             }
                         } else {
                             Noora().info(
@@ -474,7 +478,7 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                         }
                         return
                     } else {
-                        Noora().warning("Docker.app or OrbStack.app is not installed")
+                        cliOutput.warning("Docker.app or OrbStack.app is not installed")
                         guard
                             Noora().yesOrNoChoicePrompt(
                                 question: "Do you want to open the installation guide?"
@@ -499,15 +503,15 @@ struct RunCommand: AsyncParsableCommand, Sendable {
     func checkSwiftRequirements() async throws {
         let swiftPM = SwiftPM()
 
-        let (installedSDKs, installedSwiftVersions) = try await Noora().progressStep(
+        // Check with spinner
+        let (installedSDKs, installedSwiftVersions) = try await cliOutput.withProgress(
             message: "Checking Swift requirements",
-            successMessage: nil,
-            errorMessage: "Failed to check Swift requirements",
-            showSpinner: true
-        ) { changeStatus in
-            async let installedSDKs = try await swiftPM.listSDKs()
-            async let installedSwiftVersions = try await swiftPM.listSwiftVersions()
-            return try await (installedSDKs, installedSwiftVersions)
+            successMessage: "Swift environment ready",
+            errorMessage: "Failed to check Swift requirements"
+        ) {
+            async let sdks = try await swiftPM.listSDKs()
+            async let versions = try await swiftPM.listSwiftVersions()
+            return try await (sdks, versions)
         }
 
         if !installedSDKs.contains(swiftSDK) {
@@ -522,14 +526,17 @@ struct RunCommand: AsyncParsableCommand, Sendable {
             }
 
             if installSDK {
-                try await Noora().progressStep(
-                    message: "Installing SDK",
-                    successMessage: "WendyOS SDK ready to use",
-                    errorMessage: "Failed to install SDK",
-                    showSpinner: true
-                ) { _ in
-                    try await swiftPM.installSDK(from: sdkDownloadURL, checksum: sdkChecksum)
+                try await cliOutput.withStreamingOutput(
+                    title: "Installing SDK",
+                    maxLines: 15
+                ) { emit in
+                    try await swiftPM.installSDK(
+                        from: sdkDownloadURL,
+                        checksum: sdkChecksum,
+                        onOutput: emit
+                    )
                 }
+                cliOutput.success("WendyOS SDK ready to use")
             }
         }
 
@@ -550,14 +557,17 @@ struct RunCommand: AsyncParsableCommand, Sendable {
             }
 
             if installSwift {
-                try await Noora().progressStep(
-                    message: "Installing Swift \(swiftVersion)",
-                    successMessage: "Swift \(swiftVersion) Installed",
-                    errorMessage: "Failed to install Swift \(swiftVersion)",
-                    showSpinner: true
-                ) { _ in
-                    try await swiftPM.installSDK(from: sdkDownloadURL, checksum: sdkChecksum)
+                try await cliOutput.withStreamingOutput(
+                    title: "Installing Swift \(swiftVersion)",
+                    maxLines: 15
+                ) { emit in
+                    try await swiftPM.installSDK(
+                        from: sdkDownloadURL,
+                        checksum: sdkChecksum,
+                        onOutput: emit
+                    )
                 }
+                cliOutput.success("Swift \(swiftVersion) Installed")
             }
         }
     }
@@ -566,7 +576,13 @@ struct RunCommand: AsyncParsableCommand, Sendable {
         try await checkSwiftRequirements()
 
         let swiftPM = SwiftPM()
-        let package = try await swiftPM.showDependencies()
+        let package = try await cliOutput.withProgress(
+            message: "Analyzing package structure",
+            successMessage: "Package structure analyzed",
+            errorMessage: "Failed to analyze package"
+        ) {
+            try await swiftPM.showDependencies()
+        }
 
         if !package.dependencies.contains(where: {
             $0.url.hasSuffix("swift-container-plugin")
@@ -591,7 +607,14 @@ struct RunCommand: AsyncParsableCommand, Sendable {
         }
 
         // Get all executable targets
-        let executableTargets = try await swiftPM.showExecutables().filter {
+        let allExecutables = try await cliOutput.withProgress(
+            message: "Finding executables",
+            successMessage: "Found executables",
+            errorMessage: "Failed to find executables"
+        ) {
+            try await swiftPM.showExecutables()
+        }
+        let executableTargets = allExecutables.filter {
             $0.package == package.identity || $0.package == nil
         }
 
@@ -636,7 +659,6 @@ struct RunCommand: AsyncParsableCommand, Sendable {
             agentConnectionOptions,
             title: "Which device do you want to run this app on?"
         ) { client, endpoint in
-            Noora().info("Building Swift app")
             try await executePhase(phase: "build_swift_app", runtime: "swift") {
                 var resources: [(source: String, destination: String)] = []
                 var entrypoint: String?
@@ -671,32 +693,49 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                             entrypoint = "/bin/ds2"
                             arguments = debugArguments
                         } else {
-                            Noora().warning(
+                            cliOutput.warning(
                                 "ds2 binary not found. Debugging will not be available."
                             )
                         }
                     }
                 }
 
-                try await swiftPM.buildAndPushContainer(
-                    swiftSDK: swiftSDK,
-                    product: executableTarget,
-                    device: endpoint.host,
-                    entrypoint: entrypoint,
-                    arguments: arguments,
-                    resources: resources
-                )
+                // Copy to let for Sendable closure capture
+                let finalEntrypoint = entrypoint
+                let finalArguments = arguments
+                let finalResources = resources
+
+                try await cliOutput.withStreamingOutput(
+                    title: "Building Swift app",
+                    maxLines: 20
+                ) { emit in
+                    try await swiftPM.buildAndPushContainer(
+                        swiftSDK: swiftSDK,
+                        product: executableTarget,
+                        device: endpoint.host,
+                        entrypoint: finalEntrypoint,
+                        arguments: finalArguments,
+                        resources: finalResources,
+                        onOutput: emit
+                    )
+                }
+                cliOutput.success("Swift app built successfully!")
             }
 
-            Noora().info("Creating Container")
             try await executePhase(phase: "create_container", runtime: "swift") {
-                try await createContainerdContainer(
-                    appName: appName,
-                    client: client
-                )
+                try await cliOutput.withProgress(
+                    message: "Creating container",
+                    successMessage: "Container created",
+                    errorMessage: "Failed to create container"
+                ) {
+                    try await createContainerdContainer(
+                        appName: appName,
+                        client: client
+                    )
+                }
             }
 
-            Noora().info("Starting Container")
+            cliOutput.info("Starting container")
             try await executePhase(phase: "start_container", runtime: "swift") {
                 try await startContainerdContainer(imageName: appName, client: client)
             }
