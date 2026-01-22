@@ -214,47 +214,7 @@
             logger.debug("Starting Bluetooth device discovery...")
 
             let centralManager = CentralManager()
-
-            // Wait for Bluetooth to be ready
-            let startTime = ContinuousClock.now
-            let timeout: Duration = .seconds(5)
-
-            var state = await centralManager.state()
-            while state != .poweredOn {
-                if ContinuousClock.now - startTime > timeout {
-                    logger.warning(
-                        "Timeout waiting for Bluetooth to be ready",
-                        metadata: ["lastState": "\(state)"]
-                    )
-                    return []
-                }
-
-                if state == .poweredOff || state == .unauthorized || state == .unsupported {
-                    logger.warning(
-                        "Bluetooth not available",
-                        metadata: ["state": "\(state)"]
-                    )
-                    return []
-                }
-
-                // Wait for state updates
-                for await newState in await centralManager.stateUpdates() {
-                    state = newState
-                    if state == .poweredOn {
-                        break
-                    }
-                    if state == .poweredOff || state == .unauthorized || state == .unsupported {
-                        logger.warning(
-                            "Bluetooth not available",
-                            metadata: ["state": "\(state)"]
-                        )
-                        return []
-                    }
-                    if ContinuousClock.now - startTime > timeout {
-                        break
-                    }
-                }
-            }
+            try await centralManager.waitUntilReady()
 
             logger.debug("Bluetooth is ready, starting scan...")
 
@@ -416,12 +376,13 @@
             // Send version request
             var command = Wendy_Agent_Services_V1_BluetoothCommand()
             command.agentVersion = Wendy_Agent_Services_V1_AgentVersionCommand()
-            let commandBytes: [UInt8] = try command.serializedBytes()
+            let commandData = try command.serializedData()
 
             // Send with length prefix using ByteBuffer
             var sendBuffer = ByteBuffer()
-            sendBuffer.writeInteger(UInt32(commandBytes.count), endianness: .big)
-            sendBuffer.writeBytes(commandBytes)
+            try sendBuffer.writeLengthPrefixed(endianness: .big, as: UInt16.self) { buffer in
+                buffer.writeData(commandData)
+            }
             try await channel.send(Data(buffer: sendBuffer))
 
             // Read response using ByteBuffer
@@ -431,42 +392,24 @@
                 receiveBuffer.writeData(data)
 
                 // Try to read length prefix if we have enough bytes
-                if receiveBuffer.readableBytes >= 4 {
-                    let readerIndex = receiveBuffer.readerIndex
+                if receiveBuffer.readableBytes >= 2 {
                     guard
-                        let messageLength = receiveBuffer.readInteger(
+                        let response = receiveBuffer.readLengthPrefixedSlice(
                             endianness: .big,
-                            as: UInt32.self
+                            as: UInt16.self
                         )
                     else {
-                        // Reset and continue waiting for more data
-                        receiveBuffer.moveReaderIndex(to: readerIndex)
                         continue
                     }
 
-                    // Validate message size (cap to UInt16.max for BLE)
-                    if messageLength > UInt32(UInt16.max) {
-                        throw BluetoothVersionResolutionError.messageTooLarge
-                    }
+                    let bluetoothRespone = try Wendy_Agent_Services_V1_BluetoothResponse(
+                        serializedBytes: response.readableBytesView
+                    )
 
-                    if receiveBuffer.readableBytes >= messageLength {
-                        guard
-                            let responseBytes = receiveBuffer.readBytes(length: Int(messageLength))
-                        else {
-                            throw BluetoothVersionResolutionError.unexpectedResponse
-                        }
-                        let response = try Wendy_Agent_Services_V1_BluetoothResponse(
-                            serializedBytes: responseBytes
-                        )
-
-                        if case .agentVersion(let versionResponse) = response.response {
-                            return versionResponse.version
-                        }
-                        throw BluetoothVersionResolutionError.unexpectedResponse
-                    } else {
-                        // Not enough data yet, reset reader index and wait for more
-                        receiveBuffer.moveReaderIndex(to: readerIndex)
+                    if case .agentVersion(let agentVersion) = bluetoothRespone.response {
+                        return agentVersion.version
                     }
+                    throw BluetoothVersionResolutionError.unexpectedResponse
                 }
             }
 
@@ -497,5 +440,50 @@
         case unexpectedResponse
         case connectionClosed
         case messageTooLarge
+    }
+
+    extension CentralManager {
+        public func waitUntilReady(timeout: Duration = .seconds(5)) async throws {
+            let logger = Logger(label: "sh.wendy.bluetooth.centralmanager")
+            // Wait for Bluetooth to be ready
+            let startTime = ContinuousClock.now
+
+            var state = self.state()
+            while state != .poweredOn {
+                if ContinuousClock.now - startTime > timeout {
+                    logger.warning(
+                        "Timeout waiting for Bluetooth to be ready",
+                        metadata: ["lastState": "\(state)"]
+                    )
+                    throw CancellationError()
+                }
+
+                if state == .poweredOff || state == .unauthorized || state == .unsupported {
+                    logger.warning(
+                        "Bluetooth not available",
+                        metadata: ["state": "\(state)"]
+                    )
+                    throw CancellationError()
+                }
+
+                // Wait for state updates
+                for await newState in stateUpdates() {
+                    state = newState
+                    if state == .poweredOn {
+                        break
+                    }
+                    if state == .poweredOff || state == .unauthorized || state == .unsupported {
+                        logger.warning(
+                            "Bluetooth not available",
+                            metadata: ["state": "\(state)"]
+                        )
+                        throw CancellationError()
+                    }
+                    if ContinuousClock.now - startTime > timeout {
+                        break
+                    }
+                }
+            }
+        }
     }
 #endif

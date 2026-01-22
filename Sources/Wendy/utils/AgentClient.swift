@@ -19,7 +19,7 @@ func withAgentClient<R: Sendable>(
     _ connectionOptions: AgentConnectionOptions,
     title: TerminalText,
     preferBluetooth: Bool = false,
-    includeBluetooth: Bool = false,
+    includeBluetooth: Bool = true,
     _ body: @escaping @Sendable (AgentClient) async throws -> R
 ) async throws -> R {
     let selectedDevice = try await connectionOptions.readWithBluetooth(
