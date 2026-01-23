@@ -27,52 +27,6 @@ struct DiscoverCommand: AsyncParsableCommand {
     @Flag(help: "Skip resolving the agent's version")
     var skipResolveAgentVersion: Bool = false
 
-    private func discoverDevices() async throws -> DevicesCollection {
-        let logger = Logger(label: "sh.wendy.cli.devices")
-        let discovery = PlatformDeviceDiscovery(logger: logger)
-        // Collect devices based on the requested type
-        var usbDevices: [USBDevice] = []
-        var ethernetDevices: [EthernetInterface] = []
-        var lanDevices: [LANDevice] = []
-        var bluetoothDevices: [BluetoothDevice] = []
-
-        switch type {
-        case .usb:
-            usbDevices = await discovery.findUSBDevices()
-        case .ethernet:
-            ethernetDevices = await discovery.findEthernetInterfaces()
-        case .lan:
-            lanDevices = try await discovery.findLANDevices()
-        case .bluetooth:
-            bluetoothDevices = try await discovery.findBluetoothDevices()
-        case .all:
-            // Fetch all types of devices
-            async let _usbDevices = await discovery.findUSBDevices()
-            async let _ethernetDevices = await discovery.findEthernetInterfaces()
-            async let _lanDevices = try await discovery.findLANDevices()
-            async let _bluetoothDevices = try await discovery.findBluetoothDevices()
-
-            usbDevices = await _usbDevices
-            ethernetDevices = await _ethernetDevices
-            lanDevices = try await _lanDevices
-            bluetoothDevices = try await _bluetoothDevices
-        }
-
-        // Display devices in the requested format
-        var collection = DevicesCollection(
-            usb: usbDevices,
-            ethernet: ethernetDevices,
-            lan: lanDevices,
-            bluetooth: bluetoothDevices
-        )
-
-        if !skipResolveAgentVersion {
-            collection = try await collection.resolveAgentVersions()
-        }
-
-        return collection
-    }
-
     func run() async throws {
         let logger = Logger(label: "sh.wendy.cli.devices")
 
@@ -88,38 +42,44 @@ struct DiscoverCommand: AsyncParsableCommand {
                     }
 
                     // Discovery tasks
-                    group.addTask {
-                        let discovery = PlatformDeviceDiscovery(logger: logger)
-                        while !Task.isCancelled {
-                            let devices = try await discovery.findBluetoothDevices(
-                                resolveAgentVersion: !self.skipResolveAgentVersion
-                            )
-                            await deviceCache.updateBLEDevices(with: devices)
-                            try await Task.sleep(for: .seconds(2))
-                        }
-                    }
-
-                    group.addTask {
-                        let discovery = PlatformDeviceDiscovery(logger: logger)
-                        while !Task.isCancelled {
-                            try await discovery.withLANDeviceDiscovery { device in
-                                await deviceCache.updateFastDevices(
-                                    with: DevicesCollection(lan: [device])
+                    if type == .bluetooth || type == .all {
+                        group.addTask {
+                            let discovery = PlatformDeviceDiscovery(logger: logger)
+                            while !Task.isCancelled {
+                                let devices = try await discovery.findBluetoothDevices(
+                                    resolveAgentVersion: !self.skipResolveAgentVersion
                                 )
+                                await deviceCache.updateBLEDevices(with: devices)
+                                try await Task.sleep(for: .seconds(2))
                             }
-                            try await Task.sleep(for: .seconds(2))
                         }
                     }
 
-                    group.addTask {
-                        let discovery = PlatformDeviceDiscovery(logger: logger)
-                        while !Task.isCancelled {
-                            let usb = await discovery.findUSBDevices()
-                            let ethernet = await discovery.findEthernetInterfaces()
-                            await deviceCache.updateFastDevices(
-                                with: DevicesCollection(usb: usb, ethernet: ethernet)
-                            )
-                            try await Task.sleep(for: .seconds(2))
+                    if type == .lan || type == .all {
+                        group.addTask {
+                            let discovery = PlatformDeviceDiscovery(logger: logger)
+                            while !Task.isCancelled {
+                                try await discovery.withLANDeviceDiscovery { device in
+                                    await deviceCache.updateFastDevices(
+                                        with: DevicesCollection(lan: [device])
+                                    )
+                                }
+                                try await Task.sleep(for: .seconds(2))
+                            }
+                        }
+                    }
+
+                    if type == .usb || type == .ethernet || type == .all {
+                        group.addTask {
+                            let discovery = PlatformDeviceDiscovery(logger: logger)
+                            while !Task.isCancelled {
+                                let usb = await discovery.findUSBDevices()
+                                let ethernet = await discovery.findEthernetInterfaces()
+                                await deviceCache.updateFastDevices(
+                                    with: DevicesCollection(usb: usb, ethernet: ethernet)
+                                )
+                                try await Task.sleep(for: .seconds(2))
+                            }
                         }
                     }
                 }

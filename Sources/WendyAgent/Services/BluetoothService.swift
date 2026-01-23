@@ -223,7 +223,8 @@ actor BluetoothService: Service {
         // Total must be <= legacyAdvertisingMaxBytes for legacy advertising
         // If name is too long, truncate it
         let maxNameLength =
-            Self.legacyAdvertisingMaxBytes - Self.flagsFieldBytes - Self.localNameHeaderBytes - Self.uuidBytes
+            Self.legacyAdvertisingMaxBytes - Self.flagsFieldBytes - Self.localNameHeaderBytes
+            - Self.uuidBytes
         let advertisingName: String
         if shortName.utf8.count > maxNameLength {
             // Truncate to fit, ensuring we don't cut in the middle of a multi-byte character
