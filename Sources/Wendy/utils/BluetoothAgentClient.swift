@@ -85,7 +85,7 @@ actor BluetoothAgentClient {
         }
         return bluetoothList.devices.map { BluetoothDeviceInfo(from: $0) }
     }
-    
+
     // MARK: - WiFi Commands
 
     func listWiFiNetworks() async throws -> [Wendy_Agent_Services_V1_WifiNetworkInfo] {

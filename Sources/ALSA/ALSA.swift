@@ -2,6 +2,6 @@
 // Uses runtime dynamic loading (dlopen) to avoid compile-time linking
 
 #if os(Linux)
-// Re-export public types
-@_exported import struct Foundation.Data
+    // Re-export public types
+    @_exported import struct Foundation.Data
 #endif

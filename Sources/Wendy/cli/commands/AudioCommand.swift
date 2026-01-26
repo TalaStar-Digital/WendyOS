@@ -164,7 +164,8 @@ struct AudioCommand: AsyncParsableCommand {
                 }
 
                 if !response.success {
-                    let errorMessage = response.hasErrorMessage ? response.errorMessage : "Unknown error"
+                    let errorMessage =
+                        response.hasErrorMessage ? response.errorMessage : "Unknown error"
                     print("Failed to set default device: \(errorMessage)")
                     throw ExitCode.failure
                 }
@@ -180,7 +181,10 @@ struct AudioCommand: AsyncParsableCommand {
             abstract: "Real-time audio level visualizer (VU meter)."
         )
 
-        @Option(name: [.customShort("i"), .customLong("audio-device")], help: "Audio device ID to monitor (skips interactive selection)")
+        @Option(
+            name: [.customShort("i"), .customLong("audio-device")],
+            help: "Audio device ID to monitor (skips interactive selection)"
+        )
         var audioDevice: UInt32?
 
         @Option(name: .shortAndLong, help: "Update rate in Hz (1-60, default: 20)")
@@ -229,7 +233,9 @@ struct AudioCommand: AsyncParsableCommand {
             request: Wendy_Agent_Services_V1_StreamAudioLevelsRequest,
             handler: @Sendable @escaping (Wendy_Agent_Services_V1_AudioLevelUpdate) -> Void
         ) async throws {
-            @Sendable func handleResponse(response: GRPCCore.StreamingClientResponse<Wendy_Agent_Services_V1_AudioLevelUpdate>) async throws -> Bool {
+            @Sendable func handleResponse(
+                response: GRPCCore.StreamingClientResponse<Wendy_Agent_Services_V1_AudioLevelUpdate>
+            ) async throws -> Bool {
                 for try await update in response.messages {
                     handler(update)
                 }
@@ -271,7 +277,10 @@ struct AudioCommand: AsyncParsableCommand {
             }
 
             // Clear line and print
-            print("\r\u{001B}[K[\(meter)] Peak: \(String(format: "%6.1f", peakDb)) dB  RMS: \(String(format: "%6.1f", rmsDb)) dB", terminator: "")
+            print(
+                "\r\u{001B}[K[\(meter)] Peak: \(String(format: "%6.1f", peakDb)) dB  RMS: \(String(format: "%6.1f", rmsDb)) dB",
+                terminator: ""
+            )
             fflush(stdout)
         }
     }
@@ -284,7 +293,10 @@ struct AudioCommand: AsyncParsableCommand {
             abstract: "Stream audio from device to Mac speakers."
         )
 
-        @Option(name: [.customShort("i"), .customLong("audio-device")], help: "Audio device ID to stream from (skips interactive selection)")
+        @Option(
+            name: [.customShort("i"), .customLong("audio-device")],
+            help: "Audio device ID to stream from (skips interactive selection)"
+        )
         var audioDevice: UInt32?
 
         @Option(name: .shortAndLong, help: "Sample rate in Hz (default: 48000)")
@@ -297,71 +309,76 @@ struct AudioCommand: AsyncParsableCommand {
 
         func run() async throws {
             #if os(macOS)
-            try await withAgentGRPCClient(
-                agentConnectionOptions,
-                title: "Which Wendy device do you want to stream audio from?"
-            ) { client in
-                let audio = Wendy_Agent_Services_V1_WendyAudioService.Client(wrapping: client)
+                try await withAgentGRPCClient(
+                    agentConnectionOptions,
+                    title: "Which Wendy device do you want to stream audio from?"
+                ) { client in
+                    let audio = Wendy_Agent_Services_V1_WendyAudioService.Client(wrapping: client)
 
-                // Get device ID - either from command line or interactive selection
-                let deviceId = try await selectAudioDevice(
-                    audio: audio,
-                    preselectedId: audioDevice,
-                    deviceType: .input,
-                    prompt: "Select an input device to listen to"
-                )
+                    // Get device ID - either from command line or interactive selection
+                    let deviceId = try await selectAudioDevice(
+                        audio: audio,
+                        preselectedId: audioDevice,
+                        deviceType: .input,
+                        prompt: "Select an input device to listen to"
+                    )
 
-                print("Streaming audio from device (Ctrl+C to stop)...")
-                print("Sample rate: \(sampleRate) Hz, Channels: \(channels)")
-                print()
+                    print("Streaming audio from device (Ctrl+C to stop)...")
+                    print("Sample rate: \(sampleRate) Hz, Channels: \(channels)")
+                    print()
 
-                let player = try AudioPlayer(sampleRate: Double(sampleRate), channels: Int(channels))
+                    let player = try AudioPlayer(
+                        sampleRate: Double(sampleRate),
+                        channels: Int(channels)
+                    )
 
-                try await self.streamAudioFromDevice(
-                    audio: audio,
-                    deviceId: deviceId,
-                    rate: self.sampleRate,
-                    channels: self.channels,
-                    player: player
-                )
-            }
+                    try await self.streamAudioFromDevice(
+                        audio: audio,
+                        deviceId: deviceId,
+                        rate: self.sampleRate,
+                        channels: self.channels,
+                        player: player
+                    )
+                }
             #else
-            print("Audio playback is only supported on macOS.")
-            throw ExitCode.failure
+                print("Audio playback is only supported on macOS.")
+                throw ExitCode.failure
             #endif
         }
 
         #if os(macOS)
-        private func streamAudioFromDevice<T: GRPCCore.ClientTransport>(
-            audio: Wendy_Agent_Services_V1_WendyAudioService.Client<T>,
-            deviceId: UInt32,
-            rate: UInt32,
-            channels: UInt32,
-            player: AudioPlayer
-        ) async throws {
-            var request = Wendy_Agent_Services_V1_StreamAudioRequest()
-            request.deviceID = deviceId
-            request.sampleRate = rate
-            request.channels = channels
+            private func streamAudioFromDevice<T: GRPCCore.ClientTransport>(
+                audio: Wendy_Agent_Services_V1_WendyAudioService.Client<T>,
+                deviceId: UInt32,
+                rate: UInt32,
+                channels: UInt32,
+                player: AudioPlayer
+            ) async throws {
+                var request = Wendy_Agent_Services_V1_StreamAudioRequest()
+                request.deviceID = deviceId
+                request.sampleRate = rate
+                request.channels = channels
 
-            try await streamAudioChunks(audio: audio, request: request, player: player)
-        }
-
-        private func streamAudioChunks<T: GRPCCore.ClientTransport>(
-            audio: Wendy_Agent_Services_V1_WendyAudioService.Client<T>,
-            request: Wendy_Agent_Services_V1_StreamAudioRequest,
-            player: AudioPlayer
-        ) async throws {
-            @Sendable func handleResponse(response: GRPCCore.StreamingClientResponse<Wendy_Agent_Services_V1_AudioChunk>) async throws -> Bool {
-                try player.start()
-                for try await chunk in response.messages {
-                    player.enqueue(pcmData: chunk.pcmData)
-                }
-                player.stop()
-                return true
+                try await streamAudioChunks(audio: audio, request: request, player: player)
             }
-            _ = try await audio.streamAudio(request, onResponse: handleResponse)
-        }
+
+            private func streamAudioChunks<T: GRPCCore.ClientTransport>(
+                audio: Wendy_Agent_Services_V1_WendyAudioService.Client<T>,
+                request: Wendy_Agent_Services_V1_StreamAudioRequest,
+                player: AudioPlayer
+            ) async throws {
+                @Sendable func handleResponse(
+                    response: GRPCCore.StreamingClientResponse<Wendy_Agent_Services_V1_AudioChunk>
+                ) async throws -> Bool {
+                    try player.start()
+                    for try await chunk in response.messages {
+                        player.enqueue(pcmData: chunk.pcmData)
+                    }
+                    player.stop()
+                    return true
+                }
+                _ = try await audio.streamAudio(request, onResponse: handleResponse)
+            }
         #endif
     }
 }
