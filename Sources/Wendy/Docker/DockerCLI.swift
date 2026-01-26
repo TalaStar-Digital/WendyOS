@@ -334,40 +334,11 @@ public struct DockerCLI: Sendable {
                 directory,
             ]
 
-            let result = try await Subprocess.run(
-                Subprocess.Executable.name(self.command),
+            try await run(
+                executable: .name(self.command),
                 arguments: Subprocess.Arguments(arguments)
-            ) { _, stdin, stdout, stderr in
-                try await stdin.finish()
-
-                try await withThrowingTaskGroup(of: Void.self) { group in
-                    group.addTask {
-                        for try await line in stdout.lines() {
-                            try await onOutput(line)
-                        }
-                    }
-                    group.addTask {
-                        for try await line in stderr.lines() {
-                            try await onOutput(line)
-                        }
-                    }
-                    try await group.waitForAll()
-                }
-            }
-
-            guard result.terminationStatus.isSuccess else {
-                switch result.terminationStatus {
-                case .unhandledException(2):
-                    throw CancellationError()
-                case .exited(let code), .unhandledException(let code):
-                    throw SubprocessError.nonZeroExit(
-                        command: ([self.command] + arguments).joined(separator: " "),
-                        exitCode: Int(code),
-                        terminationReason: result.terminationStatus.description,
-                        output: "",
-                        error: ""
-                    )
-                }
+            ) { string in
+                try await onOutput(string)
             }
         }
     }

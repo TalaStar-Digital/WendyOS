@@ -20,6 +20,7 @@ import WendyShared
 actor BluetoothService: Service {
     // BLE advertising packet size constraints
     private static let legacyAdvertisingMaxBytes = 31
+    private static let uuidBytes = 16
     private static let flagsFieldBytes = 3
     private static let localNameHeaderBytes = 2
 
@@ -223,6 +224,7 @@ actor BluetoothService: Service {
         // If name is too long, truncate it
         let maxNameLength =
             Self.legacyAdvertisingMaxBytes - Self.flagsFieldBytes - Self.localNameHeaderBytes
+            - Self.uuidBytes
         let advertisingName: String
         if shortName.utf8.count > maxNameLength {
             // Truncate to fit, ensuring we don't cut in the middle of a multi-byte character

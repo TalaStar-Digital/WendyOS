@@ -368,14 +368,9 @@ public final class ImageDownloader: ImageDownloading {
             try listProc.run()
             listProc.waitUntilExit()
 
-            let listText =
-                String(data: listOut.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
-                ?? ""
-            var imgEntry: String?
-            for line in listText.split(separator: "\r\n") {
-                let filename = String(line).trimmingCharacters(in: .whitespaces)
-                if filename.lowercased().hasSuffix(".img") {
-                    imgEntry = filename
+            while true {
+                let data = outPipe.fileHandleForReading.readData(ofLength: 1 << 18)  // 256 KiB
+                if data.isEmpty {
                     break
                 }
             }
