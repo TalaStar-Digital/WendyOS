@@ -1,0 +1,78 @@
+name: Notify Discord on Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    # Only notify for stable releases, not pre-releases
+    if: ${{ !github.event.release.prerelease }}
+    steps:
+      - name: Post to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          NAME="${{ github.event.release.name }}"
+          URL="${{ github.event.release.html_url }}"
+          REPO="${{ github.repository }}"
+
+          # Escape the release body for JSON (truncate to 800 chars to leave room for install instructions)
+          BODY=$(cat << 'BODY_EOF'
+          ${{ github.event.release.body }}
+          BODY_EOF
+          )
+          SHORT_BODY=$(echo "$BODY" | head -c 800)
+
+          # Installation instructions
+          INSTALL_INSTRUCTIONS="## Install the Wendy CLI
+
+**macOS (Homebrew)**
+\`\`\`
+brew install wendylabsinc/tap/wendy
+\`\`\`
+
+**Arch Linux (AUR)**
+\`\`\`
+yay -S wendy
+\`\`\`
+
+**Debian/Ubuntu (APT)**
+\`\`\`
+curl -fsSL https://wendylabsinc.github.io/wendy-agent/install-apt.sh | sudo bash
+\`\`\`
+
+**Fedora/RHEL (DNF/YUM)**
+\`\`\`
+curl -fsSL https://wendylabsinc.github.io/wendy-agent/install-yum.sh | sudo bash
+\`\`\`"
+
+          # Combine release notes with install instructions
+          FULL_DESCRIPTION="${SHORT_BODY}
+
+${INSTALL_INSTRUCTIONS}"
+
+          # Escape for JSON
+          ESCAPED_DESC=$(echo "$FULL_DESCRIPTION" | jq -Rs .)
+
+          # Build JSON payload
+          cat > /tmp/discord_payload.json << EOF
+          {
+            "content": "🚀 **New release** for **${REPO}**: **${NAME:-$TAG}**",
+            "embeds": [
+              {
+                "title": "${NAME:-$TAG}",
+                "url": "${URL}",
+                "description": ${ESCAPED_DESC},
+                "color": 5814783,
+                "footer": { "text": "${REPO} • ${TAG}" }
+              }
+            ]
+          }
+          EOF
+
+          curl -sS -X POST -H "Content-Type: application/json" \
+            -d @/tmp/discord_payload.json \
+            "$DISCORD_WEBHOOK_URL"
