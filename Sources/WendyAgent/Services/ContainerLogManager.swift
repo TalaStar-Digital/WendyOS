@@ -160,6 +160,23 @@ actor ContainerLogManager {
             logger: logger
         )
 
+        // Delete any existing task before creating a new one.
+        // deleteTask() sends SIGKILL and waits for the process to exit.
+        logger.debug(
+            "Cleaning up any existing task before creating new one",
+            metadata: [
+                "container-id": .stringConvertible(appName)
+            ]
+        )
+        do {
+            try await client.deleteTask(containerID: appName)
+        } catch let error as RPCError where error.code == .notFound {
+            logger.debug(
+                "No existing task to delete",
+                metadata: ["container-id": .stringConvertible(appName)]
+            )
+        }
+
         do {
             logger.info("Creating task")
             try await client.createTask(
