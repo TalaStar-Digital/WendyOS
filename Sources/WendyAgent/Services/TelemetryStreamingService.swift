@@ -19,11 +19,14 @@ actor TelemetryStreamingService: Wendy_Agent_Services_V1_WendyTelemetryService.S
         response: RPCWriter<Wendy_Agent_Services_V1_StreamLogsResponse>,
         context: ServerContext
     ) async throws {
+        let serviceFilter = request.hasServiceName ? "\(request.serviceName)" : "none"
+        let minSeverity = request.hasMinSeverity ? "\(request.minSeverity)" : "none"
+
         logger.info(
             "Client subscribed to log stream",
             metadata: [
-                "service_filter": request.hasServiceName ? "\(request.serviceName)" : "none",
-                "min_severity": request.hasMinSeverity ? "\(request.minSeverity)" : "none",
+                "service_filter": serviceFilter,
+                "min_severity": minSeverity,
             ]
         )
 
@@ -61,11 +64,14 @@ actor TelemetryStreamingService: Wendy_Agent_Services_V1_WendyTelemetryService.S
         response: RPCWriter<Wendy_Agent_Services_V1_StreamMetricsResponse>,
         context: ServerContext
     ) async throws {
+        let metricServiceFilter = request.hasServiceName ? "\(request.serviceName)" : "none"
+        let metricPrefix = request.hasMetricNamePrefix ? "\(request.metricNamePrefix)" : "none"
+
         logger.info(
             "Client subscribed to metrics stream",
             metadata: [
-                "service_filter": request.hasServiceName ? "\(request.serviceName)" : "none",
-                "metric_prefix": request.hasMetricNamePrefix ? "\(request.metricNamePrefix)" : "none",
+                "service_filter": metricServiceFilter,
+                "metric_prefix": metricPrefix,
             ]
         )
 

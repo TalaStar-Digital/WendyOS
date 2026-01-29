@@ -532,7 +532,9 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
 
                         func run(stdout: String, stderr: String) async throws {
                             let container = try await client.getContainer(named: appName)
-                            let snapshot = try await client.mountsSnapshot(named: container.snapshotKey)
+                            let snapshot = try await client.mountsSnapshot(
+                                named: container.snapshotKey
+                            )
 
                             try await stopExistingTask()
 
