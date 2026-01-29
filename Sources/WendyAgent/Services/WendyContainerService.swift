@@ -10,6 +10,15 @@ import WendyAgentGRPC
 import WendyShared
 import _NIOFileSystem
 
+private struct LogChunk: Sendable {
+    let data: Data
+    let isStderr: Bool
+}
+
+private struct StartError: Error, Sendable {
+    let message: String
+}
+
 struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServiceProtocol {
     let logger = Logger(label: "WendyContainerService")
     let persistenceBasePath: URL
@@ -468,136 +477,215 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
     ) async throws -> StreamingServerResponse<Wendy_Agent_Services_V1_RunContainerLayersResponse> {
         let request = request.message
         return StreamingServerResponse { writer in
-            try await Containerd.withClient { client in
-                func run(
-                    stdout: String?,
-                    stderr: String?
-                ) async throws {
-                    let container = try await client.getContainer(named: request.appName)
-                    let snapshot = try await client.mountsSnapshot(named: container.snapshotKey)
+            let appName = request.appName
+            let (logStream, logContinuation) = AsyncStream<LogChunk>.makeStream(
+                bufferingPolicy: .bufferingNewest(200)
+            )
+            let (startStream, startContinuation) = AsyncStream<Result<Void, StartError>>.makeStream(
+                bufferingPolicy: .bufferingNewest(1)
+            )
 
-                    _ = try await stopContainer(
-                        request: .init(
-                            metadata: Metadata(),
-                            message: .with {
-                                $0.appName = request.appName
+            Task.detached(priority: .userInitiated) { [appName] in
+                let taskLogger = Logger(label: "WendyContainerService.log-stream")
+                var startEmitted = false
+
+                func emitStart(_ result: Result<Void, StartError>) {
+                    guard !startEmitted else { return }
+                    startEmitted = true
+                    startContinuation.yield(result)
+                    startContinuation.finish()
+                }
+
+                defer {
+                    if !startEmitted {
+                        emitStart(.failure(StartError(message: "Container start canceled")))
+                    }
+                    logContinuation.finish()
+                }
+
+                do {
+                    try await Containerd.withClient { client in
+                        func stopExistingTask() async throws {
+                            do {
+                                try await client.stopTask(containerID: appName)
+                                await ContainerMonitor.shared.markContainerStopped(appName)
+                                taskLogger.info(
+                                    "Stopped container before restart",
+                                    metadata: ["container-id": .stringConvertible(appName)]
+                                )
+                            } catch let error as RPCError where error.code == .notFound {
+                                taskLogger.info(
+                                    "Container wasn't running",
+                                    metadata: ["container-id": .stringConvertible(appName)]
+                                )
+                            } catch let error as RPCError {
+                                taskLogger.error(
+                                    "Failed to stop container",
+                                    metadata: [
+                                        "container-id": .stringConvertible(appName),
+                                        "error": .stringConvertible(error.description),
+                                    ]
+                                )
+                                throw error
                             }
-                        ),
-                        context: context
-                    ).accepted.get()
-
-                    do {
-                        logger.info("Creating task")
-                        try await client.createTask(
-                            containerID: request.appName,
-                            appName: request.appName,
-                            mounts: snapshot.mounts,
-                            stdout: stdout,
-                            stderr: stderr,
-                            runtime: container.runtime.name
-                        )
-                    } catch let error as RPCError where error.code == .alreadyExists {
-                        logger.info(
-                            "Task already exists, re-creating it",
-                            metadata: [
-                                "container-id": .stringConvertible(request.appName)
-                            ]
-                        )
-                        try await client.deleteTask(containerID: request.appName)
-                        logger.debug(
-                            "Task removed, recreating",
-                            metadata: [
-                                "container-id": .stringConvertible(request.appName)
-                            ]
-                        )
-                        try await client.createTask(
-                            containerID: request.appName,
-                            appName: request.appName,
-                            mounts: snapshot.mounts,
-                            stdout: stdout,
-                            stderr: stderr,
-                            runtime: container.runtime.name
-                        )
-                    } catch is RPCError {
-                        logger.error(
-                            "Failed to kill container",
-                            metadata: [
-                                "container-id": .stringConvertible(request.appName)
-                            ]
-                        )
-                        try await client.createTask(
-                            containerID: request.appName,
-                            appName: request.appName,
-                            mounts: snapshot.mounts,
-                            stdout: stdout,
-                            stderr: stderr,
-                            runtime: container.runtime.name
-                        )
-                        logger.debug(
-                            "Task created",
-                            metadata: [
-                                "container-id": .stringConvertible(request.appName)
-                            ]
-                        )
-                    }
-
-                    logger.info("Starting task")
-                    try await client.runTask(containerID: request.appName)
-
-                    // Mark the container as started in the monitor (reset explicitly stopped flag)
-                    await ContainerMonitor.shared.markContainerStarted(request.appName)
-
-                    // Mark the container as started in the monitor (reset explicitly stopped flag)
-                    await ContainerMonitor.shared.markContainerStarted(request.appName)
-
-                    try await writer.write(
-                        .with {
-                            $0.started = .init()
                         }
+
+                        func run(stdout: String, stderr: String) async throws {
+                            let container = try await client.getContainer(named: appName)
+                            let snapshot = try await client.mountsSnapshot(named: container.snapshotKey)
+
+                            try await stopExistingTask()
+
+                            do {
+                                taskLogger.info("Creating task")
+                                try await client.createTask(
+                                    containerID: appName,
+                                    appName: appName,
+                                    mounts: snapshot.mounts,
+                                    stdout: stdout,
+                                    stderr: stderr,
+                                    runtime: container.runtime.name
+                                )
+                            } catch let error as RPCError where error.code == .alreadyExists {
+                                taskLogger.info(
+                                    "Task already exists, re-creating it",
+                                    metadata: [
+                                        "container-id": .stringConvertible(appName)
+                                    ]
+                                )
+                                try await client.deleteTask(containerID: appName)
+                                taskLogger.debug(
+                                    "Task removed, recreating",
+                                    metadata: [
+                                        "container-id": .stringConvertible(appName)
+                                    ]
+                                )
+                                try await client.createTask(
+                                    containerID: appName,
+                                    appName: appName,
+                                    mounts: snapshot.mounts,
+                                    stdout: stdout,
+                                    stderr: stderr,
+                                    runtime: container.runtime.name
+                                )
+                            } catch is RPCError {
+                                taskLogger.error(
+                                    "Failed to kill container",
+                                    metadata: [
+                                        "container-id": .stringConvertible(appName)
+                                    ]
+                                )
+                                try await client.createTask(
+                                    containerID: appName,
+                                    appName: appName,
+                                    mounts: snapshot.mounts,
+                                    stdout: stdout,
+                                    stderr: stderr,
+                                    runtime: container.runtime.name
+                                )
+                                taskLogger.debug(
+                                    "Task created",
+                                    metadata: [
+                                        "container-id": .stringConvertible(appName)
+                                    ]
+                                )
+                            }
+
+                            taskLogger.info("Starting task")
+                            try await client.runTask(containerID: appName)
+
+                            // Mark the container as started in the monitor (reset explicitly stopped flag)
+                            await ContainerMonitor.shared.markContainerStarted(appName)
+
+                            // Mark the container as started in the monitor (reset explicitly stopped flag)
+                            await ContainerMonitor.shared.markContainerStarted(appName)
+                        }
+
+                        _ = try await client.withStdout { stdout, stderr in
+                            try await run(stdout: stdout, stderr: stderr)
+                            emitStart(.success(()))
+                        } onStdout: { bytes in
+                            let data = Data(buffer: bytes)
+                            _ = logContinuation.yield(.init(data: data, isStderr: false))
+
+                            if let broadcaster = TelemetryLogBroadcasterHolder.shared.broadcaster {
+                                let output = String(buffer: bytes)
+                                let logRequest = createContainerLogRequest(
+                                    appName: appName,
+                                    output: output,
+                                    isStderr: false
+                                )
+                                await broadcaster.broadcastLogs(logRequest)
+                            }
+                        } onStderr: { bytes in
+                            let data = Data(buffer: bytes)
+                            _ = logContinuation.yield(.init(data: data, isStderr: true))
+
+                            if let broadcaster = TelemetryLogBroadcasterHolder.shared.broadcaster {
+                                let output = String(buffer: bytes)
+                                let logRequest = createContainerLogRequest(
+                                    appName: appName,
+                                    output: output,
+                                    isStderr: true
+                                )
+                                await broadcaster.broadcastLogs(logRequest)
+                            }
+                        }
+                    }
+                } catch {
+                    emitStart(.failure(StartError(message: "\(error)")))
+                    taskLogger.error(
+                        "Failed to run container log stream",
+                        metadata: [
+                            "container-id": .stringConvertible(appName),
+                            "error": .stringConvertible("\(error)"),
+                        ]
                     )
                 }
-
-                let appName = request.appName
-                try await client.withStdout { stdout, stderr in
-                    try await run(stdout: stdout, stderr: stderr)
-                } onStdout: { bytes in
-                    try await writer.write(
-                        .with {
-                            $0.stdoutOutput.data = Data(buffer: bytes)
-                        }
-                    )
-
-                    // Broadcast to local OTel for CLI clients
-                    if let broadcaster = TelemetryLogBroadcasterHolder.shared.broadcaster {
-                        let output = String(buffer: bytes)
-                        let logRequest = self.createContainerLogRequest(
-                            appName: appName,
-                            output: output,
-                            isStderr: false
-                        )
-                        await broadcaster.broadcastLogs(logRequest)
-                    }
-                } onStderr: { bytes in
-                    try await writer.write(
-                        .with {
-                            $0.stderrOutput.data = Data(buffer: bytes)
-                        }
-                    )
-
-                    // Broadcast to local OTel for CLI clients
-                    if let broadcaster = TelemetryLogBroadcasterHolder.shared.broadcaster {
-                        let output = String(buffer: bytes)
-                        let logRequest = self.createContainerLogRequest(
-                            appName: appName,
-                            output: output,
-                            isStderr: true
-                        )
-                        await broadcaster.broadcastLogs(logRequest)
-                    }
-                }
-
-                return Metadata()
             }
+
+            var startResult: Result<Void, StartError>?
+            for await result in startStream {
+                startResult = result
+                break
+            }
+
+            guard let startResult else {
+                throw RPCError(code: .internalError, message: "Failed to start container")
+            }
+
+            switch startResult {
+            case .success:
+                try await writer.write(
+                    .with {
+                        $0.started = .init()
+                    }
+                )
+            case .failure(let error):
+                throw RPCError(code: .internalError, message: error.message)
+            }
+
+            for await chunk in logStream {
+                do {
+                    if chunk.isStderr {
+                        try await writer.write(
+                            .with {
+                                $0.stderrOutput.data = chunk.data
+                            }
+                        )
+                    } else {
+                        try await writer.write(
+                            .with {
+                                $0.stdoutOutput.data = chunk.data
+                            }
+                        )
+                    }
+                } catch {
+                    break
+                }
+            }
+
+            return Metadata()
         }
     }
 
@@ -707,47 +795,48 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
         }
     }
 
-    /// Creates an OTel log request from container output for broadcasting to CLI clients.
-    private func createContainerLogRequest(
-        appName: String,
-        output: String,
-        isStderr: Bool
-    ) -> Opentelemetry_Proto_Collector_Logs_V1_ExportLogsServiceRequest {
-        let timestamp = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
+}
 
-        var logRecord = Opentelemetry_Proto_Logs_V1_LogRecord()
-        logRecord.timeUnixNano = timestamp
-        logRecord.observedTimeUnixNano = timestamp
-        logRecord.severityNumber = isStderr ? .warn : .info
-        logRecord.severityText = isStderr ? "STDERR" : "STDOUT"
-        logRecord.body = .with { $0.stringValue = output }
+/// Creates an OTel log request from container output for broadcasting to CLI clients.
+private func createContainerLogRequest(
+    appName: String,
+    output: String,
+    isStderr: Bool
+) -> Opentelemetry_Proto_Collector_Logs_V1_ExportLogsServiceRequest {
+    let timestamp = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
 
-        // Add stream type as attribute
-        var streamAttr = Opentelemetry_Proto_Common_V1_KeyValue()
-        streamAttr.key = "stream"
-        streamAttr.value = .with { $0.stringValue = isStderr ? "stderr" : "stdout" }
-        logRecord.attributes.append(streamAttr)
+    var logRecord = Opentelemetry_Proto_Logs_V1_LogRecord()
+    logRecord.timeUnixNano = timestamp
+    logRecord.observedTimeUnixNano = timestamp
+    logRecord.severityNumber = isStderr ? .warn : .info
+    logRecord.severityText = isStderr ? "STDERR" : "STDOUT"
+    logRecord.body = .with { $0.stringValue = output }
 
-        var scopeLogs = Opentelemetry_Proto_Logs_V1_ScopeLogs()
-        scopeLogs.logRecords = [logRecord]
+    // Add stream type as attribute
+    var streamAttr = Opentelemetry_Proto_Common_V1_KeyValue()
+    streamAttr.key = "stream"
+    streamAttr.value = .with { $0.stringValue = isStderr ? "stderr" : "stdout" }
+    logRecord.attributes.append(streamAttr)
 
-        var resourceLogs = Opentelemetry_Proto_Logs_V1_ResourceLogs()
-        resourceLogs.scopeLogs = [scopeLogs]
+    var scopeLogs = Opentelemetry_Proto_Logs_V1_ScopeLogs()
+    scopeLogs.logRecords = [logRecord]
 
-        // Add service name attribute (the app name)
-        var serviceNameAttr = Opentelemetry_Proto_Common_V1_KeyValue()
-        serviceNameAttr.key = "service.name"
-        serviceNameAttr.value = .with { $0.stringValue = appName }
-        resourceLogs.resource.attributes.append(serviceNameAttr)
+    var resourceLogs = Opentelemetry_Proto_Logs_V1_ResourceLogs()
+    resourceLogs.scopeLogs = [scopeLogs]
 
-        // Add wendy.app.name for filtering
-        var appNameAttr = Opentelemetry_Proto_Common_V1_KeyValue()
-        appNameAttr.key = "wendy.app.name"
-        appNameAttr.value = .with { $0.stringValue = appName }
-        resourceLogs.resource.attributes.append(appNameAttr)
+    // Add service name attribute (the app name)
+    var serviceNameAttr = Opentelemetry_Proto_Common_V1_KeyValue()
+    serviceNameAttr.key = "service.name"
+    serviceNameAttr.value = .with { $0.stringValue = appName }
+    resourceLogs.resource.attributes.append(serviceNameAttr)
 
-        return Opentelemetry_Proto_Collector_Logs_V1_ExportLogsServiceRequest.with {
-            $0.resourceLogs = [resourceLogs]
-        }
+    // Add wendy.app.name for filtering
+    var appNameAttr = Opentelemetry_Proto_Common_V1_KeyValue()
+    appNameAttr.key = "wendy.app.name"
+    appNameAttr.value = .with { $0.stringValue = appName }
+    resourceLogs.resource.attributes.append(appNameAttr)
+
+    return Opentelemetry_Proto_Collector_Logs_V1_ExportLogsServiceRequest.with {
+        $0.resourceLogs = [resourceLogs]
     }
 }

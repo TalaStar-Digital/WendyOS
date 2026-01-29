@@ -22,8 +22,8 @@ actor TelemetryStreamingService: Wendy_Agent_Services_V1_WendyTelemetryService.S
         logger.info(
             "Client subscribed to log stream",
             metadata: [
-                "service_filter": "\(request.serviceName ?? "none")",
-                "min_severity": "\(request.minSeverity ?? 0)",
+                "service_filter": request.hasServiceName ? "\(request.serviceName)" : "none",
+                "min_severity": request.hasMinSeverity ? "\(request.minSeverity)" : "none",
             ]
         )
 
@@ -64,8 +64,8 @@ actor TelemetryStreamingService: Wendy_Agent_Services_V1_WendyTelemetryService.S
         logger.info(
             "Client subscribed to metrics stream",
             metadata: [
-                "service_filter": "\(request.serviceName ?? "none")",
-                "metric_prefix": "\(request.metricNamePrefix ?? "none")",
+                "service_filter": request.hasServiceName ? "\(request.serviceName)" : "none",
+                "metric_prefix": request.hasMetricNamePrefix ? "\(request.metricNamePrefix)" : "none",
             ]
         )
 
