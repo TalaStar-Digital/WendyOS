@@ -225,18 +225,17 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                 runtime: "dockerfile",
                 commandName: "wendy run"
             ) {
-                try await Noora().progressStep(
-                    message: "Preparing app",
-                    successMessage: "App ready to start",
-                    errorMessage: "Failed to prepare app",
-                    showSpinner: true
-                ) { _ in
+                try await cliOutput.withProgressBar(
+                    message: "Unpacking image on device"
+                ) { updateProgress in
                     try await AppBuildHelpers.createContainerdContainer(
                         appName: name,
                         client: client,
-                        restartPolicy: buildRestartPolicy()
+                        restartPolicy: buildRestartPolicy(),
+                        progress: updateProgress
                     )
                 }
+                cliOutput.success("App ready to start")
             }
 
             try await AppBuildHelpers.executePhase(
@@ -559,17 +558,17 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                 runtime: "swift",
                 commandName: "wendy run"
             ) {
-                try await cliOutput.withProgress(
-                    message: "Creating container",
-                    successMessage: "Container created",
-                    errorMessage: "Failed to create container"
-                ) {
+                try await cliOutput.withProgressBar(
+                    message: "Unpacking image on device"
+                ) { updateProgress in
                     try await AppBuildHelpers.createContainerdContainer(
                         appName: appName,
                         client: client,
-                        restartPolicy: buildRestartPolicy()
+                        restartPolicy: buildRestartPolicy(),
+                        progress: updateProgress
                     )
                 }
+                cliOutput.success("Container created")
             }
 
             cliOutput.info("Starting container")
