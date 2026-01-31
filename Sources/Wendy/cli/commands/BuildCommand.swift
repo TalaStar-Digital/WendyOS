@@ -137,18 +137,17 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
                 runtime: "dockerfile",
                 commandName: "wendy build"
             ) {
-                try await Noora().progressStep(
-                    message: "Preparing app",
-                    successMessage: "App ready",
-                    errorMessage: "Failed to prepare app",
-                    showSpinner: true
-                ) { _ in
+                try await cliOutput.withProgressBar(
+                    message: "Unpacking image on device"
+                ) { updateProgress in
                     try await AppBuildHelpers.createContainerdContainer(
                         appName: name,
                         client: client,
-                        restartPolicy: .with { $0.mode = .no }
+                        restartPolicy: .with { $0.mode = .no },
+                        progress: updateProgress
                     )
                 }
+                cliOutput.success("App ready")
             }
 
             cliOutput.success("Build complete! Run 'wendy run' to start the app.")
@@ -321,17 +320,17 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
                 runtime: "swift",
                 commandName: "wendy build"
             ) {
-                try await cliOutput.withProgress(
-                    message: "Creating container",
-                    successMessage: "Container created",
-                    errorMessage: "Failed to create container"
-                ) {
+                try await cliOutput.withProgressBar(
+                    message: "Unpacking image on device"
+                ) { updateProgress in
                     try await AppBuildHelpers.createContainerdContainer(
                         appName: appName,
                         client: client,
-                        restartPolicy: .with { $0.mode = .no }
+                        restartPolicy: .with { $0.mode = .no },
+                        progress: updateProgress
                     )
                 }
+                cliOutput.success("Container created")
             }
 
             cliOutput.success("Build complete! Run 'wendy run' to start the app.")

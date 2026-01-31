@@ -12,6 +12,19 @@ import WendyAgentGRPC
     import AppKit
 #endif
 
+private struct SendableProgressUpdater: @unchecked Sendable {
+    let call: (Double) -> Void
+
+    init(_ call: @escaping (Double) -> Void) {
+        self.call = call
+    }
+
+    @MainActor
+    func update(_ value: Double) {
+        self.call(value)
+    }
+}
+
 /// Shared helper methods for building and preparing apps.
 /// Used by both RunCommand and BuildCommand to avoid code duplication.
 enum AppBuildHelpers {
@@ -225,7 +238,8 @@ enum AppBuildHelpers {
     static func createContainerdContainer(
         appName: String,
         client: GRPCClient<HTTP2ClientTransport.Posix>,
-        restartPolicy: RestartPolicy
+        restartPolicy: RestartPolicy,
+        progress: ((Double) -> Void)? = nil
     ) async throws {
         let logger = Logger(label: "sh.wendy.cli.build.containerd.create")
         let agentContainers = Wendy_Agent_Services_V1_WendyContainerService.Client(
@@ -233,18 +247,52 @@ enum AppBuildHelpers {
         )
 
         let appConfigData = try await readAppConfigData(logger: logger)
-        _ = try await agentContainers.createContainer(
-            request: .init(
-                message: .with {
-                    // The image is pushed to the device's local registry as just "appName"
-                    // The host.docker.internal:port prefix is only for routing during push
-                    $0.imageName = "\(appName):latest"
-                    $0.appName = appName
-                    $0.appConfig = appConfigData
-                    $0.restartPolicy = restartPolicy
+        let request = Wendy_Agent_Services_V1_CreateContainerRequest.with {
+            // The image is pushed to the device's local registry as just "appName"
+            // The host.docker.internal:port prefix is only for routing during push
+            $0.imageName = "\(appName):latest"
+            $0.appName = appName
+            $0.appConfig = appConfigData
+            $0.restartPolicy = restartPolicy
+        }
+
+        let progressHandler = SendableProgressUpdater(progress ?? { _ in })
+
+        try await agentContainers.createContainerWithProgress(request) { response in
+            switch response.accepted {
+            case .success(let contents):
+                for try await bodyPart in contents.bodyParts {
+                    switch bodyPart {
+                    case .message(let message):
+                        switch message.responseType {
+                        case .progress(let progressUpdate):
+                            switch progressUpdate.phase {
+                            case .unpacking:
+                                await progressHandler.update(0)
+                            case .applyingLayer:
+                                let total = Double(progressUpdate.totalLayers)
+                                let index = Double(progressUpdate.layerIndex)
+                                if total > 0 {
+                                    await progressHandler.update(min(max(index / total, 0), 1))
+                                }
+                            case .creatingContainer, .complete:
+                                await progressHandler.update(1)
+                            case .unspecified, .UNRECOGNIZED:
+                                break
+                            }
+                        case .completed:
+                            await progressHandler.update(1)
+                        case .none:
+                            break
+                        }
+                    case .trailingMetadata:
+                        break
+                    }
                 }
-            )
-        )
+            case .failure(let error):
+                throw error
+            }
+        }
     }
 
     /// Read app configuration from wendy.json if present

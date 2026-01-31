@@ -234,9 +234,40 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
         request: ServerRequest<Wendy_Agent_Services_V1_CreateContainerRequest>,
         context: ServerContext
     ) async throws -> ServerResponse<Wendy_Agent_Services_V1_CreateContainerResponse> {
+        try await createContainerInternal(request: request.message, progress: nil)
+        return ServerResponse(message: .init())
+    }
+
+    func createContainerWithProgress(
+        request: ServerRequest<Wendy_Agent_Services_V1_CreateContainerRequest>,
+        context: ServerContext
+    ) async throws
+        -> StreamingServerResponse<Wendy_Agent_Services_V1_CreateContainerProgressResponse>
+    {
+        let request = request.message
+        return StreamingServerResponse { writer in
+            try await createContainerInternal(request: request) { progress in
+                try await writer.write(.with { $0.progress = progress })
+            }
+
+            try await writer.write(
+                .with {
+                    $0.completed = .init()
+                }
+            )
+
+            return Metadata()
+        }
+    }
+
+    private func createContainerInternal(
+        request: Wendy_Agent_Services_V1_CreateContainerRequest,
+        progress: (
+            @Sendable (Wendy_Agent_Services_V1_CreateContainerProgress) async throws -> Void
+        )?
+    ) async throws {
         try await Containerd.withClient { client in
             var labels = [String: String]()
-            let request = request.message
 
             let images = Containerd_Services_Images_V1_Images.Client(wrapping: client.client)
 
@@ -408,7 +439,39 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
 
             // Unpack the image from the content store into snapshots
             // This is required when images are pushed via registry but not yet unpacked
-            let (snapshotKey, _) = try await client.unpackImage(named: request.imageName)
+            let progressHandler = progress
+            let (snapshotKey, _) = try await client.unpackImage(
+                named: request.imageName
+            ) { unpackProgress in
+                guard let progressHandler else { return }
+
+                let progressMessage = Wendy_Agent_Services_V1_CreateContainerProgress.with {
+                    switch unpackProgress.phase {
+                    case .start(let totalLayers):
+                        $0.phase = .unpacking
+                        $0.totalLayers = Int32(totalLayers)
+                    case .layer(let index, let total, let size, let reused):
+                        $0.phase = .applyingLayer
+                        $0.layerIndex = Int32(index)
+                        $0.totalLayers = Int32(total)
+                        $0.layerSize = size
+                        $0.reusedSnapshot = reused
+                    case .complete(let totalLayers, _, _):
+                        $0.phase = .complete
+                        $0.totalLayers = Int32(totalLayers)
+                    }
+                }
+
+                try await progressHandler(progressMessage)
+            }
+
+            if let progressHandler {
+                try await progressHandler(
+                    .with {
+                        $0.phase = .creatingContainer
+                    }
+                )
+            }
 
             do {
                 logger.info(
@@ -455,8 +518,6 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
                     )
                 }
             }
-
-            return ServerResponse(message: .init())
         }
     }
 
