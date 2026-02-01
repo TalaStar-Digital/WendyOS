@@ -79,7 +79,7 @@ struct NamespaceInterceptor: ClientInterceptor {
 
 public struct ContainerdUnpackProgress: Sendable {
     public enum Phase: Sendable {
-        case start(totalLayers: Int)
+        case start(totalLayers: Int, totalBytes: Int64)
         case layer(index: Int, total: Int, size: Int64, reused: Bool)
         case complete(totalLayers: Int, reused: Int, created: Int)
     }
@@ -694,11 +694,17 @@ public struct Containerd: Sendable {
         // Unpack each layer, reusing existing snapshots when possible
         var previousChainID: String? = nil
         let totalLayers = manifest.layers.count
+        let totalBytes = manifest.layers.reduce(Int64(0)) { $0 + $1.size }
         var snapshotsReused = 0
         var snapshotsCreated = 0
 
         try await progress(
-            ContainerdUnpackProgress(phase: .start(totalLayers: totalLayers))
+            ContainerdUnpackProgress(
+                phase: .start(
+                    totalLayers: totalLayers,
+                    totalBytes: totalBytes
+                )
+            )
         )
 
         for (index, layer) in manifest.layers.enumerated() {

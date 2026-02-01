@@ -25,6 +25,72 @@ private struct SendableProgressUpdater: @unchecked Sendable {
     }
 }
 
+private actor UnpackProgressTracker {
+    private var totalBytes: Int64?
+    private var totalLayers: Int = 0
+    private var completedBytes: Int64 = 0
+    private var seenLayerIndices: Set<Int> = []
+    private var layerSizes: [Int: Int64] = [:]
+
+    func progressValue(
+        for update: Wendy_Agent_Services_V1_CreateContainerProgress
+    ) -> Double? {
+        switch update.phase {
+        case .unpacking:
+            if update.totalLayers > 0 {
+                totalLayers = Int(update.totalLayers)
+            }
+            if update.layerSize > 0 {
+                if totalBytes == nil {
+                    totalBytes = update.layerSize
+                    recomputeCompletedBytes()
+                } else {
+                    totalBytes = update.layerSize
+                }
+            }
+            return 0
+        case .applyingLayer:
+            if totalLayers == 0 && update.totalLayers > 0 {
+                totalLayers = Int(update.totalLayers)
+            }
+            let index = Int(update.layerIndex)
+            if index > 0 {
+                if update.layerSize > 0 {
+                    layerSizes[index] = update.layerSize
+                }
+                if !seenLayerIndices.contains(index) {
+                    seenLayerIndices.insert(index)
+                    if totalBytes != nil {
+                        completedBytes += layerSizes[index] ?? 0
+                    }
+                }
+            }
+
+            if let totalBytes, totalBytes > 0 {
+                let value = Double(completedBytes) / Double(totalBytes)
+                return min(max(value, 0), 1)
+            }
+
+            if totalLayers > 0 {
+                let value = Double(update.layerIndex) / Double(totalLayers)
+                return min(max(value, 0), 1)
+            }
+
+            return nil
+        case .creatingContainer, .complete:
+            return 1
+        case .unspecified, .UNRECOGNIZED:
+            return nil
+        }
+    }
+
+    private func recomputeCompletedBytes() {
+        completedBytes = seenLayerIndices.reduce(Int64(0)) { total, index in
+            total + (layerSizes[index] ?? 0)
+        }
+    }
+}
+
 /// Shared helper methods for building and preparing apps.
 /// Used by both RunCommand and BuildCommand to avoid code duplication.
 enum AppBuildHelpers {
@@ -257,6 +323,7 @@ enum AppBuildHelpers {
         }
 
         let progressHandler = SendableProgressUpdater(progress ?? { _ in })
+        let progressTracker = UnpackProgressTracker()
 
         try await agentContainers.createContainerWithProgress(request) { response in
             switch response.accepted {
@@ -266,19 +333,10 @@ enum AppBuildHelpers {
                     case .message(let message):
                         switch message.responseType {
                         case .progress(let progressUpdate):
-                            switch progressUpdate.phase {
-                            case .unpacking:
-                                await progressHandler.update(0)
-                            case .applyingLayer:
-                                let total = Double(progressUpdate.totalLayers)
-                                let index = Double(progressUpdate.layerIndex)
-                                if total > 0 {
-                                    await progressHandler.update(min(max(index / total, 0), 1))
-                                }
-                            case .creatingContainer, .complete:
-                                await progressHandler.update(1)
-                            case .unspecified, .UNRECOGNIZED:
-                                break
+                            if let value = await progressTracker.progressValue(
+                                for: progressUpdate
+                            ) {
+                                await progressHandler.update(value)
                             }
                         case .completed:
                             await progressHandler.update(1)

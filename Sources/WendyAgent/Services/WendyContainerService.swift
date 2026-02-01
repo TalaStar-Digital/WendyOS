@@ -447,9 +447,10 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
 
                 let progressMessage = Wendy_Agent_Services_V1_CreateContainerProgress.with {
                     switch unpackProgress.phase {
-                    case .start(let totalLayers):
+                    case .start(let totalLayers, let totalBytes):
                         $0.phase = .unpacking
                         $0.totalLayers = Int32(totalLayers)
+                        $0.layerSize = totalBytes
                     case .layer(let index, let total, let size, let reused):
                         $0.phase = .applyingLayer
                         $0.layerIndex = Int32(index)
