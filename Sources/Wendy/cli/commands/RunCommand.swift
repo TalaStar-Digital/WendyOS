@@ -139,10 +139,10 @@ struct RunCommand: AsyncParsableCommand, Sendable {
             // Validate flags before proceeding
             try validate()
 
+            let currentPath = FileManager.default.currentDirectoryPath
             let isSwiftPackage = FileManager.default.fileExists(atPath: "Package.swift")
-            let directory = try FileManager.default.contentsOfDirectory(
-                atPath: FileManager.default.currentDirectoryPath
-            )
+            let hasPythonRequirements = FileManager.default.fileExists(atPath: "requirements.txt")
+            let directory = try FileManager.default.contentsOfDirectory(atPath: currentPath)
 
             for item in directory where item.lowercased().contains("dockerfile") {
                 try await runDockerfileApp()
@@ -151,12 +151,66 @@ struct RunCommand: AsyncParsableCommand, Sendable {
 
             if isSwiftPackage {
                 try await runSwiftApp()
+            } else if hasPythonRequirements {
+                // Python project without Dockerfile - offer to generate one
+                try await generatePythonDockerfileAndRun()
             } else {
                 Noora().error(
                     "Directory is not a Swift Package, nor can it be built as a docker container"
                 )
             }
         }
+    }
+
+    func generatePythonDockerfileAndRun() async throws {
+        let generator = PythonDockerfileGenerator()
+
+        Noora().info("Detected Python project (requirements.txt found)")
+
+        // Detect or prompt for entry point
+        let entryPoint: String
+        if let detected = generator.detectEntryPoint() {
+            Noora().info("Detected entry point: \(detected)")
+            entryPoint = detected
+        } else if let selected = generator.promptForEntryPoint(autoAccept: shouldAutoAccept) {
+            entryPoint = selected
+        } else {
+            Noora().error(
+                "No Python files found in the project. Please create a Python file or add a Dockerfile manually."
+            )
+            return
+        }
+
+        // Show what we detected
+        let pythonVersion = generator.getPythonVersion()
+        let framework = generator.detectFramework()
+        let systemDeps = generator.detectSystemDependencies()
+
+        Noora().info("Python version: \(pythonVersion)")
+        if framework != .none {
+            Noora().info("Detected framework: \(framework.displayName)")
+        }
+        if !systemDeps.isEmpty {
+            Noora().info("System dependencies: \(systemDeps.joined(separator: ", "))")
+        }
+
+        // Confirm generation
+        if !shouldAutoAccept {
+            guard
+                Noora().yesOrNoChoicePrompt(
+                    question: "Generate Dockerfile and continue?"
+                )
+            else {
+                return
+            }
+        }
+
+        // Generate and write Dockerfile
+        try generator.writeDockerfile(entryPoint: entryPoint)
+        Noora().success("Generated Dockerfile")
+
+        // Now run as a Dockerfile app
+        try await runDockerfileApp()
     }
 
     func runDockerfileApp() async throws {
