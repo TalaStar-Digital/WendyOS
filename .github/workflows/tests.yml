@@ -19,14 +19,13 @@ jobs:
         id: check
         env:
           HAS_BUG_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'bug') }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           # Always use spot instances for now (on-demand requires runs-on.com configuration)
           SPOT="true"
 
-          TITLE="${{ github.event.pull_request.title }}"
-          BODY="${{ github.event.pull_request.body }}"
-
-          if [[ "$TITLE" == *"[BUGFIX]"* ]] || [[ "$BODY" == *"[BUGFIX]"* ]]; then
+          if [[ "$PR_TITLE" == *"[BUGFIX]"* ]] || [[ "$PR_BODY" == *"[BUGFIX]"* ]]; then
             echo "Found [BUGFIX] tag in PR"
             # SPOT="false"  # Uncomment when on-demand is configured in runs-on.com
           elif [ "$HAS_BUG_LABEL" == "true" ]; then
