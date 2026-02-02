@@ -14,9 +14,22 @@ jobs:
     steps:
       - name: Check PR for BUGFIX tag or bug label
         id: check
+        env:
+          HAS_BUG_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'bug') }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          # Always use spot instances (on-demand not available in runs-on.com setup)
-          echo "spot=true" >> $GITHUB_OUTPUT
+          SPOT="true"
+
+          if [[ "$PR_TITLE" == *"[BUGFIX]"* ]] || [[ "$PR_BODY" == *"[BUGFIX]"* ]]; then
+            echo "Found [BUGFIX] tag in PR, using on-demand instances"
+            SPOT="false"
+          elif [ "$HAS_BUG_LABEL" == "true" ]; then
+            echo "Found 'bug' label on PR, using on-demand instances"
+            SPOT="false"
+          fi
+
+          echo "spot=$SPOT" >> $GITHUB_OUTPUT
 
   format-check:
     name: Swift Format Check

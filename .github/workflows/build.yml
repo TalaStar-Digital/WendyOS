@@ -3,13 +3,11 @@ name: Build products and release
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('build-pr-{0}', github.event.pull_request.number) || format('build-ref-{0}', github.ref) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
 
 # Add permissions needed for creating releases
 permissions:
@@ -22,10 +20,10 @@ jobs:
     outputs:
       spot: ${{ steps.check.outputs.spot }}
     steps:
-      - name: Check PR for BUGFIX tag or bug label
+      - name: Set spot instance preference
         id: check
         run: |
-          # Always use spot instances (on-demand not available in runs-on.com setup)
+          # Always use spot instances (on-demand requires runs-on.com configuration)
           echo "spot=true" >> $GITHUB_OUTPUT
 
   determine-version:
