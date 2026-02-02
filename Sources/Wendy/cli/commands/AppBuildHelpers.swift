@@ -357,7 +357,14 @@ enum AppBuildHelpers {
     static func readAppConfigData(logger: Logger) async throws -> Data {
         do {
             let appConfigData = try Data(contentsOf: URL(fileURLWithPath: "./wendy.json"))
-            // Validate data
+
+            // Validate for unknown keys and emit warnings
+            let warnings = AppConfig.validateJSON(appConfigData)
+            for warning in warnings {
+                cliOutput.warning(warning)
+            }
+
+            // Validate data can be decoded
             _ = try JSONDecoder().decode(AppConfig.self, from: appConfigData)
             return appConfigData
         } catch {

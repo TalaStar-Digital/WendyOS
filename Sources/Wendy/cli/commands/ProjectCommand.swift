@@ -44,6 +44,13 @@ extension ModifyProjectCommand {
 
     func loadConfig(from path: String) throws -> AppConfig {
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
+
+        // Validate for unknown keys and emit warnings
+        let warnings = AppConfig.validateJSON(data)
+        for warning in warnings {
+            cliOutput.warning(warning)
+        }
+
         return try JSONDecoder().decode(AppConfig.self, from: data)
     }
 

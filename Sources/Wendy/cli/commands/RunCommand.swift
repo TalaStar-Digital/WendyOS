@@ -139,6 +139,10 @@ struct RunCommand: AsyncParsableCommand, Sendable {
             // Validate flags before proceeding
             try validate()
 
+            // Validate wendy.json early to show warnings before building
+            let logger = Logger(label: "sh.wendy.cli.run")
+            _ = try await AppBuildHelpers.readAppConfigData(logger: logger)
+
             let currentPath = FileManager.default.currentDirectoryPath
             let isSwiftPackage = FileManager.default.fileExists(atPath: "Package.swift")
             let directory = try FileManager.default.contentsOfDirectory(atPath: currentPath)
