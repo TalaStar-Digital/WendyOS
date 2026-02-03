@@ -26,11 +26,10 @@ private struct SendableProgressUpdater: @unchecked Sendable {
 }
 
 private actor UnpackProgressTracker {
-    private var totalBytes: Int64?
+    private var totalBytes: Int64 = 0
     private var totalLayers: Int = 0
     private var completedBytes: Int64 = 0
-    private var seenLayerIndices: Set<Int> = []
-    private var layerSizes: [Int: Int64] = [:]
+    private var completedLayers: Int = 0
 
     /// Returns a tuple of (progress value, detail string) for the given update.
     /// The detail string describes the current phase (e.g., "Layer 3/7").
@@ -39,65 +38,58 @@ private actor UnpackProgressTracker {
     ) -> (value: Double, detail: String?)? {
         switch update.phase {
         case .unpacking:
+            // Start phase: capture total layers and total bytes
             if update.totalLayers > 0 {
                 totalLayers = Int(update.totalLayers)
             }
             if update.layerSize > 0 {
-                if totalBytes == nil {
-                    totalBytes = update.layerSize
-                    recomputeCompletedBytes()
-                } else {
-                    totalBytes = update.layerSize
-                }
+                // In the start phase, layerSize contains the total image size
+                totalBytes = update.layerSize
             }
-            return (0, "Unpacking")
+            return (0, "Preparing")
+
         case .applyingLayer:
+            // Layer completion: track progress
             if totalLayers == 0 && update.totalLayers > 0 {
                 totalLayers = Int(update.totalLayers)
             }
-            let index = Int(update.layerIndex)
-            if index > 0 {
-                if update.layerSize > 0 {
-                    layerSizes[index] = update.layerSize
-                }
-                if !seenLayerIndices.contains(index) {
-                    seenLayerIndices.insert(index)
-                    if totalBytes != nil {
-                        completedBytes += layerSizes[index] ?? 0
-                    }
-                }
+
+            let layerIndex = Int(update.layerIndex)
+            let layerSize = update.layerSize
+
+            // Only count each layer once (layerIndex is 1-based)
+            if layerIndex > completedLayers {
+                completedLayers = layerIndex
+                completedBytes += layerSize
             }
 
-            let detail: String?
-            if totalLayers > 0 {
-                detail = "Layer \(update.layerIndex)/\(totalLayers)"
-            } else {
-                detail = "Applying layers"
-            }
+            let detail =
+                totalLayers > 0
+                ? "Layer \(layerIndex)/\(totalLayers)"
+                : "Applying layers"
 
-            if let totalBytes, totalBytes > 0 {
+            // Prefer byte-based progress for accuracy (layers vary in size)
+            if totalBytes > 0 {
                 let value = Double(completedBytes) / Double(totalBytes)
-                return (min(max(value, 0), 1), detail)
+                return (min(max(value, 0), 0.95), detail)  // Cap at 95% to leave room for finalization
             }
 
+            // Fallback to layer-based progress
             if totalLayers > 0 {
-                let value = Double(update.layerIndex) / Double(totalLayers)
-                return (min(max(value, 0), 1), detail)
+                let value = Double(layerIndex) / Double(totalLayers) * 0.95  // Cap at 95%
+                return (min(max(value, 0), 0.95), detail)
             }
 
-            return nil
+            return (0, detail)
+
         case .creatingContainer:
-            return (1, "Creating container")
+            return (0.98, "Finalizing")
+
         case .complete:
             return (1, nil)
+
         case .unspecified, .UNRECOGNIZED:
             return nil
-        }
-    }
-
-    private func recomputeCompletedBytes() {
-        completedBytes = seenLayerIndices.reduce(Int64(0)) { total, index in
-            total + (layerSizes[index] ?? 0)
         }
     }
 }
