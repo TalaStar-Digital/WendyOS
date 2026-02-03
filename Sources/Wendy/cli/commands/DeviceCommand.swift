@@ -333,20 +333,20 @@ struct DeviceCommand: AsyncParsableCommand {
                         collapseOnSelection: false
                     )
 
-                guard shouldUpdate, case .grpc(let client) = agent else {
-                    return
-                }
+                    guard shouldUpdate, case .grpc(let client) = agent else {
+                        return
+                    }
 
-                // TODO: Detect platform of remote device
-                // Default to Linux aarch64 for device updates during setup
-                let binary = try await downloadLatestRelease(platform: .linuxAarch64).path
-                let success = try await Noora().progressBarStep(message: "Updating Device") {
-                    updateProgress in
-                    try await Agent(client: client).update(
-                        fromBinary: binary,
-                        onProgress: updateProgress
-                    )
-                }
+                    // TODO: Detect platform of remote device
+                    // Default to Linux aarch64 for device updates during setup
+                    let binary = try await downloadLatestRelease(platform: .linuxAarch64).path
+                    let success = try await Noora().progressBarStep(message: "Updating Device") {
+                        updateProgress in
+                        try await Agent(client: client).update(
+                            fromBinary: binary,
+                            onProgress: updateProgress
+                        )
+                    }
 
                     guard success else {
                         Noora().error("Failed to update agent")
