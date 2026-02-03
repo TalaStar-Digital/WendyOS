@@ -372,15 +372,20 @@ struct RunCommand: AsyncParsableCommand, Sendable {
         let cache = PackageCache(projectPath: projectPath)
 
         // Try to use cached data for executables and plugin status
+        let requiredContainerPluginVersion = "1.3.0"
+        let containerPluginURL = "https://github.com/apple/swift-container-plugin"
+
         let allExecutables: [SwiftPM.Executable]
         let packageIdentity: String
         var hasContainerPlugin: Bool
+        var containerPluginVersion: String?
 
         if let cached = cache.getValidCache() {
             // Cache hit - use cached data
             allExecutables = cached.executables
             packageIdentity = cached.packageIdentity
             hasContainerPlugin = cached.hasContainerPlugin
+            containerPluginVersion = cached.containerPluginVersion
         } else {
             // Cache miss - fetch fresh data
             let package = try await cliOutput.withProgress(
@@ -401,10 +406,10 @@ struct RunCommand: AsyncParsableCommand, Sendable {
 
             allExecutables = executables
             packageIdentity = package.identity
-            hasContainerPlugin = package.dependencies.contains {
-                $0.url.hasSuffix("swift-container-plugin")
-                    || $0.url.hasSuffix("swift-container-plugin.git")
-            }
+
+            let containerPlugin = package.findDependency(urlSuffix: "swift-container-plugin")
+            hasContainerPlugin = containerPlugin != nil
+            containerPluginVersion = containerPlugin?.version
 
             // Write to cache
             if let hash = try? cache.computePackageSwiftHash() {
@@ -413,13 +418,26 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                         packageSwiftHash: hash,
                         packageIdentity: packageIdentity,
                         executables: allExecutables,
-                        hasContainerPlugin: hasContainerPlugin
+                        hasContainerPlugin: hasContainerPlugin,
+                        containerPluginVersion: containerPluginVersion
                     )
                 )
             }
         }
 
-        if !hasContainerPlugin {
+        let hasOlderContainerPluginVersion: Bool
+        if hasContainerPlugin {
+            // Plugin exists, check version
+            if
+                let containerPluginVersion,
+                SwiftPM.isVersion(containerPluginVersion, atLeast: requiredContainerPluginVersion)
+            {
+                hasOlderContainerPluginVersion = false
+            } else {
+                hasOlderContainerPluginVersion = true
+            }
+        } else {
+            // Plugin not installed
             Noora().info("Container plugin is not installed. Do you want to install it?")
 
             guard
@@ -433,13 +451,20 @@ struct RunCommand: AsyncParsableCommand, Sendable {
             }
 
             try await swiftPM.addDependency(
-                url: "https://github.com/apple/swift-container-plugin",
-                from: "1.0.0"
+                url: containerPluginURL,
+                from: requiredContainerPluginVersion
             )
 
             // Invalidate cache since Package.swift was modified
             cache.invalidate()
             hasContainerPlugin = true
+            hasOlderContainerPluginVersion = false
+        }
+
+        if hasOlderContainerPluginVersion {
+            cliOutput.warning(
+                "swift-container-plugin is installed, but version \(requiredContainerPluginVersion) or higher is recommended."
+            )
         }
 
         let executableTargets = allExecutables.filter {
@@ -502,40 +527,42 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                 var arguments: [String] = []
                 var additionalEnv: [String] = []
 
-                // Add swift-backtrace binaries for crash reporting
-                for binaryName in [
-                    "swift-backtrace-static-linux-arm64",
-                    "swift-backtrace-linux-arm64",
-                ] {
-                    let destination = "/swift-backtrace"
-                    if let backtraceUrl = Bundle.module.url(
-                        forResource: binaryName,
-                        withExtension: nil
-                    ) {
-                        resources.append((source: backtraceUrl.path(), destination: destination))
-                    } else {
-                        let backtraceUrl = URL(fileURLWithPath: CommandLine.arguments[0])
-                            .deletingLastPathComponent()
-                            .appending(path: "wendy-agent_wendy.bundle")
-                            .appending(path: "Contents")
-                            .appending(path: "Resources")
-                            .appending(path: "Resources")
-                            .appending(component: binaryName)
-
-                        if FileManager.default.fileExists(atPath: backtraceUrl.path()) {
-                            resources.append(
-                                (source: backtraceUrl.path(), destination: destination)
-                            )
+                if !hasOlderContainerPluginVersion {
+                    // Add swift-backtrace binaries for crash reporting
+                    for binaryName in [
+                        "swift-backtrace-static-linux-arm64",
+                        "swift-backtrace-linux-arm64",
+                    ] {
+                        let destination = "/swift-backtrace"
+                        if let backtraceUrl = Bundle.module.url(
+                            forResource: binaryName,
+                            withExtension: nil
+                        ) {
+                            resources.append((source: backtraceUrl.path(), destination: destination))
                         } else {
-                            cliOutput.warning(
-                                "\(binaryName) not found. Backtraces may not be available."
-                            )
+                            let backtraceUrl = URL(fileURLWithPath: CommandLine.arguments[0])
+                                .deletingLastPathComponent()
+                                .appending(path: "wendy-agent_wendy.bundle")
+                                .appending(path: "Contents")
+                                .appending(path: "Resources")
+                                .appending(path: "Resources")
+                                .appending(component: binaryName)
+
+                            if FileManager.default.fileExists(atPath: backtraceUrl.path()) {
+                                resources.append(
+                                    (source: backtraceUrl.path(), destination: destination)
+                                )
+                                additionalEnv.append(
+                                    "SWIFT_BACKTRACE=enable=yes,sanitize=yes,threads=all,images=all,interactive=no,swift-backtrace=/swift-backtrace"
+                                )
+                            } else {
+                                cliOutput.warning(
+                                    "\(binaryName) not found. Backtraces may not be available."
+                                )
+                            }
                         }
                     }
                 }
-                additionalEnv.append(
-                    "SWIFT_BACKTRACE=enable=yes,sanitize=yes,threads=all,images=all,interactive=no,swift-backtrace=/swift-backtrace"
-                )
 
                 if debug {
                     let ds2BinaryName = "ds2-124963fd-static-linux-arm64"

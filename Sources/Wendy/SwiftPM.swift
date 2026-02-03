@@ -137,6 +137,16 @@ public struct SwiftPM: Sendable {
             .toolchains
     }
 
+    public func updateDependencies() async throws {
+        let args = arguments(["package", "update"])
+        _ = try await Subprocess.run(
+            .name(executableName),
+            arguments: args,
+            output: .discarded,
+            error: .discarded
+        )
+    }
+
     public func installSDK(
         from url: String,
         checksum: String
@@ -395,5 +405,32 @@ public struct SwiftPM: Sendable {
         public var version: String
         public var path: String
         public var dependencies: [Dependency]
+
+        /// Find a dependency by checking if its URL ends with the given suffix
+        public func findDependency(urlSuffix: String) -> Dependency? {
+            if url.hasSuffix(urlSuffix) || url.hasSuffix("\(urlSuffix).git") {
+                return self
+            }
+            for dep in dependencies {
+                if let found = dep.findDependency(urlSuffix: urlSuffix) {
+                    return found
+                }
+            }
+            return nil
+        }
+    }
+
+    /// Compares two semantic version strings. Returns true if version1 >= version2.
+    public static func isVersion(_ version1: String, atLeast version2: String) -> Bool {
+        let v1Parts = version1.split(separator: ".").compactMap { Int($0) }
+        let v2Parts = version2.split(separator: ".").compactMap { Int($0) }
+
+        for i in 0..<max(v1Parts.count, v2Parts.count) {
+            let v1 = i < v1Parts.count ? v1Parts[i] : 0
+            let v2 = i < v2Parts.count ? v2Parts[i] : 0
+            if v1 > v2 { return true }
+            if v1 < v2 { return false }
+        }
+        return true  // versions are equal
     }
 }

@@ -173,10 +173,35 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
             try await swiftPM.showDependencies()
         }
 
-        if !package.dependencies.contains(where: {
-            $0.url.hasSuffix("swift-container-plugin")
-                || $0.url.hasSuffix("swift-container-plugin.git")
-        }) {
+        let requiredContainerPluginVersion = "1.3.0"
+        let containerPluginURL = "https://github.com/apple/swift-container-plugin"
+
+        if let containerPlugin = package.findDependency(urlSuffix: "swift-container-plugin") {
+            // Plugin exists, check version
+            if !SwiftPM.isVersion(containerPlugin.version, atLeast: requiredContainerPluginVersion) {
+                Noora().warning(
+                    "swift-container-plugin version \(containerPlugin.version) is installed, but version \(requiredContainerPluginVersion) or higher is required."
+                )
+
+                guard
+                    shouldAutoAccept
+                        || Noora().yesOrNoChoicePrompt(
+                            question: "Do you want to update swift-container-plugin to \(requiredContainerPluginVersion)?"
+                        )
+                else {
+                    Noora().error(
+                        "swift-container-plugin \(requiredContainerPluginVersion)+ is required. Please update it manually."
+                    )
+                    return
+                }
+
+                try await swiftPM.addDependency(
+                    url: containerPluginURL,
+                    from: requiredContainerPluginVersion
+                )
+            }
+        } else {
+            // Plugin not installed
             Noora().info("Container plugin is not installed. Do you want to install it?")
 
             guard
@@ -190,8 +215,8 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
             }
 
             try await swiftPM.addDependency(
-                url: "https://github.com/apple/swift-container-plugin",
-                from: "1.0.0"
+                url: containerPluginURL,
+                from: requiredContainerPluginVersion
             )
         }
 
@@ -265,7 +290,8 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
                 var additionalEnv: [String] = []
 
                 // Add swift-backtrace binaries for crash reporting
-                for binaryName in [
+                var backtraceFound = false
+                findBacktrace: for binaryName in [
                     "swift-backtrace-static-linux-arm64",
                     "swift-backtrace-linux-arm64",
                 ] {
@@ -288,16 +314,21 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
                             resources.append(
                                 (source: backtraceUrl.path(), destination: destination)
                             )
-                        } else {
-                            cliOutput.warning(
-                                "\(binaryName) not found. Backtraces may not be available."
-                            )
+                            backtraceFound = true
+                            break findBacktrace
                         }
                     }
                 }
-                additionalEnv.append(
-                    "SWIFT_BACKTRACE=enable=yes,sanitize=yes,threads=all,images=all,interactive=no,swift-backtrace=/swift-backtrace"
-                )
+                
+                if backtraceFound {
+                    additionalEnv.append(
+                        "SWIFT_BACKTRACE=enable=yes,sanitize=yes,threads=all,images=all,interactive=no,swift-backtrace=/swift-backtrace"
+                    )
+                } else {
+                    cliOutput.warning(
+                        "swift-backtrace binary not found. Backtraces may not be available."
+                    )
+                }
 
                 if debug {
                     let ds2BinaryName = "ds2-124963fd-static-linux-arm64"

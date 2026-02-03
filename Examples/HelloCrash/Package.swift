@@ -5,9 +5,6 @@ import PackageDescription
 
 let package = Package(
     name: "HelloCrash",
-    dependencies: [
-        .package(path: "/Users/joannisorlandos/git/apple/swift-container-plugin")
-    ],
     targets: [
         .executableTarget(
             name: "HelloCrash"
