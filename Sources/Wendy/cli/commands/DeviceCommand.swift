@@ -375,4 +375,3 @@ extension Wendycloud_V1_Organization: CustomStringConvertible {
         self.name
     }
 }
-

@@ -257,7 +257,8 @@ func withAgentGRPCClientHandlingUpdates<R: Sendable>(
 ) async throws -> R {
     do {
         return try await withAgentGRPCClientAndEndpoint(connectionOptions, title: title) {
-            client, _ in
+            client,
+            _ in
             try await body(client)
         }
     } catch let error as RPCError where error.code == .unimplemented {

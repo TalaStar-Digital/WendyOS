@@ -54,7 +54,8 @@ enum UpdateChecker {
             }
 
             // Parse version from release name (e.g., "v1.2.3" -> "1.2.3")
-            let latestVersion = latestRelease.name.hasPrefix("v")
+            let latestVersion =
+                latestRelease.name.hasPrefix("v")
                 ? String(latestRelease.name.dropFirst())
                 : latestRelease.name
 
