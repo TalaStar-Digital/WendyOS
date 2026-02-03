@@ -1,6 +1,7 @@
 import Bluetooth
 import Logging
 import NIOCore
+import NIOFoundationCompat
 import WendyAgentGRPC
 
 #if canImport(FoundationEssentials)
