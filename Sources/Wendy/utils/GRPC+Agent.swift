@@ -247,3 +247,71 @@ func _withAgentGRPCClient<R: Sendable>(
         throw error
     }
 }
+
+/// Execute a gRPC operation with automatic handling of unimplemented API errors.
+/// If the device returns an unimplemented error, prompts the user to update their device.
+func withAgentGRPCClientHandlingUpdates<R: Sendable>(
+    _ connectionOptions: AgentConnectionOptions,
+    title: TerminalText,
+    _ body: @escaping @Sendable (GRPCClient<GRPCTransport>) async throws -> R
+) async throws -> R {
+    do {
+        return try await withAgentGRPCClientAndEndpoint(connectionOptions, title: title) {
+            client, _ in
+            try await body(client)
+        }
+    } catch let error as RPCError where error.code == .unimplemented {
+        // Get the endpoint for potential update
+        let selectedDevice = try await connectionOptions.read(
+            title: title,
+            includeBluetooth: false
+        )
+
+        guard case .lan(let host, let port, let defaultDevice) = selectedDevice else {
+            throw error
+        }
+
+        let endpoint = AgentConnectionOptions.Endpoint(
+            host: host,
+            port: port,
+            defaultDevice: defaultDevice
+        )
+
+        // Prompt user to update - if they decline or update fails, re-throw original error
+        let didUpdate = await promptDeviceUpdateIfUnimplemented(error: error, endpoint: endpoint)
+        if !didUpdate {
+            throw error
+        }
+
+        // User updated successfully - they need to retry the command
+        throw CancellationError()
+    }
+}
+
+/// Wait for the gRPC socket to come back up after a device restart
+func waitForDeviceRestart(endpoint: AgentConnectionOptions.Endpoint) async throws {
+    try await Noora().progressBarStep(message: "Waiting for device to restart") { _ in
+        let maxRetries = 60  // Wait up to 60 seconds
+        let retryDelay: UInt64 = 1_000_000_000  // 1 second in nanoseconds
+
+        for _ in 0..<maxRetries {
+            try await Task.sleep(nanoseconds: retryDelay)
+            do {
+                // Try to connect and verify the agent is responsive
+                try await withAgentGRPCClient(endpoint, title: "") { client in
+                    let agent = Wendy_Agent_Services_V1_WendyAgentService.Client(
+                        wrapping: client
+                    )
+                    _ = try await agent.getAgentVersion(request: .init(message: .init()))
+                }
+                // Connection succeeded, device is back up
+                return
+            } catch {
+                // Connection failed, keep retrying
+                continue
+            }
+        }
+
+        throw RPCError(code: .unavailable, message: "Device did not come back up after update")
+    }
+}

@@ -376,30 +376,3 @@ extension Wendycloud_V1_Organization: CustomStringConvertible {
     }
 }
 
-/// Wait for the gRPC socket to come back up after a device restart
-private func waitForDeviceRestart(endpoint: AgentConnectionOptions.Endpoint) async throws {
-    try await Noora().progressBarStep(message: "Waiting for device to restart") { _ in
-        let maxRetries = 60  // Wait up to 60 seconds
-        let retryDelay: UInt64 = 1_000_000_000  // 1 second in nanoseconds
-
-        for _ in 0..<maxRetries {
-            try await Task.sleep(nanoseconds: retryDelay)
-            do {
-                // Try to connect and verify the agent is responsive
-                try await withAgentGRPCClient(endpoint, title: "") { client in
-                    let agent = Wendy_Agent_Services_V1_WendyAgentService.Client(
-                        wrapping: client
-                    )
-                    _ = try await agent.getAgentVersion(request: .init(message: .init()))
-                }
-                // Connection succeeded, device is back up
-                return
-            } catch {
-                // Connection failed, keep retrying
-                continue
-            }
-        }
-
-        throw RPCError(code: .unavailable, message: "Device did not come back up after update")
-    }
-}
