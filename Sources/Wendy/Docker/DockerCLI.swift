@@ -214,10 +214,9 @@ public struct DockerCLI: Sendable {
             case .exited(let code), .unhandledException(let code):
                 exitCode = Int(code)
             }
-            throw SubprocessError.nonZeroExit(
+            throw SubprocessError(
                 command: ([self.command] + arguments).joined(separator: " "),
                 exitCode: exitCode,
-                terminationReason: result.terminationStatus.description,
                 output: "",
                 error: ""
             )
