@@ -1,9 +1,16 @@
 import ArgumentParser
+import Crypto
 import Foundation
+import GRPCCore
+import Hummingbird
 import Imager
 import Logging
+import NIOCore
+import NIOFoundationCompat
 import Noora
 import Subprocess
+import WendyAgentGRPC
+import _NIOFileSystem
 
 #if os(macOS)
     import Darwin
@@ -101,7 +108,9 @@ struct OSCommand: AsyncParsableCommand {
         commandName: "os",
         abstract: "Download and install WendyOS",
         subcommands: [
-            OSInstallCommand.self
+            OSInstallCommand.self,
+            OSUpdateCommand.self,
+            CacheCommand.self,
         ],
         groupedSubcommands: [
             CommandGroup(
@@ -603,12 +612,230 @@ struct OSCommand: AsyncParsableCommand {
             noora.success("🎉 Device \(selectedDeviceName) successfully imaged!")
         }
     }
+
+    struct OSUpdateCommand: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "update",
+            abstract: "Update WendyOS on a device using a Mender artifact."
+        )
+
+        @Argument(help: "Path to the Mender artifact file (.mender)")
+        var artifactPath: String
+
+        @OptionGroup var agentConnectionOptions: AgentConnectionOptions
+
+        func run() async throws {
+            let noora = Noora()
+            let logger = Logger(label: "wendy.os.update")
+
+            // Verify the artifact file exists
+            let fileManager = FileManager.default
+            let absolutePath =
+                artifactPath.hasPrefix("/")
+                ? artifactPath
+                : FileManager.default.currentDirectoryPath + "/" + artifactPath
+
+            guard fileManager.fileExists(atPath: absolutePath) else {
+                noora.error("Mender artifact file not found: \(absolutePath)")
+                throw ExitCode.failure
+            }
+
+            let artifactURL = URL(fileURLWithPath: absolutePath)
+            let fileName = artifactURL.lastPathComponent
+
+            noora.info("Preparing to serve Mender artifact: \(fileName)")
+
+            // Compute file hash for the URL path
+            let fileHash = try await computeFileHash(path: absolutePath)
+
+            // Get the local IP address
+            guard let localIP = getLocalIPAddress() else {
+                noora.error("Could not determine local IP address")
+                throw ExitCode.failure
+            }
+
+            // Use a continuation to pass the artifact URL from the server callback
+            let artifactUrlStream = AsyncStream<String>.makeStream()
+
+            // Start the Hummingbird webserver that serves the file
+            let router = Router().get("\(fileHash)/:filename") { request, context in
+                do {
+                    let data = try Data(contentsOf: artifactURL)
+                    return Response(
+                        status: .ok,
+                        headers: [
+                            .contentType: "application/octet-stream",
+                            .contentDisposition: "attachment; filename=\"\(fileName)\"",
+                        ],
+                        body: ResponseBody(byteBuffer: ByteBuffer(data: data))
+                    )
+                } catch {
+                    logger.error("Failed to serve file: \(error)")
+                    return Response(
+                        status: .internalServerError,
+                        body: ResponseBody(byteBuffer: ByteBuffer(string: "Failed to read file"))
+                    )
+                }
+            }
+
+            var server = Application(
+                router: router,
+                configuration: .init(
+                    address: .hostname("0.0.0.0", port: 0)
+                ),
+                onServerRunning: { channel in
+                    let port = channel.localAddress!.port!
+                    let url = "http://\(localIP):\(port)/\(fileHash)/\(fileName)"
+                    artifactUrlStream.continuation.yield(url)
+                    artifactUrlStream.continuation.finish()
+                }
+            )
+            server.logger.logLevel = .warning
+
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask { [server] in
+                    try await server.runService()
+                }
+
+                // Wait for the server to start and get the URL
+                var artifactDownloadUrl: String?
+                for await url in artifactUrlStream.stream {
+                    artifactDownloadUrl = url
+                }
+
+                guard let artifactDownloadUrl else {
+                    noora.error("Failed to start file server")
+                    group.cancelAll()
+                    return
+                }
+
+                noora.info("Serving artifact at: \(artifactDownloadUrl)")
+                noora.info("Sending update command to device...")
+
+                // Send the gRPC command to the device
+                group.addTask {
+                    do {
+                        try await withAgentGRPCClient(
+                            agentConnectionOptions,
+                            title: "Which device do you want to update?"
+                        ) { client in
+                            let agent = Wendy_Agent_Services_V1_WendyAgentService.Client(
+                                wrapping: client
+                            )
+
+                            try await agent.updateOS(
+                                .with {
+                                    $0.artifactURL = artifactDownloadUrl
+                                }
+                            ) { response in
+                                for try await update in response.messages {
+                                    switch update.responseType {
+                                    case .progress(let progress):
+                                        noora.info(
+                                            "[\(progress.phase)] \(progress.percent)%"
+                                        )
+                                    case .completed(let completed):
+                                        noora.success("OS update completed!")
+                                        if completed.rebootRequired {
+                                            noora.warning(
+                                                "A reboot is required to complete the update."
+                                            )
+                                        }
+                                    case .failed(let failed):
+                                        noora.error("OS update failed: \(failed.errorMessage)")
+                                    case .none:
+                                        break
+                                    }
+                                }
+                            }
+                        }
+                    } catch {
+                        noora.error("Failed to send update command: \(error)")
+                        throw error
+                    }
+
+                    // Give a moment for the device to download before shutting down
+                    try await Task.sleep(for: .seconds(2))
+                }
+
+                // Wait for the gRPC task to complete
+                try await group.next()
+                group.cancelAll()
+            }
+        }
+    }
 }
 
 // MARK: - Helpers
 
-/// Ensure the user has active admin credentials before attempting privileged disk operations.
-/// This warms up sudo on macOS/Linux or validates admin rights on Windows.
+/// Compute SHA256 hash of a file
+private func computeFileHash(path: String) async throws -> String {
+    let fileHandle = try await FileSystem.shared.openFile(forReadingAt: FilePath(path))
+    defer { Task { try? await fileHandle.close() } }
+
+    var hasher = SHA256()
+    for try await chunk in fileHandle.readChunks() {
+        hasher.update(data: chunk.readableBytesView)
+    }
+
+    let digest = hasher.finalize()
+    return digest.map { String(format: "%02x", $0) }.joined().prefix(16).lowercased()
+}
+
+/// Get the local IP address of this machine
+private func getLocalIPAddress() -> String? {
+    #if os(macOS) || os(Linux)
+        var ifaddrs: UnsafeMutablePointer<ifaddrs>?
+
+        guard getifaddrs(&ifaddrs) == 0 else {
+            return nil
+        }
+
+        defer { freeifaddrs(ifaddrs) }
+
+        var current = ifaddrs
+        while current != nil {
+            let addr = current!.pointee
+
+            if let ifaAddr = addr.ifa_addr,
+                ifaAddr.pointee.sa_family == AF_INET
+            {
+                // Get interface name
+                let interfaceName = String(cString: addr.ifa_name)
+
+                // Skip loopback
+                guard interfaceName != "lo0" && interfaceName != "lo" else {
+                    current = addr.ifa_next
+                    continue
+                }
+
+                // Prefer en0 (primary Ethernet/WiFi on macOS) or eth0/wlan0 on Linux
+                let sockaddr = ifaAddr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                    $0.pointee
+                }
+
+                var ipBuffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                var sinAddr = sockaddr.sin_addr
+                inet_ntop(AF_INET, &sinAddr, &ipBuffer, socklen_t(INET_ADDRSTRLEN))
+                // Convert CChar array to String, truncating at null terminator
+                let ipString = ipBuffer.withUnsafeBufferPointer { buffer in
+                    String(cString: buffer.baseAddress!)
+                }
+
+                // Skip localhost and link-local addresses
+                if !ipString.hasPrefix("127.") && !ipString.hasPrefix("169.254.") {
+                    return ipString
+                }
+            }
+
+            current = addr.ifa_next
+        }
+    #endif
+    return nil
+}
+
+/// Ensure the user has active sudo credentials before attempting privileged disk operations.
+/// This warms up sudo so subsequent calls (diskutil/dd) won't fail due to missing TTY prompts.
 private func ensureAdminPrivileges() async throws {
     #if os(Windows)
         // Check if running as administrator

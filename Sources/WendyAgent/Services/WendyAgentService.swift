@@ -3,6 +3,7 @@ import Foundation
 import Logging
 import NIOCore
 import NIOFoundationCompat
+import Subprocess
 import WendyAgentGRPC
 import WendyShared
 import _NIOFileSystem
@@ -575,6 +576,87 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
                 code: .internalError,
                 message: "Failed to discover hardware capabilities: \(error.localizedDescription)"
             )
+        }
+    }
+
+    func updateOS(
+        request: GRPCCore.ServerRequest<Wendy_Agent_Services_V1_UpdateOSRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Wendy_Agent_Services_V1_UpdateOSResponse> {
+        let artifactUrl = request.message.artifactURL
+        logger.info("Starting OS update from URL: \(artifactUrl)")
+
+        return StreamingServerResponse { writer in
+            do {
+                // Send initial progress
+                try await writer.write(
+                    .with {
+                        $0.progress = .with {
+                            $0.phase = "downloading"
+                            $0.percent = 0
+                        }
+                    }
+                )
+
+                // Run mender install command
+                // mender-update install <artifact-url>
+                logger.info("Running mender-update install...")
+                try await writer.write(
+                    .with {
+                        $0.progress = .with {
+                            $0.phase = "installing"
+                            $0.percent = 10
+                        }
+                    }
+                )
+
+                let result = try await Subprocess.run(
+                    .name("mender-update"),
+                    arguments: ["install", artifactUrl],
+                    output: .string(limit: 10_000),
+                    error: .string(limit: 10_000)
+                )
+
+                if result.terminationStatus.isSuccess {
+                    logger.info("Mender update installed successfully")
+                    try await writer.write(
+                        .with {
+                            $0.progress = .with {
+                                $0.phase = "installed"
+                                $0.percent = 100
+                            }
+                        }
+                    )
+                    try await writer.write(
+                        .with {
+                            $0.completed = .with {
+                                $0.rebootRequired = true
+                            }
+                        }
+                    )
+                } else {
+                    let errorOutput = result.standardError ?? "Unknown error"
+                    logger.error("Mender update failed: \(errorOutput)")
+                    try await writer.write(
+                        .with {
+                            $0.failed = .with {
+                                $0.errorMessage = "Mender update failed: \(errorOutput)"
+                            }
+                        }
+                    )
+                }
+            } catch {
+                logger.error("OS update failed: \(error)")
+                try await writer.write(
+                    .with {
+                        $0.failed = .with {
+                            $0.errorMessage = "OS update failed: \(error.localizedDescription)"
+                        }
+                    }
+                )
+            }
+
+            return Metadata()
         }
     }
 }
