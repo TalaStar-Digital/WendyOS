@@ -304,7 +304,7 @@ public struct SwiftPM: Sendable {
             "--swift-sdk=\(swiftSDK)",
             "--allow-network-connections=all",
             "build-container-image",
-            "--from=swift:slim",
+            "--from=swift:\(swiftVersion ?? Self.defaultSwiftVersion)-slim",
             "--allow-insecure-http=destination",
             "--product=\(product.name)",
             "--repository=\(device):5000/\(product.name.lowercased())",
