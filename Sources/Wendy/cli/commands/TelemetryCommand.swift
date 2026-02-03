@@ -219,6 +219,15 @@ struct TelemetryStreamCommand: AsyncParsableCommand {
     )
     var level: String?
 
+    @Option(
+        name: .long,
+        help: "Forward telemetry to an OTLP collector at this address (e.g., localhost:4317)"
+    )
+    var forward: String?
+
+    @Flag(name: .long, help: "Only forward to collector, don't output JSONL")
+    var forwardOnly: Bool = false
+
     @OptionGroup var agentConnectionOptions: AgentConnectionOptions
 
     func run() async throws {
@@ -228,16 +237,37 @@ struct TelemetryStreamCommand: AsyncParsableCommand {
         let streamMetrics = metrics || noneSpecified
         let streamTraces = traces || noneSpecified
 
+        let minSeverity: Int32? = level.flatMap { parseSeverityLevel($0) }
+
+        // Parse collector address if forwarding is enabled
+        let collectorTarget: (host: String, port: Int)?
+        if let forward = forward {
+            let parts = forward.split(separator: ":")
+            guard parts.count == 2, let port = Int(parts[1]) else {
+                throw CLIError.invalidArgument(
+                    name: "forward",
+                    value: forward,
+                    reason: "Expected format: host:port (e.g., localhost:4317)"
+                )
+            }
+            collectorTarget = (String(parts[0]), port)
+        } else {
+            collectorTarget = nil
+        }
+
+        let outputJSONL = !forwardOnly
+
         // Set up SIGINT handling for graceful shutdown
         signal(SIGINT, SIG_IGN)
-        let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+        let signalState = SignalState()
 
         defer {
-            signalSource.cancel()
+            signalState.source.cancel()
             signal(SIGINT, SIG_DFL)
         }
 
-        let minSeverity: Int32? = level.flatMap { parseSeverityLevel($0) }
+        // Start the signal source once, outside the loop
+        signalState.source.resume()
 
         // Reconnection loop
         while !Task.isCancelled {
@@ -246,101 +276,56 @@ struct TelemetryStreamCommand: AsyncParsableCommand {
                     // SIGINT monitoring task
                     group.addTask {
                         await withCheckedContinuation { continuation in
-                            signalSource.setEventHandler {
+                            signalState.source.setEventHandler {
+                                guard !signalState.received else { return }
+                                signalState.received = true
                                 continuation.resume()
                             }
-                            signalSource.resume()
                         }
                         throw CancellationError()
                     }
 
                     // Telemetry streaming task
                     group.addTask { [app, service] in
-                        try await withAgentGRPCClient(agentConnectionOptions, title: "") { client in
-                            let telemetry = Wendy_Agent_Services_V1_WendyTelemetryService.Client(
-                                wrapping: client
-                            )
+                        // Set up collector client if forwarding
+                        if let target = collectorTarget {
+                            try await withOTLPCollectorClient(
+                                host: target.host,
+                                port: target.port
+                            ) { collectorClient in
+                                let logsCollector = Opentelemetry_Proto_Collector_Logs_V1_LogsService.Client(
+                                    wrapping: collectorClient
+                                )
+                                let metricsCollector =
+                                    Opentelemetry_Proto_Collector_Metrics_V1_MetricsService.Client(
+                                        wrapping: collectorClient
+                                    )
+                                let tracesCollector = Opentelemetry_Proto_Collector_Trace_V1_TraceService.Client(
+                                    wrapping: collectorClient
+                                )
 
-                            try await withThrowingTaskGroup(of: Void.self) { innerGroup in
-                                if streamLogs {
-                                    innerGroup.addTask {
-                                        let request = Wendy_Agent_Services_V1_StreamLogsRequest.with {
-                                            if let service = service {
-                                                $0.serviceName = service
-                                            }
-                                            if let app = app {
-                                                $0.appName = app
-                                            }
-                                            if let minSeverity = minSeverity {
-                                                $0.minSeverity = minSeverity
-                                            }
-                                        }
-
-                                        try await telemetry.streamLogs(request) { response in
-                                            switch response.accepted {
-                                            case .success(let contents):
-                                                for try await bodyPart in contents.bodyParts {
-                                                    try Task.checkCancellation()
-                                                    if case .message(let message) = bodyPart {
-                                                        outputLogsAsJSONL(message.logs)
-                                                    }
-                                                }
-                                            case .failure(let error):
-                                                throw error
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if streamMetrics {
-                                    innerGroup.addTask {
-                                        let request = Wendy_Agent_Services_V1_StreamMetricsRequest()
-
-                                        try await telemetry.streamMetrics(request) { response in
-                                            switch response.accepted {
-                                            case .success(let contents):
-                                                for try await bodyPart in contents.bodyParts {
-                                                    try Task.checkCancellation()
-                                                    if case .message(let message) = bodyPart {
-                                                        outputMetricsAsJSONL(message.metrics)
-                                                    }
-                                                }
-                                            case .failure(let error):
-                                                throw error
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if streamTraces {
-                                    innerGroup.addTask {
-                                        let request = Wendy_Agent_Services_V1_StreamTracesRequest.with {
-                                            if let service = service {
-                                                $0.serviceName = service
-                                            }
-                                            if let app = app {
-                                                $0.appName = app
-                                            }
-                                        }
-
-                                        try await telemetry.streamTraces(request) { response in
-                                            switch response.accepted {
-                                            case .success(let contents):
-                                                for try await bodyPart in contents.bodyParts {
-                                                    try Task.checkCancellation()
-                                                    if case .message(let message) = bodyPart {
-                                                        outputTracesAsJSONL(message.traces)
-                                                    }
-                                                }
-                                            case .failure(let error):
-                                                throw error
-                                            }
-                                        }
-                                    }
-                                }
-
-                                try await innerGroup.waitForAll()
+                                try await self.streamTelemetry(
+                                    streamLogs: streamLogs,
+                                    streamMetrics: streamMetrics,
+                                    streamTraces: streamTraces,
+                                    app: app,
+                                    service: service,
+                                    minSeverity: minSeverity,
+                                    outputJSONL: outputJSONL,
+                                    logsCollector: logsCollector,
+                                    metricsCollector: metricsCollector,
+                                    tracesCollector: tracesCollector
+                                )
                             }
+                        } else {
+                            try await self.streamTelemetryWithoutForwarding(
+                                streamLogs: streamLogs,
+                                streamMetrics: streamMetrics,
+                                streamTraces: streamTraces,
+                                app: app,
+                                service: service,
+                                minSeverity: minSeverity
+                            )
                         }
                     }
 
@@ -351,8 +336,233 @@ struct TelemetryStreamCommand: AsyncParsableCommand {
                 break
             } catch {
                 // Output connection error as JSONL
-                outputErrorAsJSONL("Connection lost, reconnecting...")
+                if !forwardOnly {
+                    outputErrorAsJSONL("Connection lost, reconnecting...")
+                }
                 try await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    /// Stream telemetry without forwarding to a collector (JSONL output only)
+    private func streamTelemetryWithoutForwarding(
+        streamLogs: Bool,
+        streamMetrics: Bool,
+        streamTraces: Bool,
+        app: String?,
+        service: String?,
+        minSeverity: Int32?
+    ) async throws {
+        try await withAgentGRPCClient(agentConnectionOptions, title: "") { client in
+            let telemetry = Wendy_Agent_Services_V1_WendyTelemetryService.Client(
+                wrapping: client
+            )
+
+            try await withThrowingTaskGroup(of: Void.self) { innerGroup in
+                if streamLogs {
+                    innerGroup.addTask {
+                        let request = Wendy_Agent_Services_V1_StreamLogsRequest.with {
+                            if let service = service {
+                                $0.serviceName = service
+                            }
+                            if let app = app {
+                                $0.appName = app
+                            }
+                            if let minSeverity = minSeverity {
+                                $0.minSeverity = minSeverity
+                            }
+                        }
+
+                        try await telemetry.streamLogs(request) { response in
+                            switch response.accepted {
+                            case .success(let contents):
+                                for try await bodyPart in contents.bodyParts {
+                                    try Task.checkCancellation()
+                                    if case .message(let message) = bodyPart {
+                                        self.outputLogsAsJSONL(message.logs)
+                                    }
+                                }
+                            case .failure(let error):
+                                throw error
+                            }
+                        }
+                    }
+                }
+
+                if streamMetrics {
+                    innerGroup.addTask {
+                        let request = Wendy_Agent_Services_V1_StreamMetricsRequest()
+
+                        try await telemetry.streamMetrics(request) { response in
+                            switch response.accepted {
+                            case .success(let contents):
+                                for try await bodyPart in contents.bodyParts {
+                                    try Task.checkCancellation()
+                                    if case .message(let message) = bodyPart {
+                                        self.outputMetricsAsJSONL(message.metrics)
+                                    }
+                                }
+                            case .failure(let error):
+                                throw error
+                            }
+                        }
+                    }
+                }
+
+                if streamTraces {
+                    innerGroup.addTask {
+                        do {
+                            let request = Wendy_Agent_Services_V1_StreamTracesRequest.with {
+                                if let service = service {
+                                    $0.serviceName = service
+                                }
+                                if let app = app {
+                                    $0.appName = app
+                                }
+                            }
+
+                            try await telemetry.streamTraces(request) { response in
+                                switch response.accepted {
+                                case .success(let contents):
+                                    for try await bodyPart in contents.bodyParts {
+                                        try Task.checkCancellation()
+                                        if case .message(let message) = bodyPart {
+                                            self.outputTracesAsJSONL(message.traces)
+                                        }
+                                    }
+                                case .failure(let error):
+                                    throw error
+                                }
+                            }
+                        } catch let error as RPCError where error.code == .unimplemented {
+                            // Agent doesn't support traces yet - silently ignore
+                            // Keep task alive to not cancel the group
+                            while !Task.isCancelled {
+                                try await Task.sleep(for: .seconds(60))
+                            }
+                        }
+                    }
+                }
+
+                try await innerGroup.waitForAll()
+            }
+        }
+    }
+
+    /// Stream telemetry with forwarding to an OTLP collector
+    private func streamTelemetry<LogsClient: Opentelemetry_Proto_Collector_Logs_V1_LogsService.ClientProtocol, MetricsClient: Opentelemetry_Proto_Collector_Metrics_V1_MetricsService.ClientProtocol, TracesClient: Opentelemetry_Proto_Collector_Trace_V1_TraceService.ClientProtocol>(
+        streamLogs: Bool,
+        streamMetrics: Bool,
+        streamTraces: Bool,
+        app: String?,
+        service: String?,
+        minSeverity: Int32?,
+        outputJSONL: Bool,
+        logsCollector: LogsClient,
+        metricsCollector: MetricsClient,
+        tracesCollector: TracesClient
+    ) async throws {
+        try await withAgentGRPCClient(agentConnectionOptions, title: "") { client in
+            let telemetry = Wendy_Agent_Services_V1_WendyTelemetryService.Client(
+                wrapping: client
+            )
+
+            try await withThrowingTaskGroup(of: Void.self) { innerGroup in
+                if streamLogs {
+                    innerGroup.addTask {
+                        let request = Wendy_Agent_Services_V1_StreamLogsRequest.with {
+                            if let service = service {
+                                $0.serviceName = service
+                            }
+                            if let app = app {
+                                $0.appName = app
+                            }
+                            if let minSeverity = minSeverity {
+                                $0.minSeverity = minSeverity
+                            }
+                        }
+
+                        try await telemetry.streamLogs(request) { response in
+                            switch response.accepted {
+                            case .success(let contents):
+                                for try await bodyPart in contents.bodyParts {
+                                    try Task.checkCancellation()
+                                    if case .message(let message) = bodyPart {
+                                        if outputJSONL {
+                                            self.outputLogsAsJSONL(message.logs)
+                                        }
+                                        _ = try? await logsCollector.export(message.logs)
+                                    }
+                                }
+                            case .failure(let error):
+                                throw error
+                            }
+                        }
+                    }
+                }
+
+                if streamMetrics {
+                    innerGroup.addTask {
+                        let request = Wendy_Agent_Services_V1_StreamMetricsRequest()
+
+                        try await telemetry.streamMetrics(request) { response in
+                            switch response.accepted {
+                            case .success(let contents):
+                                for try await bodyPart in contents.bodyParts {
+                                    try Task.checkCancellation()
+                                    if case .message(let message) = bodyPart {
+                                        if outputJSONL {
+                                            self.outputMetricsAsJSONL(message.metrics)
+                                        }
+                                        _ = try? await metricsCollector.export(message.metrics)
+                                    }
+                                }
+                            case .failure(let error):
+                                throw error
+                            }
+                        }
+                    }
+                }
+
+                if streamTraces {
+                    innerGroup.addTask {
+                        do {
+                            let request = Wendy_Agent_Services_V1_StreamTracesRequest.with {
+                                if let service = service {
+                                    $0.serviceName = service
+                                }
+                                if let app = app {
+                                    $0.appName = app
+                                }
+                            }
+
+                            try await telemetry.streamTraces(request) { response in
+                                switch response.accepted {
+                                case .success(let contents):
+                                    for try await bodyPart in contents.bodyParts {
+                                        try Task.checkCancellation()
+                                        if case .message(let message) = bodyPart {
+                                            if outputJSONL {
+                                                self.outputTracesAsJSONL(message.traces)
+                                            }
+                                            _ = try? await tracesCollector.export(message.traces)
+                                        }
+                                    }
+                                case .failure(let error):
+                                    throw error
+                                }
+                            }
+                        } catch let error as RPCError where error.code == .unimplemented {
+                            // Agent doesn't support traces yet - silently ignore
+                            // Keep task alive to not cancel the group
+                            while !Task.isCancelled {
+                                try await Task.sleep(for: .seconds(60))
+                            }
+                        }
+                    }
+                }
+
+                try await innerGroup.waitForAll()
             }
         }
     }
@@ -628,6 +838,36 @@ struct TelemetryStreamCommand: AsyncParsableCommand {
     }
 }
 
+// MARK: - OTLP Collector Client
+
+/// Creates a gRPC client connection to an OTLP collector and executes the given closure.
+private func withOTLPCollectorClient<Result: Sendable>(
+    host: String,
+    port: Int,
+    _ body: @Sendable @escaping (GRPCClient<HTTP2ClientTransport.Posix>) async throws -> Result
+) async throws -> Result {
+    let transport = try HTTP2ClientTransport.Posix(
+        target: .ipv4(address: host, port: port),
+        transportSecurity: .plaintext
+    )
+    let client = GRPCClient(transport: transport)
+
+    return try await withThrowingTaskGroup(of: Result.self) { group in
+        group.addTask {
+            try await client.runConnections()
+            throw CancellationError()
+        }
+
+        group.addTask {
+            try await body(client)
+        }
+
+        let result = try await group.next()!
+        group.cancelAll()
+        return result
+    }
+}
+
 // MARK: - JSONL Entry Types
 
 private struct LogJSONLEntry: Encodable {
@@ -693,5 +933,17 @@ private struct SpanEvent: Encodable {
 extension Data {
     func hexEncodedString() -> String {
         map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+// MARK: - Signal State
+
+/// Thread-safe wrapper for SIGINT handling state
+private final class SignalState: @unchecked Sendable {
+    let source: DispatchSourceSignal
+    var received: Bool = false
+
+    init() {
+        self.source = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
     }
 }

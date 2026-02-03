@@ -291,12 +291,22 @@ func withAgentGRPCClientHandlingUpdates<R: Sendable>(
 
 /// Wait for the gRPC socket to come back up after a device restart
 func waitForDeviceRestart(endpoint: AgentConnectionOptions.Endpoint) async throws {
-    try await Noora().progressBarStep(message: "Waiting for device to restart") { _ in
-        let maxRetries = 60  // Wait up to 60 seconds
+    try await Noora().progressStep(
+        message: "Waiting for device to restart...",
+        successMessage: "Device restarted successfully",
+        errorMessage: "Device failed to restart",
+        showSpinner: true
+    ) { updateStatus in
+        let maxRetries = 90  // Wait up to 90 seconds
         let retryDelay: UInt64 = 1_000_000_000  // 1 second in nanoseconds
 
-        for _ in 0..<maxRetries {
-            try await Task.sleep(nanoseconds: retryDelay)
+        // Initial wait for the device to go down
+        updateStatus("Waiting for agent to shut down...")
+        try await Task.sleep(nanoseconds: 3 * retryDelay)
+
+        // Now try to reconnect
+        for attempt in 1...maxRetries {
+            updateStatus("Reconnecting to device (attempt \(attempt)/\(maxRetries))...")
             do {
                 // Try to connect and verify the agent is responsive
                 try await withAgentGRPCClient(endpoint, title: "") { client in
@@ -306,9 +316,11 @@ func waitForDeviceRestart(endpoint: AgentConnectionOptions.Endpoint) async throw
                     _ = try await agent.getAgentVersion(request: .init(message: .init()))
                 }
                 // Connection succeeded, device is back up
+                updateStatus("Device is back online")
                 return
             } catch {
-                // Connection failed, keep retrying
+                // Connection failed, wait and retry
+                try await Task.sleep(nanoseconds: retryDelay)
                 continue
             }
         }
