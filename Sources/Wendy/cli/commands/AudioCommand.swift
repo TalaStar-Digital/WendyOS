@@ -1,4 +1,5 @@
 import ArgumentParser
+import CLIOutput
 import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2
@@ -57,9 +58,9 @@ struct AudioCommand: AsyncParsableCommand {
                     return try await audio.listAudioDevices(request).devices
                 } else {
                     return try await cliOutput.withProgress(
-                        message: "Listing audio devices",
-                        successMessage: "Audio devices listed successfully",
-                        errorMessage: "Failed to list audio devices"
+                        message: "Discovering audio devices",
+                        successMessage: "Audio devices discovered",
+                        errorMessage: "Failed to discover audio devices"
                     ) { [request] in
                         try await audio.listAudioDevices(request)
                     }.devices
@@ -281,7 +282,11 @@ struct AudioCommand: AsyncParsableCommand {
                 "\r\u{001B}[K[\(meter)] Peak: \(String(format: "%6.1f", peakDb)) dB  RMS: \(String(format: "%6.1f", rmsDb)) dB",
                 terminator: ""
             )
-            fflush(stdout)
+            #if os(Linux)
+                fflush(nil)
+            #else
+                fflush(stdout)
+            #endif
         }
     }
 
@@ -421,9 +426,9 @@ private func selectAudioDevice<T: GRPCCore.ClientTransport>(
     request.typeFilter = deviceType
 
     let response = try await cliOutput.withProgress(
-        message: "Fetching audio devices",
-        successMessage: "Audio devices fetched successfully",
-        errorMessage: "Failed to fetch audio devices"
+        message: "Discovering audio devices",
+        successMessage: "Audio devices discovered",
+        errorMessage: "Failed to discover audio devices"
     ) { [request] in
         try await audio.listAudioDevices(request)
     }
@@ -454,7 +459,7 @@ private func selectAudioDevice<T: GRPCCore.ClientTransport>(
     let options = sortedDevices.map { AudioDeviceOption(device: $0) }
 
     // Show interactive picker
-    let selected = Noora().singleChoicePrompt(
+    let selected = try await cliOutput.singleChoicePrompt(
         title: .init(stringLiteral: prompt),
         question: "Select a device",
         options: options

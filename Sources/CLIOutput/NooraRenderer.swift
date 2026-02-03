@@ -94,9 +94,9 @@ public struct NooraRenderer: CLIOutput, Sendable {
         }
     }
 
-    public func selectFromStreamingTable<S: BidirectionalCollection & Sendable>(
+    public func selectFromStreamingTable<S: BidirectionalCollection & Sendable, E: Error>(
         initial: S,
-        updates: some AsyncSequence<S, Never> & Sendable,
+        updates: some AsyncSequence<S, E> & Sendable,
         pageSize: Int,
         renderTable: @escaping @Sendable ([S.Element]) -> (headers: [String], rows: [[String]])
     ) async throws -> S.Element where S.Index == Int, S.Element: Sendable & Comparable {
@@ -115,7 +115,7 @@ public struct NooraRenderer: CLIOutput, Sendable {
             let results = Results<[S.Element]>(initial: initial.sorted())
 
             group.addTask { [updates] in
-                for await value in updates {
+                for try await value in updates {
                     let value = value.sorted()
                     let rendered = renderTable(value)
                     let tableData = TableData(
@@ -210,7 +210,10 @@ public struct NooraRenderer: CLIOutput, Sendable {
         operation: @escaping @Sendable (@escaping @Sendable (Double) -> Void) async throws -> T
     ) async throws -> T {
         try await noora.progressBarStep(message: message) { updateProgress in
-            try await operation(updateProgress)
+            nonisolated(unsafe) let updateProgress = updateProgress
+            return try await operation { progress in
+                updateProgress(progress)
+            }
         }
     }
 
@@ -284,11 +287,11 @@ public struct NooraRenderer: CLIOutput, Sendable {
         )
     }
 
-    public func singleChoicePrompt(
+    public func singleChoicePrompt<Option: CustomStringConvertible & Equatable>(
         title: String?,
         question: String,
-        options: [String]
-    ) async throws -> String {
+        options: [Option]
+    ) async throws -> Option {
         noora.singleChoicePrompt(
             title: title.map { TerminalText(stringLiteral: $0) },
             question: TerminalText(stringLiteral: question),
@@ -303,7 +306,10 @@ public struct NooraRenderer: CLIOutput, Sendable {
         )
     }
 
-    public func multipleChoicePrompt(question: String, options: [String]) async throws -> [String] {
+    public func multipleChoicePrompt<Option: CustomStringConvertible & Equatable>(
+        question: String,
+        options: [Option]
+    ) async throws -> [Option] {
         noora.multipleChoicePrompt(
             question: TerminalText(stringLiteral: question),
             options: options

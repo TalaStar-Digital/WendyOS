@@ -293,7 +293,7 @@ func withAgentGRPCClientHandlingUpdates<R: Sendable>(
 func waitForDeviceRestart(endpoint: AgentConnectionOptions.Endpoint) async throws {
     try await cliOutput.withProgress(
         message: "Waiting for device to restart...",
-        successMessage: "Device restarted successfully",
+        successMessage: "Device restarted",
         errorMessage: "Device failed to restart"
     ) {
         let maxRetries = 90  // Wait up to 90 seconds

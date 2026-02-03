@@ -222,7 +222,9 @@ struct DeviceCommand: AsyncParsableCommand {
                 ) { client, endpoint in
                     let agent = Agent(client: client)
                     _ = try await cliOutput.withProgressBar(
-                        message: "Updating Device"
+                        message: "Updating Device",
+                        successMessage: "Device updated",
+                        errorMessage: "Device update failed"
                     ) {
                         updateProgress in
                         try await agent.update(fromBinary: binary, onProgress: updateProgress)
@@ -232,8 +234,6 @@ struct DeviceCommand: AsyncParsableCommand {
 
                 // Wait for the gRPC socket to come back up after the device restarts
                 try await waitForDeviceRestart(endpoint: endpoint)
-
-                cliOutput.success("Agent updated successfully")
             #endif
         }
     }
@@ -358,7 +358,9 @@ struct DeviceCommand: AsyncParsableCommand {
                     // Default to Linux aarch64 for device updates during setup
                     let binary = try await downloadLatestRelease(platform: .linuxAarch64).path
                     _ = try await cliOutput.withProgressBar(
-                        message: "Updating Device"
+                        message: "Updating Device",
+                        successMessage: "Device updated",
+                        errorMessage: "Device update failed"
                     ) {
                         updateProgress in
                         try await Agent(client: client).update(
@@ -390,8 +392,6 @@ struct DeviceCommand: AsyncParsableCommand {
                         )
                     )
                 }
-
-                cliOutput.success("Agent updated successfully")
             }
         }
     }

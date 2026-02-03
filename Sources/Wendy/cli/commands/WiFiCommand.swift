@@ -160,10 +160,10 @@ struct WiFiCommand: AsyncParsableCommand {
                             ssid: ssid,
                             password: password
                         )
-                        guard result.success else {
+                        guard response.success else {
                             throw CLIError.connectionFailed(
                                 device: "WiFi",
-                                reason: result.errorMessage ?? "Unknown error"
+                                reason: response.errorMessage ?? "Unknown error"
                             )
                         }
                     }

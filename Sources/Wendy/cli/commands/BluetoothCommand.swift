@@ -1,10 +1,10 @@
 import ArgumentParser
 import AsyncAlgorithms
+import CLIOutput
 import Dispatch
 import Foundation
 import GRPCCore
 import Logging
-import Noora
 import WendyAgentGRPC
 
 #if os(macOS)
@@ -458,9 +458,11 @@ struct BluetoothCommand: AsyncParsableCommand {
 
             do {
                 // Wait for devices to appear (with timeout)
-                var initial: TableData?
+                var initial: [BluetoothDeviceInfo]?
                 for attempt in 1...10 {
-                    if let data = try await scanner.makeAsyncIterator().next(), !data.rows.isEmpty {
+                    if let data = try await scanner.makeAsyncIterator().next(),
+                        !data.isEmpty
+                    {
                         initial = data
                         break
                     }
@@ -473,15 +475,29 @@ struct BluetoothCommand: AsyncParsableCommand {
                     throw BluetoothCommandError.noDevicesFound
                 }
 
-                let index = try await Noora().selectableTable(
-                    tableData,
+                let device = try await cliOutput.selectFromStreamingTable(
+                    initial: tableData,
                     updates: scanner,
                     pageSize: pageSize
-                )
+                ) { devices in
+                    let rows: [[String]] = devices.map { bluetoothDevice in
+                        let statusIcon = bluetoothDevice.paired ? "○" : "◌"
+                        return [
+                            "\(statusIcon) \(bluetoothDevice.name)",
+                            "\(bluetoothDevice.address)",
+                            "\(bluetoothDevice.deviceTypeDisplay)",
+                            "\(bluetoothDevice.rssiDescription)",
+                        ]
+                    }
 
-                let devices = await scanner.currentDevices
+                    return (
+                        headers: scanner.headers,
+                        rows: rows
+                    )
+                }
+
                 await stopScanBestEffort()
-                return devices[index]
+                return device
             } catch {
                 await stopScanBestEffort()
                 throw error
@@ -534,7 +550,7 @@ struct BluetoothCommand: AsyncParsableCommand {
 
 // MARK: - Bluetooth Device Model
 
-struct BluetoothDeviceInfo: Codable, Sendable {
+struct BluetoothDeviceInfo: Codable, Sendable, Comparable {
     let name: String
     let address: String
     let rssi: Int?
@@ -543,6 +559,13 @@ struct BluetoothDeviceInfo: Codable, Sendable {
     let trusted: Bool
     let deviceType: String
     let icon: String?
+
+    static func < (lhs: BluetoothDeviceInfo, rhs: BluetoothDeviceInfo) -> Bool {
+        if lhs.connected != rhs.connected {
+            return lhs.connected
+        }
+        return lhs.name < rhs.name
+    }
 
     init(
         name: String,
@@ -746,10 +769,19 @@ actor PairedDevicesScanner: nonisolated AsyncSequence {
 // MARK: - Discovery Scanner (for connect command)
 
 actor DiscoveryScanner: nonisolated AsyncSequence {
-    typealias Element = TableData
+    typealias Element = [BluetoothDeviceInfo]
 
     nonisolated let source: Wendy_Agent_Services_V1_WendyAgentService.Client<GRPCTransport>
     private(set) var currentDevices: [BluetoothDeviceInfo] = []
+
+    nonisolated var headers: [String] {
+        [
+            "Name",
+            "Address",
+            "Type",
+            "Signal",
+        ]
+    }
 
     init(source: Wendy_Agent_Services_V1_WendyAgentService.Client<GRPCTransport>) {
         self.source = source
@@ -766,7 +798,7 @@ actor DiscoveryScanner: nonisolated AsyncSequence {
     struct AsyncIterator: AsyncIteratorProtocol {
         let scanner: DiscoveryScanner
 
-        func next() async throws -> TableData? {
+        func next() async throws -> [BluetoothDeviceInfo]? {
             // Poll interval for discovery
             try await Task.sleep(for: .seconds(2))
 
@@ -785,26 +817,7 @@ actor DiscoveryScanner: nonisolated AsyncSequence {
                 }
 
             await scanner.setDevices(devices)
-
-            let rows: [TableRow] = devices.map { bluetoothDevice in
-                let statusIcon = bluetoothDevice.paired ? "○" : "◌"
-                return [
-                    "\(statusIcon) \(bluetoothDevice.name)",
-                    "\(bluetoothDevice.address)",
-                    "\(bluetoothDevice.deviceTypeDisplay)",
-                    "\(bluetoothDevice.rssiDescription)",
-                ]
-            }
-
-            return TableData(
-                columns: [
-                    TableColumn(title: "Name"),
-                    TableColumn(title: "Address"),
-                    TableColumn(title: "Type"),
-                    TableColumn(title: "Signal"),
-                ],
-                rows: rows
-            )
+            return devices
         }
     }
 }
@@ -831,5 +844,35 @@ enum BluetoothCommandError: Error, LocalizedError {
         case .forgetFailed(let address, let reason):
             return "Failed to forget device \(address): \(reason)"
         }
+    }
+}
+
+private func emitResponseStatusIfNeeded(
+    _ status: Wendy_Agent_Services_V1_ResponseStatus?,
+    showSuccess: Bool = false,
+    showError: Bool = false
+) {
+    guard let status else {
+        return
+    }
+
+    let trimmed = status.message.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return
+    }
+
+    switch status.level {
+    case .success where showSuccess:
+        cliOutput.success(trimmed)
+    case .info:
+        cliOutput.info(trimmed)
+    case .warning:
+        cliOutput.warning(trimmed)
+    case .error where showError:
+        cliOutput.error(trimmed)
+    case .success, .error, .unspecified, .UNRECOGNIZED:
+        ()
+    @unknown default:
+        ()
     }
 }

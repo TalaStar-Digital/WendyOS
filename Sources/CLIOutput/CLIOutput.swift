@@ -61,9 +61,9 @@ public protocol CLIOutput: Sendable {
 
     /// Select an item from a streaming table that updates in real-time.
     /// Returns the selected element.
-    func selectFromStreamingTable<S: BidirectionalCollection & Sendable>(
+    func selectFromStreamingTable<S: BidirectionalCollection & Sendable, E: Error>(
         initial: S,
-        updates: some AsyncSequence<S, Never> & Sendable,
+        updates: some AsyncSequence<S, E> & Sendable,
         pageSize: Int,
         renderTable: @escaping @Sendable ([S.Element]) -> (headers: [String], rows: [[String]])
     ) async throws -> S.Element where S.Index == Int, S.Element: Sendable & Comparable
@@ -132,17 +132,20 @@ public protocol CLIOutput: Sendable {
     func yesOrNoPrompt(question: String, defaultAnswer: Bool) async throws -> Bool
 
     /// Single choice from a list of options
-    func singleChoicePrompt(
+    func singleChoicePrompt<Option: CustomStringConvertible & Equatable>(
         title: String?,
         question: String,
-        options: [String]
-    ) async throws -> String
+        options: [Option]
+    ) async throws -> Option
 
     /// Free-text input prompt
     func textPrompt(title: String?, prompt: String) async throws -> String
 
     /// Multiple choice selection from a list of options
-    func multipleChoicePrompt(question: String, options: [String]) async throws -> [String]
+    func multipleChoicePrompt<Option: CustomStringConvertible & Equatable>(
+        question: String,
+        options: [Option]
+    ) async throws -> [Option]
 
     /// Secure password input prompt
     func secureTextPrompt(title: String, prompt: String) throws -> String
@@ -187,9 +190,9 @@ extension CLIOutput {
         )
     }
 
-    public func selectFromStreamingTable<S: BidirectionalCollection & Sendable>(
+    public func selectFromStreamingTable<S: BidirectionalCollection & Sendable, E: Error>(
         initial: S,
-        updates: some AsyncSequence<S, Never> & Sendable,
+        updates: some AsyncSequence<S, E> & Sendable,
         pageSize: Int,
         renderTable: @escaping @Sendable ([S.Element]) -> (headers: [String], rows: [[String]])
     ) async throws -> S.Element where S.Index == Int, S.Element: Sendable & Comparable {
@@ -262,11 +265,11 @@ extension CLIOutput {
         )
     }
 
-    public func singleChoicePrompt(
+    public func singleChoicePrompt<Option: CustomStringConvertible & Equatable>(
         title: String?,
         question: String,
-        options: [String]
-    ) async throws -> String {
+        options: [Option]
+    ) async throws -> Option {
         throw InteractiveSelectionRequiredError(
             argument: "choice",
             description: "Provide the choice via CLI arguments"
@@ -280,7 +283,10 @@ extension CLIOutput {
         )
     }
 
-    public func multipleChoicePrompt(question: String, options: [String]) async throws -> [String] {
+    public func multipleChoicePrompt<Option: CustomStringConvertible & Equatable>(
+        question: String,
+        options: [Option]
+    ) async throws -> [Option] {
         throw InteractiveSelectionRequiredError(
             argument: "choices",
             description: "Provide the choices via CLI arguments"

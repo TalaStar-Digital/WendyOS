@@ -52,7 +52,7 @@ actor BluetoothService: Service {
             logger.debug("Creating PeripheralManager...")
             let manager = PeripheralManager()
             self.peripheralManager = manager
-            logger.debug("PeripheralManager created successfully")
+            logger.debug("PeripheralManager created")
 
             // Wait for Bluetooth to be ready
             currentPhase = .waitingForReady
@@ -270,7 +270,7 @@ actor BluetoothService: Service {
                 scanResponseData: nil,
                 parameters: AdvertisingParameters()
             )
-            logger.debug("Bluetooth advertising started successfully")
+            logger.debug("Bluetooth advertising started")
         } catch {
             logger.error(
                 "Failed to start advertising",
@@ -294,7 +294,7 @@ actor BluetoothService: Service {
                 parameters: L2CAPChannelParameters(requiresEncryption: false)
             )
             logger.debug(
-                "L2CAP channel published successfully",
+                "L2CAP channel published",
                 metadata: ["psm": "\(psm.rawValue)"]
             )
         } catch {

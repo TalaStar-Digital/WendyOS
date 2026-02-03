@@ -113,8 +113,11 @@ func promptDeviceUpdateIfUnimplemented(
 
             try await withAgentGRPCClient(endpoint, title: "Updating device") { client in
                 let agent = Agent(client: client)
-                _ = try await cliOutput.withProgressBar(message: "Updating Device") {
-                    updateProgress in
+                _ = try await cliOutput.withProgressBar(
+                    message: "Updating Device",
+                    successMessage: "Device updated",
+                    errorMessage: "Device update failed"
+                ) { updateProgress in
                     try await agent.update(fromBinary: binary, onProgress: updateProgress)
                 }
             }

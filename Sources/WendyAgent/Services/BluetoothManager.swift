@@ -18,7 +18,7 @@ actor BluetoothManager {
         self.logger = logger
     }
 
-    struct BluetoothDeviceInfo: Sendable {
+    struct BluetoothDeviceInfo: Sendable, Equatable, Comparable {
         let name: String
         let address: String
         let rssi: Int?
@@ -27,6 +27,17 @@ actor BluetoothManager {
         let trusted: Bool
         let deviceType: String
         let icon: String?
+
+        static func < (lhs: BluetoothDeviceInfo, rhs: BluetoothDeviceInfo) -> Bool {
+            // Sort by connection status, then RSSI, then name
+            if lhs.connected != rhs.connected {
+                return lhs.connected && !rhs.connected
+            }
+            if let lhsRssi = lhs.rssi, let rhsRssi = rhs.rssi, lhsRssi != rhsRssi {
+                return lhsRssi > rhsRssi
+            }
+            return lhs.name < rhs.name
+        }
     }
 
     struct ScanStartResult: Sendable {
