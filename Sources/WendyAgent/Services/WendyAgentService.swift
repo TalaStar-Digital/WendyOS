@@ -610,15 +610,21 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
                     }
                 )
 
-                let result = try await Subprocess.run(
-                    .name("mender-update"),
-                    arguments: ["install", artifactUrl],
-                    environment: .inherit.updating([
-                        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"
-                    ]),
-                    output: .string(limit: 10_000),
-                    error: .string(limit: 10_000)
-                )
+                // Run mender-update in a detached task to prevent cancellation from
+                // killing the update process if the gRPC stream is cancelled
+                let result = try await Task.detached {
+                    try await Subprocess.run(
+                        .name("mender-update"),
+                        arguments: ["install", artifactUrl],
+                        environment: .inherit.updating([
+                            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"
+                        ]),
+                        output: .string(limit: .max),
+                        error: .string(limit: .max)
+                    )
+                }.value
+
+                logger.info("mender-update exited with status: \(result.terminationStatus)")
 
                 if result.terminationStatus.isSuccess {
                     logger.info("Mender update installed successfully")
