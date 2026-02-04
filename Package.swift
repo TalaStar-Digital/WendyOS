@@ -62,6 +62,7 @@ let package = Package(
         .package(url: "https://github.com/wendylabsinc/bluetooth.git", from: "0.1.1"),
         .package(url: "https://github.com/wendylabsinc/dbus.git", from: "0.3.0"),
         .package(url: "https://github.com/wendylabsinc/TOMLKit.git", from: "0.7.0"),
+        .package(url: "https://github.com/apple/swift-distributed-tracing.git", from: "1.0.0"),
     ],
     targets: [
         /// The main executable provided by wendy-cli.
@@ -131,6 +132,7 @@ let package = Package(
                 .product(name: "AsyncHTTPClient", package: "async-http-client"),
                 .product(name: "Yams", package: "Yams"),
                 .product(name: "Hummingbird", package: "hummingbird"),
+                .product(name: "Tracing", package: "swift-distributed-tracing"),
                 .target(name: "WendyCloudGRPC"),
                 .target(name: "WendyAgentGRPC"),
                 .target(name: "ContainerdGRPC"),

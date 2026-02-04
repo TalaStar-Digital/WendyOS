@@ -34,6 +34,7 @@ struct DeviceCommand: AsyncParsableCommand {
                 subcommands: [
                     LogsCommand.self,
                     DashboardCommand.self,
+                    TelemetryStreamCommand.self,
                 ]
             ),
             CommandGroup(
@@ -205,21 +206,20 @@ struct DeviceCommand: AsyncParsableCommand {
                     ).path
                 }
 
-                let success = try await withAgentGRPCClient(
+                let endpoint = try await withAgentGRPCClientAndEndpoint(
                     agentConnectionOptions,
                     title: "Which device do you want to update?"
-                ) { client in
+                ) { client, endpoint in
                     let agent = Agent(client: client)
-                    return try await Noora().progressBarStep(message: "Updating Device") {
+                    _ = try await Noora().progressBarStep(message: "Updating Device") {
                         updateProgress in
                         try await agent.update(fromBinary: binary, onProgress: updateProgress)
                     }
+                    return endpoint
                 }
 
-                guard success else {
-                    Noora().error("Failed to update agent")
-                    Self.exit(withError: nil)
-                }
+                // Wait for the gRPC socket to come back up after the device restarts
+                try await waitForDeviceRestart(endpoint: endpoint)
 
                 Noora().success("Agent updated successfully")
             #endif
@@ -298,10 +298,10 @@ struct DeviceCommand: AsyncParsableCommand {
                 }
             }
 
-            try await withAgentClient(
+            let shouldWaitForRestart = try await withAgentClientAndHostname(
                 agentConnectionOptions,
                 title: "Listing available WiFi networks"
-            ) { agent in
+            ) { agent, hostname -> Bool in
                 let setupWifi = Noora().yesOrNoChoicePrompt(
                     question: "Do you want to setup WiFi?",
                     collapseOnSelection: false
@@ -339,13 +339,13 @@ struct DeviceCommand: AsyncParsableCommand {
                     )
 
                     guard shouldUpdate, case .grpc(let client) = agent else {
-                        return
+                        return false
                     }
 
                     // TODO: Detect platform of remote device
                     // Default to Linux aarch64 for device updates during setup
                     let binary = try await downloadLatestRelease(platform: .linuxAarch64).path
-                    let success = try await Noora().progressBarStep(message: "Updating Device") {
+                    _ = try await Noora().progressBarStep(message: "Updating Device") {
                         updateProgress in
                         try await Agent(client: client).update(
                             fromBinary: binary,
@@ -353,13 +353,31 @@ struct DeviceCommand: AsyncParsableCommand {
                         )
                     }
 
-                    guard success else {
-                        Noora().error("Failed to update agent")
-                        Self.exit(withError: nil)
-                    }
-
-                    Noora().success("Agent updated successfully")
+                    return true
+                #else
+                    return false
                 #endif
+            }
+
+            if shouldWaitForRestart {
+                // Get the endpoint to wait for device restart
+                // The device is now provisioned, so this will connect via mTLS on the proper port
+                let endpoint = try await agentConnectionOptions.read(
+                    title: "Waiting for device",
+                    includeBluetooth: false
+                )
+
+                if case .lan(let host, let port, let defaultDevice) = endpoint {
+                    try await waitForDeviceRestart(
+                        endpoint: AgentConnectionOptions.Endpoint(
+                            host: host,
+                            port: port,
+                            defaultDevice: defaultDevice
+                        )
+                    )
+                }
+
+                Noora().success("Agent updated successfully")
             }
         }
     }

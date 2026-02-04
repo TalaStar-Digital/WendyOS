@@ -35,11 +35,13 @@ public struct Config: Sendable, Codable {
     public var auth: [Auth]
     public var analytics: WendyAnalyticsConfig
     public var defaultDevice: String?
+    public var lastUpdateCheck: Date?
 
     public init() {
         self.auth = []
         self.defaultDevice = nil
         self.analytics = WendyAnalyticsConfig()
+        self.lastUpdateCheck = nil
     }
 
     public mutating func addAuth(_ newAuth: Auth) {
