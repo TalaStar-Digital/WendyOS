@@ -619,7 +619,7 @@ struct OSCommand: AsyncParsableCommand {
             abstract: "Update WendyOS on a device using a Mender artifact."
         )
 
-        @Argument(help: "Path to a Mender artifact file (.mender) or directory containing one")
+        @Argument(help: "Path to a Mender artifact file (.mender.xz) or directory containing one")
         var artifactPath: String
 
         @OptionGroup var agentConnectionOptions: AgentConnectionOptions
@@ -645,10 +645,10 @@ struct OSCommand: AsyncParsableCommand {
             fileManager.fileExists(atPath: absolutePath, isDirectory: &isDirectory)
 
             if isDirectory.boolValue {
-                // Look for a .mender file in the directory
+                // Look for a .mender.xz file in the directory
                 let contents = try fileManager.contentsOfDirectory(atPath: absolutePath)
-                guard let menderFile = contents.first(where: { $0.hasSuffix(".mender") }) else {
-                    noora.error("No .mender file found in directory: \(absolutePath)")
+                guard let menderFile = contents.first(where: { $0.hasSuffix(".mender.xz") }) else {
+                    noora.error("No .mender.xz file found in directory: \(absolutePath)")
                     throw ExitCode.failure
                 }
                 absolutePath = absolutePath + "/" + menderFile
