@@ -101,8 +101,7 @@ struct OSCommand: AsyncParsableCommand {
         commandName: "os",
         abstract: "Download and install WendyOS",
         subcommands: [
-            OSInstallCommand.self,
-            CacheCommand.self,
+            OSInstallCommand.self
         ],
         groupedSubcommands: [
             CommandGroup(
@@ -111,6 +110,7 @@ struct OSCommand: AsyncParsableCommand {
                     ListDrivesCommand.self,
                     ListDevicesCommand.self,
                     WriteCommand.self,
+                    CacheCommand.self,
                 ]
             )
         ]
@@ -288,6 +288,12 @@ struct OSCommand: AsyncParsableCommand {
             let manifestManager = ManifestManagerFactory.createManifestManager()
             let diskLister = DiskListerFactory.createDiskLister()
             let noora = Noora()
+
+            #if os(Windows)
+                noora.info(
+                    "Administrator privileges are required to write raw disks. Please ensure you have administrative rights."
+                )
+            #endif
 
             let selectedDeviceName: String
             // Interactive device selection is the default when deviceName is omitted
@@ -601,10 +607,32 @@ struct OSCommand: AsyncParsableCommand {
 
 // MARK: - Helpers
 
-/// Ensure the user has active sudo credentials before attempting privileged disk operations.
-/// This warms up sudo so subsequent calls (diskutil/dd) won't fail due to missing TTY prompts.
+/// Ensure the user has active admin credentials before attempting privileged disk operations.
+/// This warms up sudo on macOS/Linux or validates admin rights on Windows.
 private func ensureAdminPrivileges() async throws {
-    #if os(macOS) || os(Linux)
+    #if os(Windows)
+        // Check if running as administrator
+        let result = try await Subprocess.run(
+            Subprocess.Executable.name("powershell.exe"),
+            arguments: [
+                "-NoProfile", "-Command",
+                "[Security.Principal.WindowsIdentity]::GetCurrent().Owner",
+            ],
+            output: .string(limit: .max),
+            error: .discarded
+        )
+
+        guard result.terminationStatus.isSuccess else {
+            throw ValidationError(
+                "Failed to check administrator status. Please run as administrator."
+            )
+        }
+
+        // Inform the user about privilege requirements
+        Noora().info(
+            "Administrator privileges are required to write raw disks. Continuing..."
+        )
+    #elseif os(macOS) || os(Linux)
         // If already root, nothing to do
         if getuid() == 0 { return }
 

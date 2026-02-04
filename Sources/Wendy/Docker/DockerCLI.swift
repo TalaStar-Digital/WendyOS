@@ -196,6 +196,33 @@ public struct DockerCLI: Sendable {
         return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Fixes the QEMU bundled with Docker Desktop on Windows installations
+    public func fixX86_64QEMU() async throws {
+        let arguments = [
+            "run", "--rm", "--privileged", "multiarch/qemu-user-static", "--reset", "-p", "yes",
+        ]
+        let result = try await Subprocess.run(
+            Subprocess.Executable.name(self.command),
+            arguments: Subprocess.Arguments(arguments),
+            output: .fileDescriptor(.standardOutput, closeAfterSpawningProcess: false),
+            error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
+        )
+
+        guard result.terminationStatus.isSuccess else {
+            let exitCode: Int
+            switch result.terminationStatus {
+            case .exited(let code), .unhandledException(let code):
+                exitCode = Int(code)
+            }
+            throw SubprocessError(
+                command: ([self.command] + arguments).joined(separator: " "),
+                exitCode: exitCode,
+                output: "",
+                error: ""
+            )
+        }
+    }
+
     /// Build a Docker container.
     public func build(
         name: String,
@@ -295,6 +322,10 @@ public struct DockerCLI: Sendable {
         registryPort: Int = 5000,
         compression: ImageCompressionMode = .zstd
     ) async throws {
+        #if os(Windows) && (arch(x86_64) || arch(i386))
+            try await fixX86_64QEMU()
+        #endif
+
         // Acquire shared build lock, allows parallel builds but prevents builder restarts
         try await BuildLock.shared.withLock {
             // Build the --output flag based on compression mode

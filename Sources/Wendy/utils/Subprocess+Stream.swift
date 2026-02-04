@@ -44,8 +44,8 @@ public func run(
             case .exited(let code), .unhandledException(let code):
                 exitCode = Int(code)
             }
-            throw SubprocessError.nonZeroExit(
-                command: executableName + " " + arguments(flags).description,
+            throw SubprocessError(
+                command: executable.description + " " + arguments.description,
                 exitCode: exitCode,
                 output: "",
                 error: ""

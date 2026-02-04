@@ -10,7 +10,6 @@ import WendyAgentGRPC
 import WendyCloudGRPC
 import WendySDK
 import X509
-import _NIOFileSystem
 
 struct DeviceCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -173,53 +172,57 @@ struct DeviceCommand: AsyncParsableCommand {
         @OptionGroup var agentConnectionOptions: AgentConnectionOptions
 
         func run() async throws {
-            let binary: String
+            #if os(Windows)
+                Noora().error("Device update is not supported on Windows hosts")
+            #else
+                let binary: String
 
-            if let location = self.binary {
-                binary = location
-            } else {
-                // Determine target platform (devices are always Linux)
-                let targetPlatform: Platform
-                if let platformStr = platform {
-                    switch platformStr.lowercased() {
-                    case "linux-aarch64", "aarch64", "arm64":
-                        targetPlatform = .linuxAarch64
-                    case "linux-x86_64", "x86_64", "amd64":
-                        targetPlatform = .linuxX86_64
-                    default:
-                        Noora().error(
-                            "Invalid platform '\(platformStr)'. Use 'linux-aarch64' or 'linux-x86_64'"
-                        )
-                        Self.exit(withError: nil)
-                    }
+                if let location = self.binary {
+                    binary = location
                 } else {
-                    // Default to aarch64 (most common for devices)
-                    targetPlatform = .linuxAarch64
+                    // Determine target platform (devices are always Linux)
+                    let targetPlatform: Platform
+                    if let platformStr = platform {
+                        switch platformStr.lowercased() {
+                        case "linux-aarch64", "aarch64", "arm64":
+                            targetPlatform = .linuxAarch64
+                        case "linux-x86_64", "x86_64", "amd64":
+                            targetPlatform = .linuxX86_64
+                        default:
+                            Noora().error(
+                                "Invalid platform '\(platformStr)'. Use 'linux-aarch64' or 'linux-x86_64'"
+                            )
+                            Self.exit(withError: nil)
+                        }
+                    } else {
+                        // Default to aarch64 (most common for devices)
+                        targetPlatform = .linuxAarch64
+                    }
+
+                    binary = try await downloadLatestRelease(
+                        platform: targetPlatform,
+                        includePrerelease: prerelease
+                    ).path
                 }
 
-                binary = try await downloadLatestRelease(
-                    platform: targetPlatform,
-                    includePrerelease: prerelease
-                ).path
-            }
-
-            let success = try await withAgentGRPCClient(
-                agentConnectionOptions,
-                title: "Which device do you want to update?"
-            ) { client in
-                let agent = Agent(client: client)
-                return try await Noora().progressBarStep(message: "Updating Device") {
-                    updateProgress in
-                    try await agent.update(fromBinary: binary, onProgress: updateProgress)
+                let success = try await withAgentGRPCClient(
+                    agentConnectionOptions,
+                    title: "Which device do you want to update?"
+                ) { client in
+                    let agent = Agent(client: client)
+                    return try await Noora().progressBarStep(message: "Updating Device") {
+                        updateProgress in
+                        try await agent.update(fromBinary: binary, onProgress: updateProgress)
+                    }
                 }
-            }
 
-            guard success else {
-                Noora().error("Failed to update agent")
-                Self.exit(withError: nil)
-            }
+                guard success else {
+                    Noora().error("Failed to update agent")
+                    Self.exit(withError: nil)
+                }
 
-            Noora().success("Agent updated successfully")
+                Noora().success("Agent updated successfully")
+            #endif
         }
     }
 
@@ -329,32 +332,34 @@ struct DeviceCommand: AsyncParsableCommand {
                     }
                 }
 
-                let shouldUpdate = Noora().yesOrNoChoicePrompt(
-                    question: "Do you want to update the agent?",
-                    collapseOnSelection: false
-                )
-
-                guard shouldUpdate, case .grpc(let client) = agent else {
-                    return
-                }
-
-                // TODO: Detect platform of remote device
-                // Default to Linux aarch64 for device updates during setup
-                let binary = try await downloadLatestRelease(platform: .linuxAarch64).path
-                let success = try await Noora().progressBarStep(message: "Updating Device") {
-                    updateProgress in
-                    try await Agent(client: client).update(
-                        fromBinary: binary,
-                        onProgress: updateProgress
+                #if !os(Windows)
+                    let shouldUpdate = Noora().yesOrNoChoicePrompt(
+                        question: "Do you want to update the agent?",
+                        collapseOnSelection: false
                     )
-                }
 
-                guard success else {
-                    Noora().error("Failed to update agent")
-                    Self.exit(withError: nil)
-                }
+                    guard shouldUpdate, case .grpc(let client) = agent else {
+                        return
+                    }
 
-                Noora().success("Agent updated successfully")
+                    // TODO: Detect platform of remote device
+                    // Default to Linux aarch64 for device updates during setup
+                    let binary = try await downloadLatestRelease(platform: .linuxAarch64).path
+                    let success = try await Noora().progressBarStep(message: "Updating Device") {
+                        updateProgress in
+                        try await Agent(client: client).update(
+                            fromBinary: binary,
+                            onProgress: updateProgress
+                        )
+                    }
+
+                    guard success else {
+                        Noora().error("Failed to update agent")
+                        Self.exit(withError: nil)
+                    }
+
+                    Noora().success("Agent updated successfully")
+                #endif
             }
         }
     }

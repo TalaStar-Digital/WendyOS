@@ -2,7 +2,6 @@ import Analytics
 import Crypto
 import Foundation
 import Hummingbird
-import JWTKit
 import Noora
 import SwiftASN1
 import Synchronization
@@ -14,12 +13,6 @@ import X509
     import AppKit
     import Darwin
 #endif
-
-struct TokenWithSubject: JWTPayload {
-    let sub: String
-
-    func verify(using algorithm: some JWTKit.JWTAlgorithm) async throws {}
-}
 
 public struct Config: Sendable, Codable {
     public struct Auth: Sendable, Codable, Hashable, CustomStringConvertible {
