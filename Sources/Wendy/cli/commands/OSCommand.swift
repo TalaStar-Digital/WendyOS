@@ -686,27 +686,28 @@ struct OSCommand: AsyncParsableCommand {
             // Start the Hummingbird webserver that serves the file
             let router = Router().get("\(fileHash)/:filename") { request, context in
                 let body = ResponseBody(contentLength: Int(fileSize)) { writer in
-                    defer {
-                        downloadComplete.continuation.yield()
-                        downloadComplete.continuation.finish()
+                    do {
+                        try await FileSystem.shared.withFileHandle(
+                            forReadingAt: artifactFilePath
+                        ) { handle in
+                            var bytesWritten: Int64 = 0
+                            for try await chunk in handle.readChunks(
+                                in: 0...,
+                                chunkLength: .mebibytes(1)
+                            ) {
+                                try await writer.write(chunk)
+                                bytesWritten += Int64(chunk.readableBytes)
+                            }
+
+                            logger.info("Download complete: \(bytesWritten) bytes served")
+                        }
+                    } catch {
+                        logger.error("Download failed: \(error)")
                     }
 
-                    let handle = try await FileSystem.shared.openFile(
-                        forReadingAt: artifactFilePath,
-                        options: .init()
-                    )
-                    defer { Task { try? await handle.close() } }
-
-                    var bytesWritten: Int64 = 0
-                    for try await chunk in handle.readChunks(
-                        in: 0...,
-                        chunkLength: .mebibytes(1)
-                    ) {
-                        try await writer.write(chunk)
-                        bytesWritten += Int64(chunk.readableBytes)
-                    }
-
-                    logger.info("Download complete: \(bytesWritten) bytes served")
+                    // Always signal completion (success or failure)
+                    downloadComplete.continuation.yield()
+                    downloadComplete.continuation.finish()
                 }
 
                 return Response(
