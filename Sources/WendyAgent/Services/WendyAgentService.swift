@@ -612,7 +612,7 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
 
                 // Run mender-update in a detached task to prevent cancellation from
                 // killing the update process if the gRPC stream is cancelled
-                let result = try await Task.detached {
+                let menderTask = Task.detached {
                     try await Subprocess.run(
                         .name("mender-update"),
                         arguments: ["install", artifactUrl],
@@ -622,47 +622,60 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
                         output: .string(limit: .max),
                         error: .string(limit: .max)
                     )
-                }.value
+                }
+
+                let result = try await menderTask.value
 
                 logger.info("mender-update exited with status: \(result.terminationStatus)")
 
-                if result.terminationStatus.isSuccess {
-                    logger.info("Mender update installed successfully")
-                    try await writer.write(
-                        .with {
-                            $0.progress = .with {
-                                $0.phase = "installed"
-                                $0.percent = 100
+                // Try to send response, but don't crash if stream is closed
+                do {
+                    if result.terminationStatus.isSuccess {
+                        logger.info("Mender update installed successfully")
+                        try await writer.write(
+                            .with {
+                                $0.progress = .with {
+                                    $0.phase = "installed"
+                                    $0.percent = 100
+                                }
                             }
-                        }
-                    )
-                    try await writer.write(
-                        .with {
-                            $0.completed = .with {
-                                $0.rebootRequired = true
+                        )
+                        try await writer.write(
+                            .with {
+                                $0.completed = .with {
+                                    $0.rebootRequired = true
+                                }
                             }
-                        }
-                    )
-                } else {
-                    let errorOutput = result.standardError ?? "Unknown error"
-                    logger.error("Mender update failed: \(errorOutput)")
-                    try await writer.write(
-                        .with {
-                            $0.failed = .with {
-                                $0.errorMessage = "Mender update failed: \(errorOutput)"
+                        )
+                    } else {
+                        let errorOutput = result.standardError ?? "Unknown error"
+                        logger.error("Mender update failed: \(errorOutput)")
+                        try await writer.write(
+                            .with {
+                                $0.failed = .with {
+                                    $0.errorMessage = "Mender update failed: \(errorOutput)"
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
+                } catch {
+                    // Stream may be closed, log but don't crash
+                    logger.warning("Could not send update response (stream may be closed): \(error)")
                 }
             } catch {
                 logger.error("OS update failed: \(error)")
-                try await writer.write(
-                    .with {
-                        $0.failed = .with {
-                            $0.errorMessage = "OS update failed: \(error.localizedDescription)"
+                // Try to send error, but don't crash if stream is closed
+                do {
+                    try await writer.write(
+                        .with {
+                            $0.failed = .with {
+                                $0.errorMessage = "OS update failed: \(error.localizedDescription)"
+                            }
                         }
-                    }
-                )
+                    )
+                } catch {
+                    logger.warning("Could not send error response (stream may be closed): \(error)")
+                }
             }
 
             return Metadata()
