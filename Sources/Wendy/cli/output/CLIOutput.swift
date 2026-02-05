@@ -1,5 +1,6 @@
 import Foundation
 import NIOCore
+import Noora
 
 // Helper to flush stdout in Swift 6
 @inline(__always)
@@ -71,6 +72,13 @@ public protocol CLIOutput: Sendable {
     func withProgressBar<T: Sendable>(
         message: String,
         operation: @escaping @Sendable (@escaping (Double) -> Void) async throws -> T
+    ) async throws -> T
+
+    /// Execute an async operation with progress bar indication and label updates.
+    /// In interactive mode, shows a progress bar with label text. In JSON mode, runs silently.
+    func withLabeledProgressBar<T: Sendable>(
+        message: String,
+        operation: @escaping @Sendable (@escaping (ProgressBarUpdate) -> Void) async throws -> T
     ) async throws -> T
 
     /// Execute an operation with streaming output displayed in a collapsible box.
@@ -150,6 +158,14 @@ extension CLIOutput {
     public func withProgressBar<T: Sendable>(
         message: String,
         operation: @Sendable (@escaping (Double) -> Void) async throws -> T
+    ) async throws -> T {
+        // Default: just run the operation with no-op progress callback
+        try await operation({ _ in })
+    }
+
+    public func withLabeledProgressBar<T: Sendable>(
+        message: String,
+        operation: @Sendable (@escaping (ProgressBarUpdate) -> Void) async throws -> T
     ) async throws -> T {
         // Default: just run the operation with no-op progress callback
         try await operation({ _ in })

@@ -150,7 +150,7 @@ public struct NooraRenderer: CLIOutput, Sendable {
         pageSize: Int
     ) async throws -> Int {
         let tableRows: [TableRow] = rows.map { row in
-            row.map { TerminalText(stringLiteral: $0) }
+            TableRow(row.map { TerminalText(stringLiteral: $0) })
         }
 
         let tableData = TableData(
@@ -204,6 +204,15 @@ public struct NooraRenderer: CLIOutput, Sendable {
     public func withProgressBar<T: Sendable>(
         message: String,
         operation: @escaping @Sendable (@escaping (Double) -> Void) async throws -> T
+    ) async throws -> T {
+        try await Noora().progressBarStep(message: message) { updateProgress in
+            try await operation(updateProgress)
+        }
+    }
+
+    public func withLabeledProgressBar<T: Sendable>(
+        message: String,
+        operation: @escaping @Sendable (@escaping (ProgressBarUpdate) -> Void) async throws -> T
     ) async throws -> T {
         try await Noora().progressBarStep(message: message) { updateProgress in
             try await operation(updateProgress)

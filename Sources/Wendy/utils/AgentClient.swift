@@ -171,10 +171,12 @@ extension AgentClient {
                     await actor.setDisplayedNetworks(uniqueNetworks)
 
                     let rows = uniqueNetworks.map { network -> TableRow in
-                        return [
-                            "\(network.ssid)",
-                            "\(network.signalStrength?.description ?? "Unknown")",
-                        ]
+                        return TableRow([
+                            TerminalText(stringLiteral: "\(network.ssid)"),
+                            TerminalText(
+                                stringLiteral: "\(network.signalStrength?.description ?? "Unknown")"
+                            ),
+                        ])
                     }
 
                     return TableData(
