@@ -395,22 +395,21 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
                         resources.append((source: backtraceUrl.path(), destination: destination))
                         backtraceFound = true
                         break findBacktrace
-                    } else {
-                        let backtraceUrl = URL(fileURLWithPath: CommandLine.arguments[0])
-                            .deletingLastPathComponent()
-                            .appending(path: "wendy-agent_wendy.bundle")
-                            .appending(path: "Contents")
-                            .appending(path: "Resources")
-                            .appending(path: "Resources")
-                            .appending(component: binaryName)
+                    }
+                    let backtraceUrl = URL(fileURLWithPath: CommandLine.arguments[0])
+                        .deletingLastPathComponent()
+                        .appending(path: "wendy-agent_wendy.bundle")
+                        .appending(path: "Contents")
+                        .appending(path: "Resources")
+                        .appending(path: "Resources")
+                        .appending(component: binaryName)
 
-                        if FileManager.default.fileExists(atPath: backtraceUrl.path()) {
-                            resources.append(
-                                (source: backtraceUrl.path(), destination: destination)
-                            )
-                            backtraceFound = true
-                            break findBacktrace
-                        }
+                    if FileManager.default.fileExists(atPath: backtraceUrl.path()) {
+                        resources.append(
+                            (source: backtraceUrl.path(), destination: destination)
+                        )
+                        backtraceFound = true
+                        break findBacktrace
                     }
                 }
 

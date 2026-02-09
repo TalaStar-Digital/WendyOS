@@ -473,14 +473,23 @@ public struct SwiftPM: Sendable {
     /// Returns `nil` if the string is not a valid full numeric SemVer.
     private static func parseSemVer(_ version: String) -> (major: Int, minor: Int, patch: Int)? {
         // Strip pre-release and build metadata.
-        let withoutPrerelease = version.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)[0]
-        let coreVersion = String(withoutPrerelease).split(separator: "+", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        let withoutPrerelease = version.split(
+            separator: "-",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        )[0]
+        let coreVersion = String(withoutPrerelease).split(
+            separator: "+",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        )[0]
 
         let components = coreVersion.split(separator: ".")
         guard components.count == 3,
-              let major = Int(components[0]),
-              let minor = Int(components[1]),
-              let patch = Int(components[2]) else {
+            let major = Int(components[0]),
+            let minor = Int(components[1]),
+            let patch = Int(components[2])
+        else {
             return nil
         }
 
