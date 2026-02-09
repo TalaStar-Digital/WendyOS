@@ -97,15 +97,18 @@
                         self.logger.error("Failed to get base address from PCM data")
                         return
                     }
-                    
+
                     // For interleaved format, there should be exactly one buffer
                     let bufferList = buffer.audioBufferList.pointee
                     guard bufferList.mNumberBuffers == 1,
-                          let audioData = bufferList.mBuffers.mData else {
-                        self.logger.error("Invalid audio buffer configuration: expected 1 buffer for interleaved format, got \(bufferList.mNumberBuffers)")
+                        let audioData = bufferList.mBuffers.mData
+                    else {
+                        self.logger.error(
+                            "Invalid audio buffer configuration: expected 1 buffer for interleaved format, got \(bufferList.mNumberBuffers)"
+                        )
                         return
                     }
-                    
+
                     memcpy(audioData, baseAddress, pcmData.count)
                 }
 

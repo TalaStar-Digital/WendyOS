@@ -67,7 +67,7 @@ struct BluetoothCommand: AsyncParsableCommand {
                     actor Devices {
                         var devices = [Wendy_Agent_Services_V1_DiscoveredBluetoothPeripheral]()
                         var hasDevices = false
-                        
+
                         func set(
                             _ newDevices: [Wendy_Agent_Services_V1_DiscoveredBluetoothPeripheral]
                         ) {
@@ -76,22 +76,23 @@ struct BluetoothCommand: AsyncParsableCommand {
                                 hasDevices = true
                             }
                         }
-                        
-                        func getDevices() -> [Wendy_Agent_Services_V1_DiscoveredBluetoothPeripheral] {
+
+                        func getDevices() -> [Wendy_Agent_Services_V1_DiscoveredBluetoothPeripheral]
+                        {
                             return devices
                         }
-                        
+
                         func didFindDevices() -> Bool {
                             return hasDevices
                         }
                     }
                     let start = Date()
                     let devices = Devices()
-                    
+
                     do {
                         try await client.withBluetoothPeripherals { peripherals in
                             await devices.set(peripherals)
-                            
+
                             // Only timeout if no devices have been found yet
                             let hasDevices = await devices.didFindDevices()
                             if start.addingTimeInterval(timeout) < Date() && !hasDevices {
@@ -101,7 +102,7 @@ struct BluetoothCommand: AsyncParsableCommand {
                     } catch is CancellationError {
                         // User cancelled, output what we have
                     }
-                    
+
                     // Output JSON result
                     try await cliOutput.result(await devices.getDevices())
                 } else {

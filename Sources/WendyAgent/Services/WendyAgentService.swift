@@ -124,10 +124,10 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
     {
         return StreamingServerResponse(metadata: [:]) { writer in
             var lastDevices: [BluetoothManager.BluetoothDeviceInfo] = []
-            
+
             while !Task.isCancelled && !Task.isShuttingDownGracefully {
                 let devices = try await bluetooth.listDevices(pairedOnly: false)
-                
+
                 // Only emit when device list changes
                 if devices != lastDevices {
                     let response = Wendy_Agent_Services_V1_ScanBluetoothPeripheralsResponse.with {
@@ -148,7 +148,7 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
                     try await writer.write(response)
                     lastDevices = devices
                 }
-                
+
                 // Add delay to prevent CPU spam
                 try await Task.sleep(for: .seconds(1))
             }
@@ -185,7 +185,7 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
                     metadata: ["address": "\(address)"]
                 )
             }
-            
+
             // Trust if requested
             if shouldTrust {
                 try await bluetooth.trust(address: address)
@@ -194,7 +194,7 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
                     metadata: ["address": "\(address)"]
                 )
             }
-            
+
             // Connect
             try await bluetooth.connect(address: address)
             logger.info(

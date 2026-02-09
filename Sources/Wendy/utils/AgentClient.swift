@@ -131,8 +131,9 @@ extension AgentClient {
                 request: .init(producer: { _ in })
             ) { response in
                 // Use dictionary keyed by address to deduplicate and prevent unbounded growth
-                var peripherals: [String: (Wendy_Agent_Services_V1_DiscoveredBluetoothPeripheral, Date)] = [:]
-                
+                var peripherals:
+                    [String: (Wendy_Agent_Services_V1_DiscoveredBluetoothPeripheral, Date)] = [:]
+
                 for try await message in response.messages {
                     // Update or insert devices, replacing old entries
                     for peripheral in message.discoveredDevices {
