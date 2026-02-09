@@ -93,7 +93,8 @@ struct BluetoothCommand: AsyncParsableCommand {
                             await devices.set(peripherals)
                             
                             // Only timeout if no devices have been found yet
-                            if start.addingTimeInterval(timeout) < Date() && !await devices.didFindDevices() {
+                            let hasDevices = await devices.didFindDevices()
+                            if start.addingTimeInterval(timeout) < Date() && !hasDevices {
                                 throw BluetoothCommandError.noDevicesFound
                             }
                         }

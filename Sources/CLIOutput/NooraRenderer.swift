@@ -12,6 +12,11 @@ private func flushStdout() {
     #endif
 }
 
+// Helper to wrap non-Sendable closures for use in Sendable contexts
+private struct UnsafeSendableBox<T>: @unchecked Sendable {
+    let value: T
+}
+
 let noora = Noora(theme: .emerald(), terminal: Terminal(signalBehavior: .none))
 
 /// Interactive CLI output renderer using Noora TUI library.
@@ -210,11 +215,11 @@ public struct NooraRenderer: CLIOutput, Sendable {
         operation: @escaping @Sendable (@escaping @Sendable (Double) -> Void) async throws -> T
     ) async throws -> T {
         try await noora.progressBarStep(message: message) { updateProgress in
-            // Wrap the updateProgress closure to make it @Sendable
-            let sendableUpdate: @Sendable (Double) -> Void = { progress in
-                updateProgress(progress)
+            // Wrap the non-Sendable updateProgress in an @unchecked Sendable box
+            let box = UnsafeSendableBox(value: updateProgress)
+            return try await operation { progress in
+                box.value(progress)
             }
-            return try await operation(sendableUpdate)
         }
     }
 

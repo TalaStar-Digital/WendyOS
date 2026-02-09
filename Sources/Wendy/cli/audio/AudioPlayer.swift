@@ -88,8 +88,15 @@
                 // Copy PCM data to buffer - use audioBufferList for interleaved format
                 pcmData.withUnsafeBytes { rawBuffer in
                     guard let baseAddress = rawBuffer.baseAddress else { return }
-                    let audioBuffer = buffer.audioBufferList.pointee.mBuffers
-                    memcpy(audioBuffer.mData, baseAddress, pcmData.count)
+                    
+                    // For interleaved format, there should be exactly one buffer
+                    let bufferList = buffer.audioBufferList.pointee
+                    guard bufferList.mNumberBuffers == 1,
+                          let audioData = bufferList.mBuffers.mData else {
+                        return
+                    }
+                    
+                    memcpy(audioData, baseAddress, pcmData.count)
                 }
 
                 // Schedule the buffer for playback
