@@ -147,7 +147,6 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                 cliOutput.info("Starting container on \(endpoint.host)")
                 try await AppBuildHelpers.executePhase(
                     phase: "start_container",
-                    runtime: "swift",
                     commandName: "wendy run"
                 ) {
                     try await startContainerdContainer(

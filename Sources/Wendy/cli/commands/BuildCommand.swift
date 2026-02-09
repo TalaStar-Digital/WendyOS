@@ -204,7 +204,6 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
             // Create buildx builder with insecure registry support
             try await AppBuildHelpers.executePhase(
                 phase: "builder_setup",
-                runtime: "dockerfile",
                 commandName: "wendy build",
                 additionalProperties: buildPhaseProperties
             ) {
@@ -223,7 +222,6 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
             // Build and push in a single operation for better performance
             try await AppBuildHelpers.executePhase(
                 phase: "build_upload",
-                runtime: "dockerfile",
                 commandName: "wendy build",
                 additionalProperties: buildPhaseProperties
             ) {
@@ -237,7 +235,6 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
 
             try await AppBuildHelpers.executePhase(
                 phase: "prepare_container",
-                runtime: "dockerfile",
                 commandName: "wendy build"
             ) {
                 try await cliOutput.withLabeledProgressBar(
@@ -404,7 +401,6 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
         ) { client, endpoint in
             try await AppBuildHelpers.executePhase(
                 phase: "build_swift_app",
-                runtime: "swift",
                 commandName: "wendy build"
             ) {
                 var resources: [(source: String, destination: String)] = []
@@ -471,7 +467,6 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
 
             try await AppBuildHelpers.executePhase(
                 phase: "create_container",
-                runtime: "swift",
                 commandName: "wendy build"
             ) {
                 try await cliOutput.withLabeledProgressBar(
