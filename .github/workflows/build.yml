@@ -741,7 +741,7 @@ jobs:
   release:
     name: Release
     runs-on: runs-on=${{ github.run_id }}/runner=2cpu-linux-arm64/spot=${{ needs.check-bugfix.outputs.spot }}
-    needs: [check-bugfix, determine-version, build, build-windows, package-linux]
+    needs: [check-bugfix, determine-version, build, package-linux]
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
     steps:
       - name: Download artifact
