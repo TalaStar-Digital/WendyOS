@@ -574,15 +574,15 @@ public actor PipeWireManager {
             return (peakDb: -96.0, rmsDb: -96.0)
         }
 
-        var peak: Int16 = 0
+        var peak: UInt16 = 0
         var sumSquares: Float = 0
 
         buffer.readableBytesSpan.withUnsafeBytes { buffer in
             let samples = buffer.bindMemory(to: Int16.self)
             for sample in samples {
-                let absSample = abs(sample)
-                if absSample > peak {
-                    peak = absSample
+                let magnitude = sample.magnitude
+                if magnitude > peak {
+                    peak = magnitude
                 }
                 let normalized = Float(sample) / Float(Int16.max)
                 sumSquares += normalized * normalized
