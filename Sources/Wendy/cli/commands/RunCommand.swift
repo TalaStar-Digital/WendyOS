@@ -152,7 +152,8 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                     try await startContainerdContainer(
                         imageName: appName.name,
                         client: client,
-                        hostname: endpoint.host
+                        hostname: endpoint.host,
+                        restartPolicy: buildRestartPolicy()
                     )
                 }
             }

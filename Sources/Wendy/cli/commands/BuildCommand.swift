@@ -81,6 +81,13 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
             // Python project without Dockerfile - offer to generate one
             try await generatePythonDockerfileAndBuild()
 
+            // After attempting generation, verify a Dockerfile now exists
+            let updatedDirectory = try FileManager.default.contentsOfDirectory(atPath: currentPath)
+            let hasDockerfile = updatedDirectory.contains { isDockerfile($0) }
+            guard hasDockerfile else {
+                // User may have declined generation or generation failed gracefully
+                return
+            }
             // Now build as a Dockerfile app
             try await withBuiltDockerfileApp(perform: perform)
         } else {
