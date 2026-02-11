@@ -442,7 +442,6 @@ enum AppBuildHelpers {
     /// Execute a phase with failure tracking
     static func executePhase<T: Sendable>(
         phase: String,
-        runtime: String,
         commandName: String,
         additionalProperties: [String: String] = [:],
         operation: @Sendable () async throws -> T
@@ -452,7 +451,7 @@ enum AppBuildHelpers {
         } catch {
             await trackPhaseFailure(
                 phase: phase,
-                runtime: runtime,
+                runtime: "containerd",
                 commandName: commandName,
                 error: error,
                 additionalProperties: additionalProperties
