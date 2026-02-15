@@ -387,8 +387,17 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
                     from: configData
                 )
 
-                var env = imageConfig.config?.Env ?? []
-                env.append(contentsOf: wendyEnv)
+                // Merge image env with Wendy's env, letting Wendy's values take precedence.
+                var envDict = [String: String]()
+                for entry in imageConfig.config?.Env ?? [] {
+                    guard let separatorIndex = entry.firstIndex(of: "=") else { continue }
+                    envDict[String(entry[..<separatorIndex])] = String(entry[entry.index(after: separatorIndex)...])
+                }
+                for entry in wendyEnv {
+                    guard let separatorIndex = entry.firstIndex(of: "=") else { continue }
+                    envDict[String(entry[..<separatorIndex])] = String(entry[entry.index(after: separatorIndex)...])
+                }
+                let env = envDict.map { "\($0.key)=\($0.value)" }
 
                 // Set up command
                 let requestCmdIsEmpty = request.cmd.trimmingCharacters(in: .whitespacesAndNewlines)
