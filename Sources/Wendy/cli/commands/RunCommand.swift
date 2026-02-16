@@ -1,5 +1,4 @@
 import Analytics
-import AppConfig
 import ArgumentParser
 import CLIOutput
 import ContainerRegistry
@@ -79,44 +78,6 @@ struct RunCommand: AsyncParsableCommand, Sendable {
         passthroughArgs.filter { $0 != "--" }
     }
 
-    /// Flatten wendy.json `args` into a string array.
-    static func flattenArgs(_ args: [String: ArgValue]) -> [String] {
-        var result: [String] = []
-        for (key, value) in args {
-            switch value {
-            case .string(let s):
-                result.append(key)
-                result.append(s)
-            case .bool(let b):
-                if b { result.append(key) }
-            }
-        }
-        return result
-    }
-
-    /// Merge wendy.json args with CLI passthrough args. CLI args override JSON args by key.
-    static func mergeArgs(jsonArgs: [String: ArgValue]?, cliArgs: [String]) -> [String] {
-        guard let jsonArgs, !jsonArgs.isEmpty else { return cliArgs }
-
-        // Extract CLI arg keys (tokens starting with -)
-        let cliKeys = Set(cliArgs.filter { $0.hasPrefix("-") })
-
-        // Flatten JSON args, skipping any whose key is overridden by CLI
-        var filtered: [String] = []
-        for (key, value) in jsonArgs {
-            guard !cliKeys.contains(key) else { continue }
-            switch value {
-            case .string(let s):
-                filtered.append(key)
-                filtered.append(s)
-            case .bool(let b):
-                if b { filtered.append(key) }
-            }
-        }
-
-        return filtered + cliArgs
-    }
-
     /// Validate that flags are not conflicting
     func validate() throws {
         // Count how many restart policy flags are set
@@ -185,17 +146,6 @@ struct RunCommand: AsyncParsableCommand, Sendable {
             // Validate flags before proceeding
             try validate()
 
-            // Read wendy.json to get configured args, merge with CLI passthrough args
-            let jsonArgs: [String: ArgValue]?
-            if let data = try? Data(contentsOf: URL(fileURLWithPath: "./wendy.json")),
-                let config = try? JSONDecoder().decode(AppConfig.self, from: data)
-            {
-                jsonArgs = config.args
-            } else {
-                jsonArgs = nil
-            }
-            let mergedArgs = RunCommand.mergeArgs(jsonArgs: jsonArgs, cliArgs: userPassthroughArgs)
-
             try await BuildCommand(
                 debug: debug,
                 autoAccept: autoAccept,
@@ -203,7 +153,7 @@ struct RunCommand: AsyncParsableCommand, Sendable {
                 agentConnectionOptions: agentConnectionOptions
             ).withContainer(
                 restartPolicy: buildRestartPolicy(),
-                userArgs: mergedArgs
+                userArgs: userPassthroughArgs
             ) { appName, client, endpoint in
                 cliOutput.info("Starting container on \(endpoint.host)")
                 try await AppBuildHelpers.executePhase(
