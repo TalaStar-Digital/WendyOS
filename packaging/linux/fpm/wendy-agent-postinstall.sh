@@ -9,10 +9,10 @@ if ! command -v systemctl >/dev/null 2>&1; then
   exit 0
 fi
 
-systemctl daemon-reload || true
+systemctl daemon-reload >/dev/null 2>&1 || true
 
 if systemctl is-enabled wendy-agent >/dev/null 2>&1; then
-  systemctl try-restart wendy-agent || true
+  systemctl try-restart wendy-agent >/dev/null 2>&1 || true
 else
-  systemctl enable --now wendy-agent || true
+  systemctl enable --now wendy-agent >/dev/null 2>&1 || true
 fi

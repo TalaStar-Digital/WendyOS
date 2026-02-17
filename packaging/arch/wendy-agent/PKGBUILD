@@ -46,13 +46,21 @@ package() {
     chmod 600 "${pkgdir}/etc/wendy-agent/config.json"
 
     # Service environment defaults (override per-host as needed).
+    # NOTE: keep this in sync with packaging/linux/default/wendy-agent.
+    # We inline it here because AUR packages only ship PKGBUILD/.SRCINFO.
     cat > "${pkgdir}/etc/default/wendy-agent" <<'EOF'
 # Environment overrides for wendy-agent.
 WENDY_SYSTEMD_SERVICE_NAME=wendy-agent
+
+# Network manager selection options:
+# auto, connman, networkmanager, force-connman, force-networkmanager
+# WENDY_NETWORK_MANAGER=auto
 EOF
     chmod 644 "${pkgdir}/etc/default/wendy-agent"
 
     # Systemd unit
+    # NOTE: keep this in sync with packaging/linux/systemd/wendy-agent.service.
+    # We inline it here because AUR packages only ship PKGBUILD/.SRCINFO.
     cat > "${pkgdir}/usr/lib/systemd/system/wendy-agent.service" <<'EOF'
 [Unit]
 Description=Wendy Agent
@@ -63,7 +71,6 @@ Requires=containerd.service
 [Service]
 Type=simple
 EnvironmentFile=-/etc/default/wendy-agent
-Environment=WENDY_SYSTEMD_SERVICE_NAME=wendy-agent
 WorkingDirectory=/var/lib/wendy-agent
 ExecStart=/usr/bin/wendy-agent
 Restart=always

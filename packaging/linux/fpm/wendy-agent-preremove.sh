@@ -10,4 +10,3 @@ if ! command -v systemctl >/dev/null 2>&1; then
 fi
 
 systemctl stop wendy-agent >/dev/null 2>&1 || true
-systemctl daemon-reload >/dev/null 2>&1 || true

@@ -735,14 +735,20 @@ jobs:
           WENDY_AGENT_RPM=$(ls -1 wendy-agent-*.rpm | head -1)
 
           dpkg-deb -I "$WENDY_DEB" | grep -E "Depends:.*usbutils"
+          dpkg-deb -I "$WENDY_DEB" | grep -E "Depends:.*ca-certificates"
           dpkg-deb -I "$WENDY_AGENT_DEB" | grep -E "Depends:.*containerd"
           dpkg-deb -I "$WENDY_AGENT_DEB" | grep -E "Depends:.*dbus"
+          dpkg-deb -I "$WENDY_AGENT_DEB" | grep -E "Depends:.*systemd"
+          dpkg-deb -I "$WENDY_AGENT_DEB" | grep -E "Depends:.*ca-certificates"
           dpkg-deb -c "$WENDY_AGENT_DEB" | grep -q "usr/lib/systemd/system/wendy-agent.service"
           dpkg-deb -c "$WENDY_AGENT_DEB" | grep -q "etc/default/wendy-agent"
 
           rpm -qp --requires "$WENDY_RPM" | grep -q "^usbutils"
+          rpm -qp --requires "$WENDY_RPM" | grep -q "^ca-certificates"
           rpm -qp --requires "$WENDY_AGENT_RPM" | grep -q "^containerd"
           rpm -qp --requires "$WENDY_AGENT_RPM" | grep -q "^dbus"
+          rpm -qp --requires "$WENDY_AGENT_RPM" | grep -q "^systemd"
+          rpm -qp --requires "$WENDY_AGENT_RPM" | grep -q "^ca-certificates"
           rpm -qpl "$WENDY_AGENT_RPM" | grep -q "/usr/lib/systemd/system/wendy-agent.service"
           rpm -qpl "$WENDY_AGENT_RPM" | grep -q "/etc/default/wendy-agent"
 
