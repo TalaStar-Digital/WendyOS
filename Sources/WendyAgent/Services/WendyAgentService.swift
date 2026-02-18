@@ -688,12 +688,16 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
                 // Poll for completion by checking if the status file exists
                 var menderExitCode: Int32?
                 let startTime = ContinuousClock.now
-                let timeout: Duration = .seconds(1800) // 30 minute timeout
+                let timeout: Duration = .seconds(1800)  // 30 minute timeout
 
                 while ContinuousClock.now - startTime < timeout {
                     if FileManager.default.fileExists(atPath: statusFile) {
-                        if let statusString = try? String(contentsOfFile: statusFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
-                           let exitCode = Int32(statusString) {
+                        if let statusString = try? String(
+                            contentsOfFile: statusFile,
+                            encoding: .utf8
+                        ).trimmingCharacters(in: .whitespacesAndNewlines),
+                            let exitCode = Int32(statusString)
+                        {
                             menderExitCode = exitCode
                             // Clean up status and script files
                             try? FileManager.default.removeItem(atPath: statusFile)
@@ -729,7 +733,8 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
                             try await writer.write(
                                 .with {
                                     $0.failed = .with {
-                                        $0.errorMessage = "Mender update failed with exit code: \(exitCode). Check logs for details."
+                                        $0.errorMessage =
+                                            "Mender update failed with exit code: \(exitCode). Check logs for details."
                                     }
                                 }
                             )
@@ -746,7 +751,9 @@ struct WendyAgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProto
                     }
                 } catch {
                     // Stream may be closed, log but don't crash
-                    logger.warning("Could not send update response (stream may be closed): \(error)")
+                    logger.warning(
+                        "Could not send update response (stream may be closed): \(error)"
+                    )
                 }
             } catch {
                 logger.error("OS update failed: \(error)")
