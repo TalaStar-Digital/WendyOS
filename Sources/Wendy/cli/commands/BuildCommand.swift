@@ -31,10 +31,14 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
     /// Whether prompts should be auto-accepted (either explicit -y or JSON mode)
     var shouldAutoAccept: Bool { autoAccept || JSONMode.isEnabled }
 
-    @Argument(
+    @Option(
+        name: .shortAndLong,
         help: "The executable to build. Required when a package has multiple executable targets."
     )
     var executable: String?
+
+    @Argument(parsing: .captureForPassthrough)
+    var passthroughArgs: [String] = []
 
     @OptionGroup
     var agentConnectionOptions: AgentConnectionOptions
@@ -45,11 +49,13 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
         debug: Bool,
         autoAccept: Bool,
         executable: String?,
+        passthroughArgs: [String] = [],
         agentConnectionOptions: AgentConnectionOptions
     ) {
         self.debug = debug
         self.autoAccept = autoAccept
         self.executable = executable
+        self.passthroughArgs = passthroughArgs
         self.agentConnectionOptions = agentConnectionOptions
     }
 
@@ -62,6 +68,11 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
         "ef8fa5a2eda766e3b1df791dc175bbf87f570b9cc6f95ada1fe7643a327e087e"
     }
 
+    /// CLI args after `--`, with the separator itself filtered out.
+    var userPassthroughArgs: [String] {
+        passthroughArgs.filter { $0 != "--" }
+    }
+
     struct BuiltApp: Sendable {
         let name: String
     }
@@ -69,7 +80,8 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
     func run() async throws {
         try await withErrorTracking {
             try await withContainer(
-                restartPolicy: .with { $0.mode = .no }
+                restartPolicy: .with { $0.mode = .no },
+                userArgs: userPassthroughArgs
             ) { _, _, _ in
                 cliOutput.success("Build complete! Run 'wendy run' to start the app.")
             }
@@ -78,6 +90,7 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
 
     func withContainer(
         restartPolicy: RestartPolicy,
+        userArgs: [String] = [],
         perform:
             @Sendable @escaping (
                 BuiltApp, GRPCClient<GRPCTransport>, AgentConnectionOptions.Endpoint
@@ -90,6 +103,7 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
         for item in directory where isDockerfile(item) {
             try await withBuiltDockerfileApp(
                 restartPolicy: restartPolicy,
+                userArgs: userArgs,
                 perform: perform
             )
             return
@@ -98,6 +112,7 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
         if isSwiftPackage {
             try await withBuiltSwiftApp(
                 restartPolicy: restartPolicy,
+                userArgs: userArgs,
                 perform: perform
             )
         } else if isPythonProject(directory: directory) {
@@ -114,6 +129,7 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
             // Now build as a Dockerfile app
             try await withBuiltDockerfileApp(
                 restartPolicy: restartPolicy,
+                userArgs: userArgs,
                 perform: perform
             )
         } else {
@@ -212,6 +228,7 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
 
     func withBuiltDockerfileApp(
         restartPolicy: RestartPolicy,
+        userArgs: [String] = [],
         perform:
             @Sendable @escaping (
                 BuiltApp, GRPCClient<GRPCTransport>, AgentConnectionOptions.Endpoint
@@ -228,7 +245,7 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
         try await withAgentGRPCClientAndEndpoint(
             agentConnectionOptions,
             title: "Which device do you want to build this app for?"
-        ) { [name, dockerContext] client, endpoint in
+        ) { [name, dockerContext, userArgs] client, endpoint in
             // Build additional properties for analytics
             var buildPhaseProperties: [String: String] = [:]
             if let dockerContext {
@@ -278,6 +295,7 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
                         appName: name,
                         client: client,
                         restartPolicy: restartPolicy,
+                        userArgs: userArgs,
                         progress: updateProgress
                     )
                 }
@@ -294,6 +312,7 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
 
     func withBuiltSwiftApp(
         restartPolicy: RestartPolicy,
+        userArgs: [String] = [],
         perform:
             @Sendable @escaping (
                 BuiltApp, GRPCClient<GRPCTransport>, AgentConnectionOptions.Endpoint
@@ -511,6 +530,7 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
                         appName: appName,
                         client: client,
                         restartPolicy: restartPolicy,
+                        userArgs: userArgs,
                         progress: updateProgress
                     )
                 }

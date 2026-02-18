@@ -138,11 +138,14 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
                         let (configHash, configSize) = try await withSpan("uploadImageConfig") {
                             innerSpan in
                             logger.info("Creating container config.json")
+                            let cmdArgs =
+                                request.cmd.split(separator: " ").map(String.init)
+                                + request.userArgs
                             let config = ImageConfiguration(
                                 architecture: "arm64",
                                 os: "linux",
                                 config: ImageConfigurationConfig(
-                                    Cmd: request.cmd.split(separator: " ").map(String.init),
+                                    Cmd: cmdArgs,
                                     StopSignal: "SIGTERM"
                                 ),
                                 rootfs: ImageConfigurationRootFS(
@@ -224,6 +227,7 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
                                         $0.appConfig = request.appConfig
                                         $0.workingDir = request.workingDir
                                         $0.restartPolicy = request.restartPolicy
+                                        $0.userArgs = request.userArgs
                                     }
                                 ),
                                 context: context
@@ -390,24 +394,37 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
                 // Set up command
                 let requestCmdIsEmpty = request.cmd.trimmingCharacters(in: .whitespacesAndNewlines)
                     .isEmpty
-                let args: [String]
-                if requestCmdIsEmpty {
-                    // Compose from config.entrypoint + config.cmd if they exist
-                    // (following Docker convention)
+                let hasUserArgs = !request.userArgs.isEmpty
+
+                let finalArgs: [String]
+                if !requestCmdIsEmpty {
+                    finalArgs =
+                        request.cmd.split(separator: " ").map(String.init) + request.userArgs
+                } else if hasUserArgs {
+                    // User args replace image CMD (Docker convention:
+                    // `docker run image arg1 arg2` uses ENTRYPOINT + [arg1, arg2])
                     if let entrypoint = imageConfig.config?.Entrypoint, !entrypoint.isEmpty {
-                        if let extraCmd = imageConfig.config?.Cmd, !extraCmd.isEmpty {
-                            args = entrypoint + extraCmd
-                        } else {
-                            args = entrypoint
-                        }
-                    } else if let extraCmd = imageConfig.config?.Cmd, !extraCmd.isEmpty {
-                        args = extraCmd
+                        finalArgs = entrypoint + request.userArgs
+                    } else if let cmd = imageConfig.config?.Cmd, let executable = cmd.first {
+                        // No entrypoint, prefix user args with Cmd[0] (the executable)
+                        // so we don't lose the binary path
+                        finalArgs = [executable] + request.userArgs
                     } else {
-                        // Fallback: try suggest something reasonable (e.g., "/bin/sh"?)
-                        args = []
+                        finalArgs = request.userArgs
                     }
                 } else {
-                    args = request.cmd.split(separator: " ").map(String.init)
+                    // No user args, use image entrypoint + cmd as-is
+                    if let entrypoint = imageConfig.config?.Entrypoint, !entrypoint.isEmpty {
+                        if let extraCmd = imageConfig.config?.Cmd, !extraCmd.isEmpty {
+                            finalArgs = entrypoint + extraCmd
+                        } else {
+                            finalArgs = entrypoint
+                        }
+                    } else if let extraCmd = imageConfig.config?.Cmd, !extraCmd.isEmpty {
+                        finalArgs = extraCmd
+                    } else {
+                        finalArgs = []
+                    }
                 }
 
                 // Set up workingDir
@@ -423,7 +440,7 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
                 }
 
                 var spec = OCI(
-                    args: args,
+                    args: finalArgs,
                     env: env,
                     workingDir: workingDir,
                     appName: request.appName
