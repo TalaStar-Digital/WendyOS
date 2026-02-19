@@ -333,13 +333,13 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
         // Try to use cached data for executables and plugin status
         let allExecutables: [SwiftPM.Executable]
         let packageIdentity: String
-        var hasContainerPlugin: Bool
+        var containerPluginVersion: String? = nil
 
         if let cached = cache.getValidCache() {
             // Cache hit - use cached data
             allExecutables = cached.executables
             packageIdentity = cached.packageIdentity
-            hasContainerPlugin = cached.hasContainerPlugin
+            containerPluginVersion = cached.containerPluginVersion
         } else {
             // Cache miss - fetch fresh data
             let package = try await cliOutput.withProgress(
@@ -360,10 +360,7 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
 
             allExecutables = executables
             packageIdentity = package.identity
-            hasContainerPlugin = package.dependencies.contains {
-                $0.url.hasSuffix("swift-container-plugin")
-                    || $0.url.hasSuffix("swift-container-plugin.git")
-            }
+            let containerPlugin = package.findDependency(urlSuffix: "swift-container-plugin")
 
             // Write to cache
             if let hash = try? cache.computePackageSwiftHash() {
@@ -372,13 +369,26 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
                         packageSwiftHash: hash,
                         packageIdentity: packageIdentity,
                         executables: allExecutables,
-                        hasContainerPlugin: hasContainerPlugin
+                        containerPluginVersion: containerPlugin?.version
                     )
                 )
             }
         }
 
-        if !hasContainerPlugin {
+        let containerPluginURL = "https://github.com/apple/swift-container-plugin.git"
+        let requiredContainerPluginVersion = "1.3.0"
+        let pluginSupportsBacktrace: Bool
+        if let containerPluginVersion {
+            // Plugin exists, check version
+            if !SwiftPM.isVersion(containerPluginVersion, atLeast: requiredContainerPluginVersion) {
+                cliOutput.warning(
+                    "swift-container-plugin version \(containerPluginVersion) is installed, but version \(requiredContainerPluginVersion) or higher is recommended"
+                )
+                pluginSupportsBacktrace = false
+            } else {
+                pluginSupportsBacktrace = true
+            }
+        } else {
             cliOutput.info(
                 "Container plugin is not installed. Do you want to install it?"
             )
@@ -401,9 +411,10 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
             }
 
             try await swiftPM.addDependency(
-                url: "https://github.com/apple/swift-container-plugin.git",
-                from: "1.3.0"
+                url: containerPluginURL,
+                from: requiredContainerPluginVersion
             )
+            pluginSupportsBacktrace = true
         }
 
         let executableTargets = allExecutables.filter {
@@ -465,6 +476,49 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
                     "/\(url.lastPathComponent)",
                 ]
                 var arguments: [String] = []
+                var additionalEnv: [String] = []
+                var hasBacktrace = false
+
+                // Add swift-backtrace binaries for crash reporting
+                findBacktrace: for binaryName in [
+                    "swift-backtrace-static-linux-arm64",
+                    "swift-backtrace-linux-arm64",
+                ] where pluginSupportsBacktrace {
+                    let destination = "/swift-backtrace"
+                    if let backtraceUrl = Bundle.module.url(
+                        forResource: binaryName,
+                        withExtension: nil
+                    ) {
+                        hasBacktrace = true
+                        resources.append((source: backtraceUrl.path(), destination: destination))
+                        break findBacktrace
+                    }
+                    let backtraceUrl = URL(fileURLWithPath: CommandLine.arguments[0])
+                        .deletingLastPathComponent()
+                        .appending(path: "wendy-agent_wendy.bundle")
+                        .appending(path: "Contents")
+                        .appending(path: "Resources")
+                        .appending(path: "Resources")
+                        .appending(component: binaryName)
+
+                    if FileManager.default.fileExists(atPath: backtraceUrl.path()) {
+                        hasBacktrace = true
+                        resources.append(
+                            (source: backtraceUrl.path(), destination: destination)
+                        )
+                        break findBacktrace
+                    }
+                }
+
+                if hasBacktrace {
+                    additionalEnv.append(
+                        "SWIFT_BACKTRACE=enable=yes,sanitize=yes,threads=all,images=all,interactive=no,swift-backtrace=/swift-backtrace"
+                    )
+                } else {
+                    cliOutput.warning(
+                        "swift-backtrace binary not found. Crash backtraces will not be available."
+                    )
+                }
 
                 if debug {
                     let ds2BinaryName = "ds2-124963fd-static-linux-arm64"
@@ -505,12 +559,13 @@ struct BuildCommand: AsyncParsableCommand, Sendable {
                 try await cliOutput.withStreamingOutputBox(
                     title: "Building Swift app",
                     maxLines: 20
-                ) { emit in
+                ) { [additionalEnv] emit in
                     try await swiftPM.buildAndPushContainer(
                         swiftSDK: swiftSDK,
                         product: executableTarget,
                         device: endpoint.host,
                         entrypoint: finalEntrypoint,
+                        additionalEnv: additionalEnv,
                         arguments: finalArguments,
                         resources: finalResources,
                         onOutput: emit

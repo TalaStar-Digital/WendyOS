@@ -375,7 +375,7 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
                 // Build base environment variables
                 // Note: GPU-related env vars (NVIDIA_VISIBLE_DEVICES, etc.) are now
                 // handled by CDI and added during applyCDIDevice()
-                let env = [
+                let wendyEnv = [
                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                     "WENDY_HOSTNAME=\(hostname).local",
                 ]
@@ -390,6 +390,22 @@ struct WendyContainerService: Wendy_Agent_Services_V1_WendyContainerService.Serv
                     ContainerRegistry.ImageConfiguration.self,
                     from: configData
                 )
+
+                // Merge image env with Wendy's env, letting Wendy's values take precedence.
+                var envDict = [String: String]()
+                for entry in imageConfig.config?.Env ?? [] {
+                    guard let separatorIndex = entry.firstIndex(of: "=") else { continue }
+                    envDict[String(entry[..<separatorIndex])] = String(
+                        entry[entry.index(after: separatorIndex)...]
+                    )
+                }
+                for entry in wendyEnv {
+                    guard let separatorIndex = entry.firstIndex(of: "=") else { continue }
+                    envDict[String(entry[..<separatorIndex])] = String(
+                        entry[entry.index(after: separatorIndex)...]
+                    )
+                }
+                let env = envDict.map { "\($0.key)=\($0.value)" }
 
                 // Set up command
                 let requestCmdIsEmpty = request.cmd.trimmingCharacters(in: .whitespacesAndNewlines)
