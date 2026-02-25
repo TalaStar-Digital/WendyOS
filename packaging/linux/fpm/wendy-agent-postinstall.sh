@@ -16,3 +16,6 @@ if systemctl is-enabled wendy-agent >/dev/null 2>&1; then
 else
   systemctl enable --now wendy-agent >/dev/null 2>&1 || true
 fi
+
+# Reload avahi-daemon so it picks up the new service file
+systemctl try-restart avahi-daemon >/dev/null 2>&1 || true

@@ -623,6 +623,7 @@ jobs:
           mkdir -p pkgroot/wendy-agent/usr/lib/systemd/system
           mkdir -p pkgroot/wendy-agent/etc/default
           mkdir -p pkgroot/wendy-agent/etc/wendy-agent
+          mkdir -p pkgroot/wendy-agent/etc/avahi/services
           mkdir -p pkgroot/wendy-agent/var/lib/wendy-agent/storage
 
           install -m755 ./wendy-cli-linux-static-musl-${{ matrix.artifact-suffix }}/wendy \
@@ -634,6 +635,8 @@ jobs:
             pkgroot/wendy-agent/usr/lib/systemd/system/wendy-agent.service
           install -m644 packaging/linux/default/wendy-agent \
             pkgroot/wendy-agent/etc/default/wendy-agent
+          install -m644 packaging/linux/avahi/wendy-agent.service \
+            pkgroot/wendy-agent/etc/avahi/services/wendy-agent.service
 
           # Placeholder config created at install time by package manager.
           printf "{}\n" > pkgroot/wendy-agent/etc/wendy-agent/config.json
@@ -675,10 +678,12 @@ jobs:
             --depends "dbus" \
             --depends "systemd" \
             --depends "ca-certificates" \
+            --depends "avahi-daemon" \
             --deb-recommends "network-manager | connman" \
             --deb-recommends "bluez" \
             --config-files /etc/default/wendy-agent \
             --config-files /etc/wendy-agent/config.json \
+            --config-files /etc/avahi/services/wendy-agent.service \
             --after-install packaging/linux/fpm/wendy-agent-postinstall.sh \
             --before-remove packaging/linux/fpm/wendy-agent-preremove.sh \
             -C pkgroot/wendy-agent \
@@ -724,8 +729,10 @@ jobs:
             --depends "dbus" \
             --depends "systemd" \
             --depends "ca-certificates" \
+            --depends "avahi" \
             --config-files /etc/default/wendy-agent \
             --config-files /etc/wendy-agent/config.json \
+            --config-files /etc/avahi/services/wendy-agent.service \
             --after-install packaging/linux/fpm/wendy-agent-postinstall.sh \
             --before-remove packaging/linux/fpm/wendy-agent-preremove.sh \
             -C pkgroot/wendy-agent \
@@ -750,6 +757,8 @@ jobs:
           dpkg-deb -I "$WENDY_AGENT_DEB" | grep -E "Depends:.*ca-certificates"
           dpkg-deb -c "$WENDY_AGENT_DEB" | grep -q "usr/lib/systemd/system/wendy-agent.service"
           dpkg-deb -c "$WENDY_AGENT_DEB" | grep -q "etc/default/wendy-agent"
+          dpkg-deb -c "$WENDY_AGENT_DEB" | grep -q "etc/avahi/services/wendy-agent.service"
+          dpkg-deb -I "$WENDY_AGENT_DEB" | grep -E "Depends:.*avahi-daemon"
 
           rpm -qp --requires "$WENDY_RPM" | grep -q "^usbutils"
           rpm -qp --requires "$WENDY_RPM" | grep -q "^ca-certificates"
@@ -757,8 +766,10 @@ jobs:
           rpm -qp --requires "$WENDY_AGENT_RPM" | grep -q "^dbus"
           rpm -qp --requires "$WENDY_AGENT_RPM" | grep -q "^systemd"
           rpm -qp --requires "$WENDY_AGENT_RPM" | grep -q "^ca-certificates"
+          rpm -qp --requires "$WENDY_AGENT_RPM" | grep -q "^avahi"
           rpm -qpl "$WENDY_AGENT_RPM" | grep -q "/usr/lib/systemd/system/wendy-agent.service"
           rpm -qpl "$WENDY_AGENT_RPM" | grep -q "/etc/default/wendy-agent"
+          rpm -qpl "$WENDY_AGENT_RPM" | grep -q "/etc/avahi/services/wendy-agent.service"
 
       - name: Upload .deb packages
         uses: actions/upload-artifact@v4
