@@ -151,7 +151,7 @@ enum Platform: String {
     }
 #endif
 
-func fetchReleases(httpClient: HTTPExecutor = DefaultHTTPExecutor()) async throws -> [Release] {
+func fetchReleases(httpClient: HTTPExecutor = DefaultHTTPExecutor(), timeout: TimeAmount = .seconds(60)) async throws -> [Release] {
     let githubReleasesURL = "https://api.github.com/repos/wendylabsinc/wendy-agent/releases"
 
     // Fetch releases JSON
@@ -164,7 +164,7 @@ func fetchReleases(httpClient: HTTPExecutor = DefaultHTTPExecutor()) async throw
     request.headers.add(name: "User-Agent", value: "wendy-agent")
     let response = try await httpClient.execute(
         request,
-        deadline: NIODeadline.now() + .seconds(60)
+        deadline: NIODeadline.now() + timeout
     )
 
     // Check for successful response
