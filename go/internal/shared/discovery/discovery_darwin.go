@@ -211,7 +211,7 @@ func dnssdResolve(ctx context.Context, inst browseResult) (models.LANDevice, err
 		Hostname:      hostname,
 		IPAddress:     ipAddr,
 		Port:          port,
-		InterfaceType: "LAN",
+		InterfaceType: string(models.InterfaceLAN),
 		IsWendyDevice: true,
 	}, nil
 }

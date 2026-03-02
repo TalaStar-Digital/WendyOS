@@ -59,7 +59,7 @@ func newBluetoothListCmd() *cobra.Command {
 					break
 				}
 				if err != nil {
-					break
+					return fmt.Errorf("receiving Bluetooth scan result: %w", err)
 				}
 				allDevices = append(allDevices, resp.GetDiscoveredDevices()...)
 			}

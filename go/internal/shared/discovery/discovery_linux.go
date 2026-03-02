@@ -59,7 +59,7 @@ func discoverLAN(ctx context.Context, timeout time.Duration) ([]models.LANDevice
 				Hostname:      hostname,
 				IPAddress:     ipAddr,
 				Port:          entry.Port,
-				InterfaceType: "LAN",
+				InterfaceType: string(models.InterfaceLAN),
 				IsWendyDevice: true,
 			})
 		}

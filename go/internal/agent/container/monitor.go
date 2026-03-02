@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/wendylabsinc/wendy/internal/agent/services"
+	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
 )
 
 // RestartPolicy determines the container restart behavior.
@@ -161,7 +162,7 @@ func (m *ContainerMonitor) checkContainers(ctx context.Context) {
 	// Build a set of running container names.
 	running := make(map[string]bool)
 	for _, c := range containers {
-		if c.GetRunningState() == 1 { // RUNNING
+		if c.GetRunningState() == agentpb.AppRunningState_RUNNING {
 			running[c.GetAppName()] = true
 		}
 	}

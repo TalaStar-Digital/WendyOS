@@ -29,12 +29,15 @@ func RenderTable(headers []string, rows [][]string) string {
 	// Calculate column widths.
 	colWidths := make([]int, len(headers))
 	for i, h := range headers {
-		colWidths[i] = len(h)
+		colWidths[i] = lipgloss.Width(h)
 	}
 	for _, row := range rows {
 		for i, cell := range row {
-			if i < len(colWidths) && len(cell) > colWidths[i] {
-				colWidths[i] = len(cell)
+			if i < len(colWidths) {
+				w := lipgloss.Width(cell)
+				if w > colWidths[i] {
+					colWidths[i] = w
+				}
 			}
 		}
 	}
