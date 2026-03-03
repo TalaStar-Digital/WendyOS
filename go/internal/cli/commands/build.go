@@ -64,8 +64,13 @@ func newBuildCmd() *cobra.Command {
 				language = appCfg.Language
 			}
 
+			appID := filepath.Base(cwd)
+			if cfgErr == nil {
+				appID = appCfg.AppID
+			}
+
 			projectType := detectProjectTypeWithLanguage(cwd, language)
-			return buildProject(cmd.Context(), cwd, projectType)
+			return buildProject(cmd.Context(), cwd, projectType, appID)
 		},
 	}
 
@@ -84,8 +89,8 @@ func detectProjectTypeWithLanguage(dir, language string) string {
 	return detectProjectType(dir)
 }
 
-func buildProject(ctx context.Context, dir, projectType string) error {
-	imageName := filepath.Base(dir) + ":latest"
+func buildProject(ctx context.Context, dir, projectType, appID string) error {
+	imageName := appID + ":latest"
 
 	switch projectType {
 	case "docker":
@@ -93,7 +98,7 @@ func buildProject(ctx context.Context, dir, projectType string) error {
 	case "python":
 		return buildPythonProject(dir, imageName)
 	case "swift":
-		return buildSwiftProject(dir)
+		return buildSwiftProject(dir, appID)
 	default:
 		return fmt.Errorf("unknown project type; add a Dockerfile, Package.swift, or requirements.txt")
 	}
@@ -155,9 +160,9 @@ func buildPythonProject(dir, imageName string) error {
 	return err
 }
 
-func buildSwiftProject(dir string) error {
+func buildSwiftProject(dir, appID string) error {
 	if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil {
-		return buildDockerProject(dir, filepath.Base(dir)+":latest")
+		return buildDockerProject(dir, appID+":latest")
 	}
 
 	fmt.Println("Building Swift project locally...")
