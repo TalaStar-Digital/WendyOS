@@ -102,11 +102,6 @@ jobs:
             goarch: arm64
             product: wendy
             cmd: wendy
-          - artifact-name: wendy-cli-darwin-amd64
-            goos: darwin
-            goarch: amd64
-            product: wendy
-            cmd: wendy
           - artifact-name: wendy-cli-darwin-arm64
             goos: darwin
             goarch: arm64
