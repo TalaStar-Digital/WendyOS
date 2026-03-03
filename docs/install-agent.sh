@@ -116,7 +116,10 @@ if command -v apt-get &>/dev/null; then
   confirm "Proceed?"
 
   echo "Adding Wendy APT repository..."
-  echo "deb [trusted=yes] https://us-central1-apt.pkg.dev/projects/cloud-c7e56 wendy-apt main" \
+  # Import the Google Artifact Registry GPG key
+  curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/wendy-archive-keyring.gpg
+  echo "deb [signed-by=/usr/share/keyrings/wendy-archive-keyring.gpg] https://us-central1-apt.pkg.dev/projects/cloud-c7e56 wendy-apt main" \
     > /etc/apt/sources.list.d/wendy.list
   apt-get update
   apt-get install -y wendy-agent
@@ -176,7 +179,7 @@ else
 fi
 
 # --- Enable and start the service if systemd is available ---
-if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null 2>&1; then
+if command -v systemctl &>/dev/null; then
   echo ""
   echo "Enabling and starting wendy-agent service..."
   systemctl daemon-reload

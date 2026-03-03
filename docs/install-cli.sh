@@ -147,14 +147,16 @@ if [[ "$OS" == "darwin" ]]; then
 # ===== Linux =====
 elif [[ "$OS" == "linux" ]]; then
   if command -v apt-get &>/dev/null; then
-    echo "APT detected. Will add the Wendy repository and install wendy-cli."
+    echo "APT detected. Will add the Wendy repository and install wendy."
     confirm "Proceed?"
 
     echo "Adding Wendy APT repository..."
-    echo "deb [trusted=yes] https://us-central1-apt.pkg.dev/projects/cloud-c7e56 wendy-apt main" \
+    curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg \
+      | sudo gpg --dearmor -o /usr/share/keyrings/wendy-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/wendy-archive-keyring.gpg] https://us-central1-apt.pkg.dev/projects/cloud-c7e56 wendy-apt main" \
       | sudo tee /etc/apt/sources.list.d/wendy.list >/dev/null
     sudo apt-get update
-    sudo apt-get install -y wendy-cli
+    sudo apt-get install -y wendy
 
   elif command -v dnf &>/dev/null; then
     echo "DNF detected. Will add the Wendy repository and install wendy-cli."
