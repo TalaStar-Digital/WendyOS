@@ -2,8 +2,13 @@
 package commands
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
+	"github.com/wendylabsinc/wendy/internal/cli/analytics"
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
+	"github.com/wendylabsinc/wendy/internal/shared/config"
 	"github.com/wendylabsinc/wendy/internal/shared/version"
 )
 
@@ -22,6 +27,35 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			providers.Initialize(cmd.Context())
+
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			firstRun := analytics.Init(cfg)
+			if firstRun {
+				fmt.Fprintln(os.Stderr, "Attention: The Wendy CLI collects anonymous analytics.")
+				fmt.Fprintln(os.Stderr, "They help us understand which commands are used most, identify common errors, and prioritize improvements.")
+				fmt.Fprintln(os.Stderr, "Analytics are enabled by default. If you'd like to opt-out, use the following command:")
+				fmt.Fprintln(os.Stderr, "  wendy analytics disable")
+				fmt.Fprintln(os.Stderr, "Or, set the following environment variable:")
+				fmt.Fprintln(os.Stderr, "  WENDY_ANALYTICS=false")
+
+				cfg.Analytics = &config.AnalyticsConfig{Enabled: true}
+				if err := config.Save(cfg); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
+			analytics.Track("command_executed", map[string]string{
+				"command": cmd.CommandPath(),
+				"success": "true",
+			})
+			analytics.Close()
 			return nil
 		},
 	}
@@ -75,6 +109,8 @@ func NewRootCmd() *cobra.Command {
 	updateCmd.GroupID = "misc"
 	infoCmd := newInfoCmd()
 	infoCmd.GroupID = "misc"
+	analyticsCmd := newAnalyticsCmd()
+	analyticsCmd.GroupID = "misc"
 
 	root.AddCommand(
 		runCmd,
@@ -93,6 +129,7 @@ func NewRootCmd() *cobra.Command {
 		cacheCmd,
 		updateCmd,
 		infoCmd,
+		analyticsCmd,
 	)
 
 	root.SetHelpCommandGroupID("misc")
