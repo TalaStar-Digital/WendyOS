@@ -89,7 +89,7 @@ func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.Age
 		return nil, fmt.Errorf("no device specified; use --device flag or set a default with 'wendy device set-default'")
 	}
 
-	target, pickErr := pickDevice(ctx, cfg.excludeProviderKeys)
+	target, pickErr := pickDevice(ctx, cfg.excludeProviderKeys, cfg.excludeBluetooth)
 	if pickErr != nil {
 		return nil, pickErr
 	}
@@ -118,6 +118,15 @@ type resolveOption func(*resolveConfig)
 
 type resolveConfig struct {
 	excludeProviderKeys map[string]bool
+	excludeBluetooth    bool
+}
+
+// ExcludeBluetooth prevents Bluetooth/BLE devices from appearing in the
+// interactive device picker.
+func ExcludeBluetooth() resolveOption {
+	return func(c *resolveConfig) {
+		c.excludeBluetooth = true
+	}
 }
 
 // ExcludeProviders prevents the named provider keys from appearing in the
@@ -180,7 +189,7 @@ func resolveTarget(ctx context.Context, opts ...resolveOption) (*SelectedDevice,
 		return nil, fmt.Errorf("no device specified; use --device flag or set a default with 'wendy device set-default'")
 	}
 
-	return pickDevice(ctx, cfg.excludeProviderKeys)
+	return pickDevice(ctx, cfg.excludeProviderKeys, cfg.excludeBluetooth)
 }
 
 // ensureAppConfig loads wendy.json from cfgPath. If the file does not exist
@@ -259,7 +268,7 @@ type pickerEntry struct {
 // pickDevice runs an interactive TUI that discovers devices across all
 // transports and providers, then lets the user select one.
 // excludeProviders hides the named provider keys from the picker.
-func pickDevice(ctx context.Context, excludeProviders map[string]bool) (*SelectedDevice, error) {
+func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBluetooth bool) (*SelectedDevice, error) {
 	picker := tui.NewPicker()
 	p := tea.NewProgram(picker)
 
@@ -306,6 +315,10 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool) (*Selecte
 		var items []tui.PickerItem
 		for i := range merged {
 			d := &merged[i]
+			// Skip BLE-only devices when Bluetooth is excluded.
+			if excludeBluetooth && d.LAN == nil && d.External == nil {
+				continue
+			}
 			name := d.DisplayName
 			if d.AgentVersion != "" {
 				name += " v" + d.AgentVersion

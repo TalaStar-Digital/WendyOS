@@ -332,7 +332,7 @@ func newDeviceUpdateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			conn, err := connectToAgent(ctx, ExcludeProviders("local", "docker", "wendy-lite"))
+			conn, err := connectToAgent(ctx, ExcludeProviders("local", "docker", "wendy-lite"), ExcludeBluetooth())
 			if err != nil {
 				return err
 			}
