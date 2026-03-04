@@ -104,9 +104,19 @@ const (
 	wendySDKRelease = "0.4.0"
 )
 
+// wendySDKChecksums maps architecture to the checksum for the WendyOS Swift SDK bundle.
+var wendySDKChecksums = map[string]string{
+	"x86_64":  "b5a4d08ad4d4841043727f6671c6aa004da3a2b7f12dc28101d6770c1dc57eb1",
+	"aarch64": "ef8fa5a2eda766e3b1df791dc175bbf87f570b9cc6f95ada1fe7643a327e087e",
+}
+
 // buildSwiftContainerImage builds a Swift package and pushes the container image
 // directly to the device's registry using swift-container-plugin.
 func buildSwiftContainerImage(ctx context.Context, dir, product, registryHost, architecture string) error {
+	if err := ensureContainerPlugin(dir); err != nil {
+		return err
+	}
+
 	sdk, err := findSwiftSDK(architecture)
 	if err != nil {
 		return err
@@ -135,14 +145,47 @@ func buildSwiftContainerImage(ctx context.Context, dir, product, registryHost, a
 	return nil
 }
 
+const containerPluginMinVersion = "1.3.0"
+
+// ensureContainerPlugin checks that swift-container-plugin is available as a
+// package plugin in the given project directory. If not, it automatically adds
+// the dependency using `swift package add-dependency`.
+func ensureContainerPlugin(dir string) error {
+	cmd := exec.Command("swiftly", "run", "+"+defaultSwiftVersion, "swift", "package", "plugin", "--list")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to list Swift package plugins: %w", err)
+	}
+
+	if strings.Contains(string(out), "build-container-image") {
+		return nil
+	}
+
+	fmt.Println("Adding swift-container-plugin dependency...")
+	add := exec.Command("swiftly", "run", "+"+defaultSwiftVersion, "swift", "package", "add-dependency",
+		"https://github.com/apple/swift-container-plugin", "--from", containerPluginMinVersion)
+	add.Dir = dir
+	add.Stdout = os.Stdout
+	add.Stderr = os.Stderr
+	if err := add.Run(); err != nil {
+		return fmt.Errorf("failed to add swift-container-plugin dependency: %w", err)
+	}
+
+	return nil
+}
+
 // findSwiftSDK looks for an installed Swift SDK for the given architecture.
 // It prefers WendyOS-specific SDKs, installing one automatically if not present.
 // For WASM targets (Wendy Lite), it installs the official Swift WASM SDK.
 func findSwiftSDK(architecture string) (string, error) {
-	// Normalize: swift-container-plugin uses "arm64" but SDKs use "aarch64".
+	// Normalize: swift-container-plugin uses "arm64"/"amd64" but SDKs use "aarch64"/"x86_64".
 	sdkArch := architecture
-	if sdkArch == "arm64" {
+	switch sdkArch {
+	case "arm64":
 		sdkArch = "aarch64"
+	case "amd64":
+		sdkArch = "x86_64"
 	}
 
 	isWasm := sdkArch == "wasm" || sdkArch == "wasm32"
@@ -196,18 +239,18 @@ func lookupSwiftSDK(sdkArch string, isWasm bool) (string, error) {
 		return "", nil
 	}
 
-	// Prefer a wendyos SDK.
+	// Prefer a wendyos SDK matching the current Swift version.
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.Contains(line, "wendyos") && strings.Contains(line, sdkArch) {
+		if strings.Contains(line, "wendyos") && strings.Contains(line, sdkArch) && strings.Contains(line, defaultSwiftVersion) {
 			return line, nil
 		}
 	}
 
-	// Fall back to any matching linux SDK.
+	// Fall back to any matching linux SDK for the current Swift version.
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.Contains(line, sdkArch) && strings.Contains(line, "linux") {
+		if strings.Contains(line, sdkArch) && strings.Contains(line, "linux") && strings.Contains(line, defaultSwiftVersion) {
 			return line, nil
 		}
 	}
@@ -225,7 +268,12 @@ func installWendySwiftSDK(sdkArch string) error {
 
 	fmt.Printf("Installing WendyOS Swift SDK (%s)...\n", sdkName)
 
-	cmd := exec.Command("swiftly", "run", "+"+defaultSwiftVersion, "swift", "sdk", "install", url)
+	checksum, ok := wendySDKChecksums[sdkArch]
+	if !ok {
+		return fmt.Errorf("no checksum available for architecture %s", sdkArch)
+	}
+
+	cmd := exec.Command("swiftly", "run", "+"+defaultSwiftVersion, "swift", "sdk", "install", url, "--checksum", checksum)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
