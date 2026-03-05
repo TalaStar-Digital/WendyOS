@@ -129,12 +129,12 @@ func parseAndroidManifest(projectPath string) (packageID, activityName string, e
 	}
 
 	var manifest struct {
-		Package    string `xml:"package,attr"`
+		Package     string `xml:"package,attr"`
 		Application struct {
 			Activities []struct {
 				Name         string `xml:"http://schemas.android.com/apk/res/android name,attr"`
 				IntentFilter []struct {
-					Actions    []struct {
+					Actions []struct {
 						Name string `xml:"http://schemas.android.com/apk/res/android name,attr"`
 					} `xml:"action"`
 					Categories []struct {

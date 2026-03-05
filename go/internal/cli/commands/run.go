@@ -454,4 +454,3 @@ func resolveRestartPolicy(opts runOptions) *agentpb.RestartPolicy {
 	}
 	return &agentpb.RestartPolicy{Mode: mode}
 }
-

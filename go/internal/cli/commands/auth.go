@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
-	"strings"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/wendylabsinc/wendy/internal/shared/certs"

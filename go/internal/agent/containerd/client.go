@@ -459,6 +459,9 @@ func (c *Client) StartContainer(ctx context.Context, appName string) (<-chan ser
 		return nil, fmt.Errorf("loading container %q: %w", appName, err)
 	}
 
+	// Clean up any stale task from a previous run.
+	c.deleteStaleTask(ctx, container, appName)
+
 	// Create pipes for stdout/stderr capture.
 	stdoutR, stdoutW := io.Pipe()
 	stderrR, stderrW := io.Pipe()
@@ -466,11 +469,27 @@ func (c *Client) StartContainer(ctx context.Context, appName string) (<-chan ser
 	// Create a new task with pipe-based stdio for programmatic capture.
 	task, err := container.NewTask(ctx, cio.NewCreator(cio.WithStreams(nil, stdoutW, stderrW)))
 	if err != nil {
-		stdoutR.Close()
-		stdoutW.Close()
-		stderrR.Close()
-		stderrW.Close()
-		return nil, fmt.Errorf("creating task for %q: %w", appName, err)
+		if errdefs.IsAlreadyExists(err) {
+			// Orphaned task: exists in containerd metadata but container.Task()
+			// can't load it. Delete the container (cascades to its task) and
+			// recreate it from the same image+spec+snapshot to clear the state.
+			c.logger.Warn("Orphaned task detected, recreating container", zap.String("app_name", appName))
+			if rerr := c.recreateContainer(ctx, container, appName); rerr != nil {
+				c.logger.Error("Failed to recreate container", zap.Error(rerr))
+			} else {
+				container, err = c.client.LoadContainer(ctx, appName)
+				if err == nil {
+					task, err = container.NewTask(ctx, cio.NewCreator(cio.WithStreams(nil, stdoutW, stderrW)))
+				}
+			}
+		}
+		if err != nil {
+			stdoutR.Close()
+			stdoutW.Close()
+			stderrR.Close()
+			stderrW.Close()
+			return nil, fmt.Errorf("creating task for %q: %w", appName, err)
+		}
 	}
 
 	// Set up the wait channel before starting.
@@ -501,6 +520,72 @@ func (c *Client) StartContainer(ctx context.Context, appName string) (<-chan ser
 	go c.streamOutput(ctx, task, exitStatusCh, outputCh, appName, stdoutR, stderrR, stdoutW, stderrW)
 
 	return outputCh, nil
+}
+
+// deleteStaleTask attempts to load and force-delete any existing task for the
+// container. It handles both the normal case (task loadable) and the edge case
+// where the task exists in containerd but container.Task() can't load it.
+func (c *Client) deleteStaleTask(ctx context.Context, container containerd.Container, appName string) {
+	existingTask, taskErr := container.Task(ctx, nil)
+	if taskErr != nil {
+		return // No task to clean up.
+	}
+	_ = existingTask.Kill(ctx, syscall.SIGKILL)
+	if waitCh, waitErr := existingTask.Wait(ctx); waitErr == nil {
+		select {
+		case <-waitCh:
+		case <-time.After(5 * time.Second):
+			c.logger.Warn("Timed out waiting for stale task to exit", zap.String("app_name", appName))
+		}
+	}
+	_, _ = existingTask.Delete(ctx, containerd.WithProcessKill)
+}
+
+// recreateContainer deletes a container (which cascades to any orphaned task)
+// and recreates it with the same image, spec, and labels. This clears orphaned
+// task metadata that blocks NewTask.
+func (c *Client) recreateContainer(ctx context.Context, ctr containerd.Container, appName string) error {
+	info, err := ctr.Info(ctx)
+	if err != nil {
+		return fmt.Errorf("getting container info: %w", err)
+	}
+
+	image, err := ctr.Image(ctx)
+	if err != nil {
+		return fmt.Errorf("getting container image: %w", err)
+	}
+
+	spec, err := ctr.Spec(ctx)
+	if err != nil {
+		return fmt.Errorf("getting container spec: %w", err)
+	}
+
+	specJSON, err := json.Marshal(spec)
+	if err != nil {
+		return fmt.Errorf("marshaling spec: %w", err)
+	}
+
+	// Delete the container (cascades to orphaned task).
+	if err := ctr.Delete(ctx, containerd.WithSnapshotCleanup); err != nil {
+		return fmt.Errorf("deleting container: %w", err)
+	}
+
+	// Recreate with the same configuration.
+	snapshotKey := fmt.Sprintf("wendy-%s", appName)
+	_, err = c.client.NewContainer(ctx, appName,
+		containerd.WithImage(image),
+		containerd.WithNewSnapshot(snapshotKey, image),
+		containerd.WithContainerLabels(info.Labels),
+		containerd.WithNewSpec(
+			oci.WithSpecFromBytes(specJSON),
+		),
+	)
+	if err != nil {
+		return fmt.Errorf("recreating container: %w", err)
+	}
+
+	c.logger.Info("Recreated container to clear orphaned task", zap.String("app_name", appName))
+	return nil
 }
 
 // streamOutput reads stdout/stderr from pipes and sends it to the output
@@ -615,7 +700,7 @@ func (c *Client) StopContainer(ctx context.Context, appName string) error {
 	}
 
 	// Delete the task.
-	_, err = task.Delete(ctx)
+	_, err = task.Delete(ctx, containerd.WithProcessKill)
 	if err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("deleting task for %q: %w", appName, err)
 	}
