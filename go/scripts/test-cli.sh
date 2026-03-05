@@ -340,8 +340,8 @@ echo ""
 echo -e "${BOLD}Phase 7: Telemetry${RESET}"
 
 # Streaming command — run briefly then kill; success or SIGTERM are both OK.
-printf "  %-50s " "wendy telemetry logs (3s timeout)"
-"$WENDY" telemetry logs --device "$HOSTNAME" >"/tmp/wendy-telem-$$" 2>&1 &
+printf "  %-50s " "wendy device logs (3s timeout)"
+"$WENDY" device logs --device "$HOSTNAME" >"/tmp/wendy-telem-$$" 2>&1 &
 TELEM_PID=$!
 sleep 3
 kill "$TELEM_PID" 2>/dev/null

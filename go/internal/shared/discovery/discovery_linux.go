@@ -83,3 +83,32 @@ func discoverLAN(ctx context.Context, timeout time.Duration) ([]models.LANDevice
 
 	return devices, nil
 }
+
+// discoverLANContinuous periodically queries mDNS and sends newly discovered
+// devices to ch. Runs until ctx is cancelled.
+func discoverLANContinuous(ctx context.Context, ch chan<- models.LANDevice) {
+	defer close(ch)
+	seen := make(map[string]bool)
+
+	for {
+		devices, _ := discoverLAN(ctx, 3*time.Second)
+		for _, dev := range devices {
+			key := fmt.Sprintf("%s-%s-%d", dev.DisplayName, dev.Hostname, dev.Port)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			select {
+			case ch <- dev:
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+		}
+	}
+}

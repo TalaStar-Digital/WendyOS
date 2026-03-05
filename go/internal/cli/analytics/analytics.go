@@ -3,6 +3,8 @@ package analytics
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -56,6 +58,7 @@ func Init(cfg *config.Config) (firstRun bool) {
 
 	client, err = posthog.NewWithConfig(posthogAPIKey, posthog.Config{
 		Endpoint: posthogHost,
+		Logger:   posthog.StdLogger(log.New(io.Discard, "", 0), false),
 	})
 	if err != nil {
 		enabled = false

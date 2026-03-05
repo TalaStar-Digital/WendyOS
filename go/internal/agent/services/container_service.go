@@ -216,6 +216,11 @@ func (s *ContainerService) streamContainerOutput(
 	// output to the log manager, and subscribe to read from it.
 	var readCh <-chan ContainerOutput
 	if s.logManager != nil {
+		// Subscribe BEFORE starting the pump to avoid missing early output.
+		subID, subCh := s.logManager.Subscribe(appName)
+		defer s.logManager.Unsubscribe(appName, subID)
+		readCh = subCh
+
 		// Pump containerd output into the log manager.
 		go func() {
 			for output := range outputCh {
@@ -224,10 +229,6 @@ func (s *ContainerService) streamContainerOutput(
 			// When containerd channel closes, publish a Done marker.
 			s.logManager.Publish(appName, ContainerOutput{Done: true})
 		}()
-
-		subID, subCh := s.logManager.Subscribe(appName)
-		defer s.logManager.Unsubscribe(appName, subID)
-		readCh = subCh
 	} else {
 		readCh = outputCh
 	}

@@ -29,3 +29,7 @@ func discoverBluetooth(_ context.Context, _ bool) ([]models.BluetoothDevice, err
 func BrowseMDNSServices(_ context.Context, _ string, _ time.Duration) ([]MDNSService, error) {
 	return nil, nil
 }
+
+func discoverLANContinuous(_ context.Context, ch chan<- models.LANDevice) {
+	close(ch)
+}

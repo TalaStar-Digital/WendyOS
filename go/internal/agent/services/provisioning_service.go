@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -119,10 +120,10 @@ func (s *ProvisioningService) StartProvisioning(ctx context.Context, req *agentp
 		zap.Int32("asset_id", req.GetAssetId()),
 	)
 
-	// Generate a new key pair.
-	keyPEM, err := certs.GenerateKeyPair()
+	// Reuse the device's existing private key if present, otherwise generate a new one.
+	keyPEM, err := s.loadOrGenerateKey()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to generate key pair: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to load or generate key pair: %v", err)
 	}
 
 	// Generate CSR using org and asset as common name.
@@ -187,6 +188,12 @@ func (s *ProvisioningService) StartProvisioning(ctx context.Context, req *agentp
 		return nil, status.Errorf(codes.Internal, "failed to save provisioning state: %v", err)
 	}
 
+	// Write individual PEM files so the container registry can mount and use them.
+	if err := s.writePEMFiles(keyPEM, certPEM, chainPEM); err != nil {
+		s.logger.Error("Failed to write PEM files for registry", zap.Error(err))
+		// Non-fatal: provisioning.json is the source of truth.
+	}
+
 	s.logger.Info("Provisioning completed successfully",
 		zap.Int32("org_id", s.orgID),
 		zap.Int32("asset_id", s.assetID),
@@ -227,6 +234,69 @@ func (s *ProvisioningService) loadState() {
 	s.keyPEM = state.KeyPEM
 	s.certPEM = state.CertPEM
 	s.chainPEM = state.ChainPEM
+
+	// Ensure PEM files exist on disk (may have been lost during OTA update).
+	if s.enrolled && s.keyPEM != "" && s.certPEM != "" {
+		if err := s.writePEMFiles(s.keyPEM, s.certPEM, s.chainPEM); err != nil {
+			s.logger.Warn("Failed to restore PEM files from provisioning state", zap.Error(err))
+		}
+	}
+}
+
+// loadOrGenerateKey returns the PEM-encoded private key for this device.
+// It reuses the key at {configPath}/device-key.pem if it exists, otherwise
+// generates a new one and persists it.
+func (s *ProvisioningService) loadOrGenerateKey() (string, error) {
+	keyPath := filepath.Join(s.configPath, "device-key.pem")
+	if data, err := os.ReadFile(keyPath); err == nil && len(data) > 0 {
+		s.logger.Info("Reusing existing device key", zap.String("path", keyPath))
+		return string(data), nil
+	}
+
+	keyPEM, err := certs.GenerateKeyPair()
+	if err != nil {
+		return "", err
+	}
+
+	// Persist the key so it's reused on future provisioning.
+	if err := os.MkdirAll(s.configPath, 0o700); err == nil {
+		_ = os.WriteFile(keyPath, []byte(keyPEM), 0o600)
+	}
+
+	return keyPEM, nil
+}
+
+// writePEMFiles writes individual PEM files for the container registry and
+// other services that read certs from the filesystem.
+func (s *ProvisioningService) writePEMFiles(keyPEM, certPEM, chainPEM string) error {
+	if err := os.MkdirAll(s.configPath, 0o700); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
+	}
+
+	files := map[string]struct {
+		data string
+		mode os.FileMode
+	}{
+		"device-key.pem": {data: keyPEM, mode: 0o600},
+		"device.pem":     {data: certPEM, mode: 0o644},
+		"ca.pem":         {data: chainPEM, mode: 0o644},
+	}
+
+	for name, f := range files {
+		if f.data == "" {
+			continue
+		}
+		path := filepath.Join(s.configPath, name)
+		if err := os.WriteFile(path, []byte(f.data), f.mode); err != nil {
+			return fmt.Errorf("writing %s: %w", name, err)
+		}
+	}
+
+	// Write provisioned marker.
+	markerPath := filepath.Join(s.configPath, ".provisioned")
+	_ = os.WriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
+
+	return nil
 }
 
 // saveState writes provisioning state to disk.

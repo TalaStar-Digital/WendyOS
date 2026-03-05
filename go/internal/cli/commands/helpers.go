@@ -9,8 +9,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,31 +41,70 @@ func hostPort(host string, port int) string {
 
 // resolveLANVersions queries each LAN device's gRPC endpoint concurrently to
 // populate AgentVersion, OS, OSVersion, and CPUArchitecture.
-func resolveLANVersions(ctx context.Context, devices []models.LANDevice) {
-	var wg sync.WaitGroup
+// Devices that are unreachable via both plaintext and mTLS are excluded from
+// the returned slice.
+func resolveLANVersions(ctx context.Context, devices []models.LANDevice) []models.LANDevice {
+	type indexedResult struct {
+		index int
+		resp  *agentpb.GetAgentVersionResponse
+	}
+
+	ch := make(chan *indexedResult, len(devices))
 	for i := range devices {
-		wg.Add(1)
-		go func(d *models.LANDevice) {
-			defer wg.Done()
+		go func(idx int) {
+			d := &devices[idx]
 			addr := hostPort(d.Hostname, d.Port)
 			queryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			conn, err := grpcclient.Connect(queryCtx, addr)
+			conn, err := connectWithAutoTLS(queryCtx, addr)
 			if err != nil {
+				ch <- nil
 				return
 			}
 			defer conn.Close()
 			resp, err := conn.AgentService.GetAgentVersion(queryCtx, &agentpb.GetAgentVersionRequest{})
 			if err != nil {
+				ch <- nil
 				return
 			}
-			d.AgentVersion = resp.GetVersion()
-			d.OS = resp.GetOs()
-			d.OSVersion = resp.GetOsVersion()
-			d.CPUArchitecture = resp.GetCpuArchitecture()
-		}(&devices[i])
+			ch <- &indexedResult{index: idx, resp: resp}
+		}(i)
 	}
-	wg.Wait()
+
+	reachable := make([]models.LANDevice, 0, len(devices))
+	for range devices {
+		r := <-ch
+		if r != nil {
+			devices[r.index].AgentVersion = r.resp.GetVersion()
+			devices[r.index].OS = r.resp.GetOs()
+			devices[r.index].OSVersion = r.resp.GetOsVersion()
+			devices[r.index].CPUArchitecture = r.resp.GetCpuArchitecture()
+			reachable = append(reachable, devices[r.index])
+		}
+	}
+	return reachable
+}
+
+// resolveLANVersion queries a single LAN device's gRPC endpoint to populate
+// version metadata. Returns the enriched device and true if reachable.
+func resolveLANVersion(ctx context.Context, dev models.LANDevice) (models.LANDevice, bool) {
+	addr := hostPort(dev.Hostname, dev.Port)
+	queryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	conn, err := connectWithAutoTLS(queryCtx, addr)
+	if err != nil {
+		return dev, false
+	}
+	defer conn.Close()
+	resp, err := conn.AgentService.GetAgentVersion(queryCtx, &agentpb.GetAgentVersionRequest{})
+	if err != nil {
+		return dev, false
+	}
+	dev.AgentVersion = resp.GetVersion()
+	dev.OS = resp.GetOs()
+	dev.OSVersion = resp.GetOsVersion()
+	dev.CPUArchitecture = resp.GetCpuArchitecture()
+	return dev, true
 }
 
 // SelectedDevice represents either a gRPC agent, BLE device, or an external provider device.
@@ -102,6 +141,8 @@ func resolveDeviceAddress() (string, error) {
 }
 
 // connectToAgent establishes a gRPC connection to the target device.
+// If the CLI has auth certs, it connects via mTLS on the secure port.
+// Otherwise, it falls back to plaintext on the default port.
 // If no device is specified via --device or config default, an interactive
 // device picker is presented (unless running in --json mode).
 func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.AgentConnection, error) {
@@ -112,7 +153,7 @@ func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.Age
 
 	addr, err := resolveDeviceAddress()
 	if err == nil {
-		return grpcclient.Connect(ctx, addr)
+		return connectWithAutoTLS(ctx, addr)
 	}
 
 	// No device configured — fall back to interactive picker.
@@ -126,6 +167,7 @@ func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.Age
 	}
 
 	if target.Agent != nil {
+		// If the picker used plaintext, try to upgrade to mTLS.
 		return target.Agent, nil
 	}
 
@@ -142,6 +184,40 @@ func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.Age
 	}
 
 	return nil, fmt.Errorf("selected device does not support gRPC agent commands")
+}
+
+// connectWithAutoTLS tries to connect using mTLS if the CLI has auth certs,
+// falling back to plaintext if no certs are available or mTLS connection fails.
+func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.AgentConnection, error) {
+	certInfo := loadCLICert()
+	if certInfo != nil {
+		// Derive the mTLS port (plaintext port + 1).
+		host, portStr, _ := net.SplitHostPort(plaintextAddr)
+		if port, err := strconv.Atoi(portStr); err == nil {
+			mtlsAddr := hostPort(host, port+1)
+			conn, tlsErr := grpcclient.ConnectWithTLS(ctx, mtlsAddr, certInfo)
+			if tlsErr == nil {
+				return conn, nil
+			}
+			// mTLS failed — fall back to plaintext.
+		}
+	}
+	return grpcclient.Connect(ctx, plaintextAddr)
+}
+
+// loadCLICert returns the first available certificate from the CLI config, or nil.
+func loadCLICert() *config.CertificateInfo {
+	cfg, err := config.Load()
+	if err != nil || len(cfg.Auth) == 0 {
+		return nil
+	}
+	for _, auth := range cfg.Auth {
+		if len(auth.Certificates) > 0 {
+			cert := auth.Certificates[0]
+			return &cert
+		}
+	}
+	return nil
 }
 
 // resolveOption configures resolveTarget behaviour.
@@ -205,10 +281,10 @@ func resolveTarget(ctx context.Context, opts ...resolveOption) (*SelectedDevice,
 		}
 	}
 
-	// If a device hostname was given, connect via gRPC.
+	// If a device hostname was given, connect via gRPC (with mTLS if authenticated).
 	if device != "" {
 		addr := hostPort(device, defaultAgentPort)
-		conn, err := grpcclient.Connect(ctx, addr)
+		conn, err := connectWithAutoTLS(ctx, addr)
 		if err != nil {
 			return nil, err
 		}
@@ -298,105 +374,132 @@ type pickerEntry struct {
 
 // pickDevice runs an interactive TUI that discovers devices across all
 // transports and providers, then lets the user select one.
+// LAN discovery runs continuously so devices that come online after the
+// initial scan still appear in the picker.
 // excludeProviders hides the named provider keys from the picker.
 func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBluetooth bool) (*SelectedDevice, error) {
 	picker := tui.NewPicker()
 	p := tea.NewProgram(picker)
 
-	// Run discovery in the background, feeding results to the TUI.
+	// Cancel continuous discovery when the picker exits.
+	discoverCtx, discoverCancel := context.WithCancel(ctx)
+
+	// Continuous LAN discovery — devices appear as they're found.
+	lanCh := make(chan models.LANDevice, 16)
+	go discovery.DiscoverLANContinuous(discoverCtx, lanCh)
 	go func() {
-		discoverCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		defer cancel()
-
-		// Discover LAN/USB/Ethernet devices (and BLE unless excluded).
-		opts := discovery.DiscoveryOptions{Timeout: 5 * time.Second}
-		if excludeBluetooth {
-			opts.Types = []models.InterfaceType{
-				models.InterfaceUSB,
-				models.InterfaceEthernet,
-				models.InterfaceLAN,
-			}
-		}
-		collection, _ := discovery.Discover(discoverCtx, opts)
-		if collection == nil {
-			collection = &models.DevicesCollection{}
-		}
-
-		// Resolve agent versions for LAN devices.
-		resolveLANVersions(discoverCtx, collection.LANDevices)
-
-		// Discover external provider devices. Microwasm devices are added
-		// to the collection so MergedDevices() can merge them with BLE Lite.
-		var nonWendyLiteExternals []struct {
-			device   *models.ExternalDevice
-			provider providers.DeviceProvider
-		}
-		for _, prov := range providers.AvailableProviders() {
-			if excludeProviders[prov.Key()] {
+		for dev := range lanCh {
+			dev, reachable := resolveLANVersion(discoverCtx, dev)
+			if !reachable {
 				continue
 			}
-			devices, err := prov.DiscoverDevices(discoverCtx)
-			if err != nil || len(devices) == 0 {
-				continue
+			name := dev.DisplayName
+			if dev.AgentVersion != "" {
+				name += " v" + dev.AgentVersion
 			}
-			if prov.Key() == "wendy-lite" {
-				collection.ExternalDevices = append(collection.ExternalDevices, devices...)
-			} else {
-				for i := range devices {
-					nonWendyLiteExternals = append(nonWendyLiteExternals, struct {
-						device   *models.ExternalDevice
-						provider providers.DeviceProvider
-					}{device: &devices[i], provider: prov})
-				}
-			}
-		}
-
-		// Build merged picker items (LAN + BLE + wendy-lite).
-		merged := collection.MergedDevices()
-		var items []tui.PickerItem
-		for i := range merged {
-			d := &merged[i]
-			// Skip BLE-only devices when Bluetooth is excluded.
-			if excludeBluetooth && d.LAN == nil && d.External == nil {
-				continue
-			}
-			name := d.DisplayName
-			if d.AgentVersion != "" {
-				name += " v" + d.AgentVersion
-			}
-			addr := d.Address()
-			if d.Port() > 0 {
-				addr = hostPort(addr, d.Port())
-			}
-			items = append(items, tui.PickerItem{
+			lanDev := dev // copy for stable pointer
+			p.Send(tui.PickerAddMsg{Items: []tui.PickerItem{{
 				Name:    name,
-				Type:    d.ConnectionTypes(),
-				Address: addr,
-				Value:   &pickerEntry{mergedDevice: d},
-			})
+				Type:    "LAN",
+				Address: hostPort(dev.Hostname, dev.Port),
+				Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
+					DisplayName:     dev.DisplayName,
+					AgentVersion:    dev.AgentVersion,
+					OS:              dev.OS,
+					OSVersion:       dev.OSVersion,
+					CPUArchitecture: dev.CPUArchitecture,
+					LAN:             &lanDev,
+				}},
+			}}})
 		}
-		if len(items) > 0 {
-			p.Send(tui.PickerAddMsg{Items: items})
-		}
-
-		// Add remaining non-wendy-lite external devices.
-		var extItems []tui.PickerItem
-		for _, ext := range nonWendyLiteExternals {
-			extItems = append(extItems, tui.PickerItem{
-				Name:    ext.device.DisplayName,
-				Type:    ext.provider.DisplayName(),
-				Address: fmt.Sprintf("%s: %s", ext.device.ProviderKey, ext.device.ID),
-				Value:   &pickerEntry{externalDevice: ext.device, provider: ext.provider},
-			})
-		}
-		if len(extItems) > 0 {
-			p.Send(tui.PickerAddMsg{Items: extItems})
-		}
-
-		p.Send(tui.PickerDoneMsg{})
 	}()
 
+	// Continuous provider discovery — re-scan every 3 seconds.
+	for _, prov := range providers.AvailableProviders() {
+		if excludeProviders[prov.Key()] {
+			continue
+		}
+		prov := prov
+		go func() {
+			for {
+				devices, err := prov.DiscoverDevices(discoverCtx)
+				if err == nil && len(devices) > 0 {
+					var items []tui.PickerItem
+					for i := range devices {
+						if prov.Key() == "wendy-lite" {
+							items = append(items, tui.PickerItem{
+								Name:    devices[i].DisplayName,
+								Type:    "LAN (Lite)",
+								Address: devices[i].ConnectionInfo["ip"],
+								Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
+									DisplayName:     devices[i].DisplayName,
+									CPUArchitecture: devices[i].CPUArchitecture,
+									External:        &devices[i],
+								}},
+							})
+						} else {
+							items = append(items, tui.PickerItem{
+								Name:    devices[i].DisplayName,
+								Type:    prov.DisplayName(),
+								Address: fmt.Sprintf("%s: %s", devices[i].ProviderKey, devices[i].ID),
+								Value:   &pickerEntry{externalDevice: &devices[i], provider: prov},
+							})
+						}
+					}
+					if len(items) > 0 {
+						p.Send(tui.PickerAddMsg{Items: items})
+					}
+				}
+
+				select {
+				case <-discoverCtx.Done():
+					return
+				case <-time.After(3 * time.Second):
+				}
+			}
+		}()
+	}
+
+	// Continuous Bluetooth discovery — re-scan every 5 seconds.
+	if !excludeBluetooth {
+		go func() {
+			for {
+				bleDevices, err := discovery.DiscoverBluetooth(discoverCtx, true)
+				if err == nil && len(bleDevices) > 0 {
+					var items []tui.PickerItem
+					for i := range bleDevices {
+						connType := "Bluetooth"
+						if !bleDevices[i].IsWendyAgent() {
+							connType = "BLE (Lite)"
+						}
+						items = append(items, tui.PickerItem{
+							Name:    bleDevices[i].DisplayName,
+							Type:    connType,
+							Address: bleDevices[i].Address,
+							Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
+								DisplayName:     bleDevices[i].DisplayName,
+								AgentVersion:    bleDevices[i].AgentVersion,
+								OS:              bleDevices[i].OS,
+								OSVersion:       bleDevices[i].OSVersion,
+								CPUArchitecture: bleDevices[i].CPUArchitecture,
+								Bluetooth:       &bleDevices[i],
+							}},
+						})
+					}
+					p.Send(tui.PickerAddMsg{Items: items})
+				}
+
+				select {
+				case <-discoverCtx.Done():
+					return
+				case <-time.After(5 * time.Second):
+				}
+			}
+		}()
+	}
+
 	finalModel, err := p.Run()
+	discoverCancel() // stop all background discovery
 	if err != nil {
 		return nil, fmt.Errorf("device picker: %w", err)
 	}
@@ -420,7 +523,7 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 		d := entry.mergedDevice
 		if d.LAN != nil {
 			addr := hostPort(d.LAN.Hostname, d.LAN.Port)
-			conn, err := grpcclient.Connect(ctx, addr)
+			conn, err := connectWithAutoTLS(ctx, addr)
 			if err == nil {
 				return &SelectedDevice{Agent: conn}, nil
 			}

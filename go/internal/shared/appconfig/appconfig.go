@@ -52,10 +52,17 @@ var allowedKeys = map[string][]string{
 	EntitlementGPIO:      {"type", "pins"},
 }
 
+// Platform constants identify the target hardware family.
+const (
+	PlatformWendyOS   = "wendyos"
+	PlatformWendyLite = "wendy-lite"
+)
+
 // AppConfig represents the wendy.json application configuration.
 type AppConfig struct {
 	AppID        string        `json:"appId"`
 	Version      string        `json:"version,omitempty"`
+	Platform     string        `json:"platform,omitempty"`
 	Language     string        `json:"language,omitempty"`
 	Entitlements []Entitlement `json:"entitlements,omitempty"`
 	Python       *PythonConfig `json:"python,omitempty"`
@@ -74,6 +81,16 @@ type Entitlement struct {
 	Path   string `json:"path,omitempty"`   // Persist
 	Device string `json:"device,omitempty"` // I2C
 	Pins   []int  `json:"pins,omitempty"`   // GPIO
+}
+
+// HasEntitlement reports whether the config contains an entitlement of the given type.
+func (c *AppConfig) HasEntitlement(entType string) bool {
+	for _, e := range c.Entitlements {
+		if e.Type == entType {
+			return true
+		}
+	}
+	return false
 }
 
 // LoadFromFile reads and parses a wendy.json file at the given path.
@@ -122,9 +139,7 @@ func (c *AppConfig) Validate() error {
 				return fmt.Errorf("entitlement[%d]: i2c entitlement requires a device", i)
 			}
 		case EntitlementGPIO:
-			if len(e.Pins) == 0 {
-				return fmt.Errorf("entitlement[%d]: gpio entitlement requires at least one pin", i)
-			}
+			// Pins are optional; omitting them grants access to all GPIO chips.
 		}
 	}
 

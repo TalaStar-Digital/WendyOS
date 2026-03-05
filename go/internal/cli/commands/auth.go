@@ -6,19 +6,22 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/wendylabsinc/wendy/internal/shared/certs"
 	"github.com/wendylabsinc/wendy/internal/shared/config"
 	"github.com/wendylabsinc/wendy/proto/gen/cloudpb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const defaultCloudDashboard = "https://cloud.wendylabs.com"
-const defaultCloudGRPC = "grpc.cloud.wendylabs.com:443"
+const defaultCloudDashboard = "https://dashboard.wendy.sh"
+const defaultCloudGRPC = "api.wendy.sh:443"
 
 func newAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -95,7 +98,8 @@ func performLogin(ctx context.Context, cloudDashboard, cloudGRPC string) error {
 	defer server.Close()
 
 	// Step 2: Open browser to login URL with callback port.
-	loginURL := fmt.Sprintf("%s/cli/login?callback_port=%d", cloudDashboard, port)
+	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+	loginURL := fmt.Sprintf("%s/cli-auth?redirect_uri=%s", cloudDashboard, url.QueryEscape(redirectURI))
 	fmt.Printf("Opening browser for authentication: %s\n", loginURL)
 
 	if err := openBrowser(loginURL); err != nil {
@@ -127,7 +131,13 @@ func performLogin(ctx context.Context, cloudDashboard, cloudGRPC string) error {
 	}
 
 	// Step 4: Issue certificate via cloud CertificateService.
-	certConn, err := grpc.NewClient(cloudGRPC, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	var transportCreds grpc.DialOption
+	if strings.HasSuffix(cloudGRPC, ":443") {
+		transportCreds = grpc.WithTransportCredentials(credentials.NewTLS(nil))
+	} else {
+		transportCreds = grpc.WithTransportCredentials(insecure.NewCredentials())
+	}
+	certConn, err := grpc.NewClient(cloudGRPC, transportCreds)
 	if err != nil {
 		return fmt.Errorf("connecting to cloud: %w", err)
 	}
@@ -281,11 +291,13 @@ func refreshCertsForAuth(ctx context.Context, auth *config.AuthConfig) error {
 	if err != nil {
 		return fmt.Errorf("loading existing TLS config: %w", err)
 	}
-	tlsCfg.InsecureSkipVerify = true
-
-	grpcOpts := grpc.WithTransportCredentials(insecure.NewCredentials())
-	_ = tlsCfg // In production, use credentials.NewTLS(tlsCfg) instead.
-	certConn, err := grpc.NewClient(auth.CloudGRPC, grpcOpts)
+	var refreshTransportCreds grpc.DialOption
+	if strings.HasSuffix(auth.CloudGRPC, ":443") {
+		refreshTransportCreds = grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg))
+	} else {
+		refreshTransportCreds = grpc.WithTransportCredentials(insecure.NewCredentials())
+	}
+	certConn, err := grpc.NewClient(auth.CloudGRPC, refreshTransportCreds)
 	if err != nil {
 		return fmt.Errorf("connecting to cloud: %w", err)
 	}

@@ -33,10 +33,14 @@ func NewAudioService(logger *zap.Logger) *AudioService {
 func (s *AudioService) ListAudioDevices(ctx context.Context, _ *agentpb.ListAudioDevicesRequest) (*agentpb.ListAudioDevicesResponse, error) {
 	devices, err := s.listPipeWireDevices(ctx)
 	if err != nil {
-		s.logger.Warn("PipeWire enumeration failed, falling back to ALSA", zap.Error(err))
-		devices, err = s.listALSADevices(ctx)
+		s.logger.Warn("PipeWire enumeration failed, falling back to PulseAudio", zap.Error(err))
+		devices, err = s.listPulseAudioDevices(ctx)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to enumerate audio devices: %v", err)
+			s.logger.Warn("PulseAudio enumeration failed, falling back to ALSA", zap.Error(err))
+			devices, err = s.listALSADevices(ctx)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to enumerate audio devices: %v", err)
+			}
 		}
 	}
 	return &agentpb.ListAudioDevicesResponse{Devices: devices}, nil
@@ -143,17 +147,156 @@ func parseALSAOutput(output string, devType agentpb.AudioDeviceType) []*agentpb.
 	return devices
 }
 
-// SetDefaultAudioDevice sets the default audio device using PipeWire.
+// SetDefaultAudioDevice sets the default audio device using PipeWire or PulseAudio.
 func (s *AudioService) SetDefaultAudioDevice(ctx context.Context, req *agentpb.SetDefaultAudioDeviceRequest) (*agentpb.SetDefaultAudioDeviceResponse, error) {
+	// Try PipeWire first.
 	nodeID := fmt.Sprintf("%d", req.GetDeviceId())
 	cmd := exec.CommandContext(ctx, "wpctl", "set-default", nodeID)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		errMsg := fmt.Sprintf("wpctl set-default failed: %s", string(output))
-		return &agentpb.SetDefaultAudioDeviceResponse{Success: false, ErrorMessage: &errMsg}, nil
+		s.logger.Warn("wpctl set-default failed, trying PulseAudio", zap.Error(err))
+		resp, paErr := s.setPulseAudioDefaultDevice(ctx, req)
+		if paErr != nil {
+			errMsg := fmt.Sprintf("wpctl set-default failed: %s; pactl also failed: %v", string(output), paErr)
+			return &agentpb.SetDefaultAudioDeviceResponse{Success: false, ErrorMessage: &errMsg}, nil
+		}
+		return resp, nil
 	}
 
 	s.logger.Info("Default audio device set", zap.Uint32("device_id", req.GetDeviceId()))
 	return &agentpb.SetDefaultAudioDeviceResponse{Success: true}, nil
+}
+
+// listPulseAudioDevices uses pactl to enumerate sinks and sources.
+func (s *AudioService) listPulseAudioDevices(ctx context.Context) ([]*agentpb.AudioDevice, error) {
+	var devices []*agentpb.AudioDevice
+
+	// Collect sinks (output devices).
+	sinkDevices, err := s.parsePulseAudioDevices(ctx, "sink", agentpb.AudioDeviceType_AUDIO_DEVICE_TYPE_OUTPUT)
+	if err != nil {
+		return nil, fmt.Errorf("pactl list sinks: %w", err)
+	}
+	devices = append(devices, sinkDevices...)
+
+	// Collect sources (input devices).
+	sourceDevices, err := s.parsePulseAudioDevices(ctx, "source", agentpb.AudioDeviceType_AUDIO_DEVICE_TYPE_INPUT)
+	if err != nil {
+		return nil, fmt.Errorf("pactl list sources: %w", err)
+	}
+	devices = append(devices, sourceDevices...)
+
+	return devices, nil
+}
+
+// parsePulseAudioDevices parses "pactl list sinks short" and "pactl list sinks" for a device category.
+func (s *AudioService) parsePulseAudioDevices(ctx context.Context, category string, devType agentpb.AudioDeviceType) ([]*agentpb.AudioDevice, error) {
+	plural := category + "s"
+
+	// Get short listing for ID and name.
+	shortCmd := exec.CommandContext(ctx, "pactl", "list", plural, "short")
+	shortOutput, err := shortCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("pactl list %s short: %w", plural, err)
+	}
+
+	type paDevice struct {
+		id   uint32
+		name string
+	}
+	var parsed []paDevice
+
+	scanner := bufio.NewScanner(strings.NewReader(string(shortOutput)))
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 2 {
+			continue
+		}
+		id, err := strconv.ParseUint(fields[0], 10, 32)
+		if err != nil {
+			continue
+		}
+		parsed = append(parsed, paDevice{id: uint32(id), name: fields[1]})
+	}
+
+	// Get long listing for descriptions.
+	longCmd := exec.CommandContext(ctx, "pactl", "list", plural)
+	longOutput, err := longCmd.Output()
+	if err != nil {
+		// Fall back to short-form only (no descriptions).
+		var devices []*agentpb.AudioDevice
+		for _, p := range parsed {
+			devices = append(devices, &agentpb.AudioDevice{
+				Id:   p.id,
+				Name: p.name,
+				Type: devType,
+			})
+		}
+		return devices, nil
+	}
+
+	// Parse descriptions from long output, indexed by order of appearance.
+	var descriptions []string
+	longScanner := bufio.NewScanner(strings.NewReader(string(longOutput)))
+	for longScanner.Scan() {
+		line := strings.TrimSpace(longScanner.Text())
+		if strings.HasPrefix(line, "Description:") {
+			descriptions = append(descriptions, strings.TrimSpace(strings.TrimPrefix(line, "Description:")))
+		}
+	}
+
+	var devices []*agentpb.AudioDevice
+	for i, p := range parsed {
+		dev := &agentpb.AudioDevice{
+			Id:   p.id,
+			Name: p.name,
+			Type: devType,
+		}
+		if i < len(descriptions) {
+			dev.Description = descriptions[i]
+		}
+		devices = append(devices, dev)
+	}
+	return devices, nil
+}
+
+// setPulseAudioDefaultDevice resolves a device ID to a PulseAudio name and sets it as default.
+func (s *AudioService) setPulseAudioDefaultDevice(ctx context.Context, req *agentpb.SetDefaultAudioDeviceRequest) (*agentpb.SetDefaultAudioDeviceResponse, error) {
+	targetID := req.GetDeviceId()
+
+	// Try sinks first, then sources.
+	for _, category := range []string{"sinks", "sources"} {
+		cmd := exec.CommandContext(ctx, "pactl", "list", category, "short")
+		output, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(strings.NewReader(string(output)))
+		for scanner.Scan() {
+			fields := strings.Fields(scanner.Text())
+			if len(fields) < 2 {
+				continue
+			}
+			id, err := strconv.ParseUint(fields[0], 10, 32)
+			if err != nil {
+				continue
+			}
+			if uint32(id) == targetID {
+				var setCmd *exec.Cmd
+				if category == "sinks" {
+					setCmd = exec.CommandContext(ctx, "pactl", "set-default-sink", fields[1])
+				} else {
+					setCmd = exec.CommandContext(ctx, "pactl", "set-default-source", fields[1])
+				}
+				if out, err := setCmd.CombinedOutput(); err != nil {
+					errMsg := fmt.Sprintf("pactl set-default failed: %s", string(out))
+					return &agentpb.SetDefaultAudioDeviceResponse{Success: false, ErrorMessage: &errMsg}, nil
+				}
+				s.logger.Info("Default audio device set via PulseAudio", zap.Uint32("device_id", targetID))
+				return &agentpb.SetDefaultAudioDeviceResponse{Success: true}, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("device ID %d not found in PulseAudio sinks or sources", targetID)
 }
 
 // StreamAudioLevels streams peak/RMS dB levels for a device.

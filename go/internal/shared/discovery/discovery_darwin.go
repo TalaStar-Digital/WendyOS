@@ -215,3 +215,56 @@ func dnssdResolve(ctx context.Context, inst browseResult) (models.LANDevice, err
 		IsWendyDevice: true,
 	}, nil
 }
+
+// discoverLANContinuous keeps dns-sd -B running and sends each newly
+// discovered device to ch as it's resolved. Runs until ctx is cancelled.
+func discoverLANContinuous(ctx context.Context, ch chan<- models.LANDevice) {
+	defer close(ch)
+
+	cmd := exec.CommandContext(ctx, "dns-sd", "-B", wendyServiceType, "local.")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		return
+	}
+
+	seen := make(map[string]bool)
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.Contains(line, "Add") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 7 {
+			continue
+		}
+
+		inst := browseResult{
+			instanceName: strings.Join(fields[6:], " "),
+			domain:       fields[4],
+		}
+
+		if seen[inst.instanceName] {
+			continue
+		}
+		seen[inst.instanceName] = true
+
+		resolveCtx, resolveCancel := context.WithTimeout(ctx, 2*time.Second)
+		dev, err := dnssdResolve(resolveCtx, inst)
+		resolveCancel()
+		if err != nil {
+			continue
+		}
+
+		select {
+		case ch <- dev:
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	_ = cmd.Wait()
+}

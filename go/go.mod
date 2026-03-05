@@ -14,6 +14,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/posthog/posthog-go v1.10.0
 	github.com/spf13/cobra v1.10.2
+	go.bug.st/serial v1.6.4
 	go.uber.org/zap v1.27.1
 	golang.org/x/term v0.40.0
 	google.golang.org/grpc v1.79.1
@@ -44,6 +45,7 @@ require (
 	github.com/containerd/plugin v1.0.0 // indirect
 	github.com/containerd/ttrpc v1.2.7 // indirect
 	github.com/containerd/typeurl/v2 v2.2.3 // indirect
+	github.com/creack/goselect v0.1.2 // indirect
 	github.com/cyphar/filepath-securejoin v0.5.1 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect

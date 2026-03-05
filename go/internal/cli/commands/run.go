@@ -10,16 +10,24 @@ import (
 	"path/filepath"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
 	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
 	"github.com/wendylabsinc/wendy/internal/shared/models"
 	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
-	"golang.org/x/term"
 )
+
+var cliStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+func cliLog(format string, args ...any) {
+	fmt.Print(cliStyle.Render(fmt.Sprintf(format, args...)))
+}
+
+func cliLogln(format string, args ...any) {
+	fmt.Println(cliStyle.Render(fmt.Sprintf(format, args...)))
+}
 
 // runOptions holds the parsed flags for the run command.
 type runOptions struct {
@@ -72,6 +80,25 @@ func runCommand(ctx context.Context, opts runOptions) error {
 		return fmt.Errorf("invalid wendy.json: %w", err)
 	}
 
+	// Debug mode requires host networking for remote debugger access (gdb/lldb).
+	// Python apps also need host networking for debugpy.
+	if opts.debug || appCfg.Language == "python" {
+		foundNetwork := false
+		for i, e := range appCfg.Entitlements {
+			if e.Type == appconfig.EntitlementNetwork {
+				appCfg.Entitlements[i].Mode = "host"
+				foundNetwork = true
+				break
+			}
+		}
+		if !foundNetwork {
+			appCfg.Entitlements = append(appCfg.Entitlements, appconfig.Entitlement{
+				Type: appconfig.EntitlementNetwork,
+				Mode: "host",
+			})
+		}
+	}
+
 	// Step 2: Resolve the target device.
 	target, err := resolveTarget(ctx)
 	if err != nil {
@@ -97,6 +124,11 @@ func runCommand(ctx context.Context, opts runOptions) error {
 // pushes the image directly to the device's registry. Then it creates and
 // starts the container on the agent.
 func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd string, appCfg *appconfig.AppConfig, opts runOptions) error {
+	// Verify auth certs are available if the device's registry requires mTLS.
+	if err := requireRegistryAuth(ctx, conn); err != nil {
+		return err
+	}
+
 	// Query the device architecture.
 	versionResp, err := conn.AgentService.GetAgentVersion(ctx, &agentpb.GetAgentVersionRequest{})
 	if err != nil {
@@ -109,15 +141,15 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 
 	product := findSwiftProduct(cwd)
 
-	fmt.Printf("Building Swift container image for %s (%s)...\n", product, architecture)
+	cliLogln("Building Swift container image for %s (%s)...", product, architecture)
 	if err := buildSwiftContainerImage(ctx, cwd, product, conn.Host, architecture); err != nil {
 		return fmt.Errorf("building Swift container image: %w", err)
 	}
-	fmt.Println("Build and push completed.")
+	cliLogln("Build and push completed.")
 
 	// The image is now in the device's registry. The agent will pull it
 	// from localhost:5000 when creating the container.
-	registryImage := fmt.Sprintf("localhost:5000/%s:latest", strings.ToLower(product))
+	deviceImage := fmt.Sprintf("localhost:5000/%s:latest", strings.ToLower(product))
 
 	appConfigData, err := json.Marshal(appCfg)
 	if err != nil {
@@ -127,7 +159,7 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 	restartPolicy := resolveRestartPolicy(opts)
 
 	createReq := &agentpb.CreateContainerRequest{
-		ImageName:     registryImage,
+		ImageName:     deviceImage,
 		AppName:       appCfg.AppID,
 		AppConfig:     appConfigData,
 		RestartPolicy: restartPolicy,
@@ -139,7 +171,7 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 		if err != nil {
 			return fmt.Errorf("creating container: %w", err)
 		}
-		fmt.Printf("Container %s created (not started).\n", appCfg.AppID)
+		cliLogln("Container %s created (not started).", appCfg.AppID)
 		return nil
 	}
 
@@ -148,7 +180,7 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
-	fmt.Printf("Container %s created.\n", appCfg.AppID)
+	cliLogln("Container %s created.", appCfg.AppID)
 
 	if opts.detach {
 		// Start but don't stream output.
@@ -162,7 +194,7 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 		if _, err := stream.Recv(); err != nil && err != io.EOF {
 			return fmt.Errorf("waiting for container start: %w", err)
 		}
-		fmt.Printf("Application %s running in detached mode.\n", appCfg.AppID)
+		cliLogln("Application %s running in detached mode.", appCfg.AppID)
 		return nil
 	}
 
@@ -177,13 +209,13 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 		return fmt.Errorf("starting container: %w", err)
 	}
 
-	fmt.Printf("Application %s started.\n", appCfg.AppID)
+	cliLogln("Application %s started.", appCfg.AppID)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
 	go func() {
 		<-sigCh
-		fmt.Println("\nStopping container...")
+		cliLogln("\nStopping container...")
 		_, _ = conn.ContainerService.StopContainer(context.Background(), &agentpb.StopContainerRequest{
 			AppName: appCfg.AppID,
 		})
@@ -209,7 +241,7 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 		}
 	}
 
-	fmt.Printf("\nApplication %s stopped.\n", appCfg.AppID)
+	cliLogln("\nApplication %s stopped.", appCfg.AppID)
 	return nil
 }
 
@@ -223,15 +255,15 @@ func runWithProvider(ctx context.Context, p providers.DeviceProvider, device mod
 		}
 	}
 
-	fmt.Printf("Building with %s provider...\n", p.DisplayName())
+	cliLogln("Building with %s provider...", p.DisplayName())
 	app, err := p.Build(ctx, device, projectPath, product, opts.debug)
 	if err != nil {
 		return fmt.Errorf("provider build: %w", err)
 	}
-	fmt.Println("Build completed.")
+	cliLogln("Build completed.")
 
 	if opts.deploy {
-		fmt.Printf("Application %s built but not started (--deploy).\n", product)
+		cliLogln("Application %s built but not started (--deploy).", product)
 		return nil
 	}
 
@@ -245,7 +277,7 @@ func runWithProvider(ctx context.Context, p providers.DeviceProvider, device mod
 	signal.Notify(sigCh, os.Interrupt)
 	go func() {
 		<-sigCh
-		fmt.Println("\nStopping application...")
+		cliLogln("\nStopping application...")
 		p.Stop(context.Background(), app)
 		runCancel()
 	}()
@@ -260,9 +292,9 @@ func runWithProvider(ctx context.Context, p providers.DeviceProvider, device mod
 	for out := range output {
 		switch out.Type {
 		case providers.RunOutputStarted:
-			fmt.Printf("Application %s started.\n", product)
+			cliLogln("Application %s started.", product)
 			if opts.detach {
-				fmt.Printf("Application %s running in detached mode.\n", product)
+				cliLogln("Application %s running in detached mode.", product)
 				return nil
 			}
 		case providers.RunOutputStdout:
@@ -273,7 +305,7 @@ func runWithProvider(ctx context.Context, p providers.DeviceProvider, device mod
 	}
 
 	runErr := <-errCh
-	fmt.Printf("\nApplication %s stopped.\n", product)
+	cliLogln("\nApplication %s stopped.", product)
 	if runCtx.Err() != nil {
 		return nil // cancelled by signal
 	}
@@ -282,8 +314,6 @@ func runWithProvider(ctx context.Context, p providers.DeviceProvider, device mod
 
 // runWithAgent is the existing gRPC agent pipeline.
 func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd string, appCfg *appconfig.AppConfig, opts runOptions) error {
-	imageName := appCfg.AppID + ":latest"
-
 	// Detect project type and ensure a Dockerfile exists.
 	projectType := detectProjectType(cwd)
 
@@ -300,11 +330,11 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 		// Dockerfile already exists.
 	case "python":
 		if _, err := os.Stat(filepath.Join(cwd, "Dockerfile")); os.IsNotExist(err) {
-			fmt.Println("No Dockerfile found. Generating one for Python project...")
+			cliLogln("No Dockerfile found. Generating one for Python project...")
 			if _, genErr := generatePythonDockerfile(cwd); genErr != nil {
 				return fmt.Errorf("generating Dockerfile: %w", genErr)
 			}
-			fmt.Println("Generated Dockerfile.")
+			cliLogln("Generated Dockerfile.")
 		}
 	case "swift":
 		// Dockerfile exists; use the Docker build path.
@@ -312,36 +342,32 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 		return fmt.Errorf("unable to detect project type; ensure a Dockerfile, requirements.txt, or Package.swift is present")
 	}
 
-	// Build the Docker image and export directly to tar.
-	tarPath := filepath.Join(os.TempDir(), appCfg.AppID+"-image.tar")
-	defer os.Remove(tarPath)
-
-	fmt.Println("Building Docker image for linux/arm64...")
-	if err := buildDockerImage(ctx, cwd, imageName, "linux/arm64", tarPath, os.Stdout); err != nil {
-		return fmt.Errorf("building Docker image: %w", err)
-	}
-	fmt.Println("Build completed.")
-
-	// Extract OCI layers from the tar.
-	ociImage, err := extractOCIImage(tarPath)
-	if err != nil {
-		return fmt.Errorf("extracting OCI image: %w", err)
+	// Verify auth certs are available if the device's registry requires mTLS.
+	if err := requireRegistryAuth(ctx, conn); err != nil {
+		return err
 	}
 
-	fmt.Printf("Image has %d layers.\n", len(ociImage.Layers))
-
-	// Push image to the device's HTTP registry.
+	// Build and push the Docker image directly to the device's registry.
 	registryAddr := registryHost(conn.Host, 5000)
-	baseURL := fmt.Sprintf("http://%s", registryAddr)
 	repo := strings.ToLower(appCfg.AppID)
+	registryImage := fmt.Sprintf("%s/%s:latest", registryAddr, repo)
 
-	if err := pushImageToRegistry(ctx, baseURL, repo, ociImage, tarPath); err != nil {
-		return fmt.Errorf("pushing image to registry: %w", err)
+	cliLogln("Building and pushing Docker image for linux/arm64...")
+	if err := buildAndPushImage(ctx, cwd, registryAddr, registryImage, "linux/arm64", os.Stdout); err != nil {
+		return fmt.Errorf("building and pushing Docker image: %w", err)
+	}
+	cliLogln("Build and push completed.")
+
+	// Inject debugpy for Python remote debugging.
+	if appCfg.Language == "python" {
+		cliLogln("Injecting debugpy for remote debugging...")
+		if err := injectDebugpy(ctx, registryAddr, registryImage, "linux/arm64", os.Stdout); err != nil {
+			return fmt.Errorf("injecting debugpy: %w", err)
+		}
 	}
 
-	// The image is now in the device's registry. The agent will pull it
-	// from localhost:5000 when creating the container.
-	registryImage := fmt.Sprintf("localhost:5000/%s:latest", repo)
+	// The agent pulls from localhost:5000.
+	deviceImage := fmt.Sprintf("localhost:5000/%s:latest", repo)
 
 	appConfigData, err := json.Marshal(appCfg)
 	if err != nil {
@@ -351,7 +377,7 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	restartPolicy := resolveRestartPolicy(opts)
 
 	createReq := &agentpb.CreateContainerRequest{
-		ImageName:     registryImage,
+		ImageName:     deviceImage,
 		AppName:       appCfg.AppID,
 		AppConfig:     appConfigData,
 		RestartPolicy: restartPolicy,
@@ -363,7 +389,7 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 		if err != nil {
 			return fmt.Errorf("creating container: %w", err)
 		}
-		fmt.Printf("Container %s created (not started).\n", appCfg.AppID)
+		cliLogln("Container %s created (not started).", appCfg.AppID)
 		return nil
 	}
 
@@ -372,7 +398,7 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
-	fmt.Printf("Container %s created.\n", appCfg.AppID)
+	cliLogln("Container %s created.", appCfg.AppID)
 
 	if opts.detach {
 		stream, err := conn.ContainerService.StartContainer(ctx, &agentpb.StartContainerRequest{
@@ -384,7 +410,7 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 		if _, err := stream.Recv(); err != nil && err != io.EOF {
 			return fmt.Errorf("waiting for container start: %w", err)
 		}
-		fmt.Printf("Application %s running in detached mode.\n", appCfg.AppID)
+		cliLogln("Application %s running in detached mode.", appCfg.AppID)
 		return nil
 	}
 
@@ -399,13 +425,13 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 		return fmt.Errorf("starting container: %w", err)
 	}
 
-	fmt.Printf("Application %s started.\n", appCfg.AppID)
+	cliLogln("Application %s started.", appCfg.AppID)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
 	go func() {
 		<-sigCh
-		fmt.Println("\nStopping container...")
+		cliLogln("\nStopping container...")
 		_, _ = conn.ContainerService.StopContainer(context.Background(), &agentpb.StopContainerRequest{
 			AppName: appCfg.AppID,
 		})
@@ -431,7 +457,7 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 		}
 	}
 
-	fmt.Printf("\nApplication %s stopped.\n", appCfg.AppID)
+	cliLogln("\nApplication %s stopped.", appCfg.AppID)
 	return nil
 }
 
@@ -446,40 +472,4 @@ func resolveRestartPolicy(opts runOptions) *agentpb.RestartPolicy {
 		mode = agentpb.RestartPolicyMode_NO
 	}
 	return &agentpb.RestartPolicy{Mode: mode}
-}
-
-// pushImageToRegistry pushes an OCI image to the device's HTTP registry,
-// showing a TUI progress bar when stdout is a TTY.
-func pushImageToRegistry(ctx context.Context, baseURL, repo string, ociImage *OCIImage, tarPath string) error {
-	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
-
-	if !isTTY {
-		return pushToRegistry(ctx, baseURL, repo, ociImage, tarPath, func(completed, total int) {
-			fmt.Printf("  Pushing [%d/%d]...\n", completed, total)
-		})
-	}
-
-	// TUI progress bar.
-	progModel := tui.NewProgress("Pushing image to device registry...")
-	p := tea.NewProgram(progModel)
-
-	go func() {
-		err := pushToRegistry(ctx, baseURL, repo, ociImage, tarPath, func(completed, total int) {
-			if total > 0 {
-				p.Send(tui.ProgressUpdateMsg{Percent: float64(completed) / float64(total)})
-			}
-		})
-		p.Send(tui.ProgressDoneMsg{Err: err})
-	}()
-
-	finalModel, runErr := p.Run()
-	if runErr != nil {
-		return fmt.Errorf("TUI error: %w", runErr)
-	}
-	pm := finalModel.(tui.ProgressModel)
-	if pm.Err() != nil {
-		return fmt.Errorf("push failed: %w", pm.Err())
-	}
-	fmt.Println("Push complete.")
-	return nil
 }
