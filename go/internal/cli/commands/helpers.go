@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +103,8 @@ func resolveDeviceAddress() (string, error) {
 }
 
 // connectToAgent establishes a gRPC connection to the target device.
+// If the CLI has auth certs, it connects via mTLS on the secure port.
+// Otherwise, it falls back to plaintext on the default port.
 // If no device is specified via --device or config default, an interactive
 // device picker is presented (unless running in --json mode).
 func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.AgentConnection, error) {
@@ -112,7 +115,7 @@ func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.Age
 
 	addr, err := resolveDeviceAddress()
 	if err == nil {
-		return grpcclient.Connect(ctx, addr)
+		return connectWithAutoTLS(ctx, addr)
 	}
 
 	// No device configured — fall back to interactive picker.
@@ -126,6 +129,7 @@ func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.Age
 	}
 
 	if target.Agent != nil {
+		// If the picker used plaintext, try to upgrade to mTLS.
 		return target.Agent, nil
 	}
 
@@ -142,6 +146,40 @@ func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.Age
 	}
 
 	return nil, fmt.Errorf("selected device does not support gRPC agent commands")
+}
+
+// connectWithAutoTLS tries to connect using mTLS if the CLI has auth certs,
+// falling back to plaintext if no certs are available or mTLS connection fails.
+func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.AgentConnection, error) {
+	certInfo := loadCLICert()
+	if certInfo != nil {
+		// Derive the mTLS port (plaintext port + 1).
+		host, portStr, _ := net.SplitHostPort(plaintextAddr)
+		if port, err := strconv.Atoi(portStr); err == nil {
+			mtlsAddr := hostPort(host, port+1)
+			conn, tlsErr := grpcclient.ConnectWithTLS(ctx, mtlsAddr, certInfo)
+			if tlsErr == nil {
+				return conn, nil
+			}
+			// mTLS failed — fall back to plaintext.
+		}
+	}
+	return grpcclient.Connect(ctx, plaintextAddr)
+}
+
+// loadCLICert returns the first available certificate from the CLI config, or nil.
+func loadCLICert() *config.CertificateInfo {
+	cfg, err := config.Load()
+	if err != nil || len(cfg.Auth) == 0 {
+		return nil
+	}
+	for _, auth := range cfg.Auth {
+		if len(auth.Certificates) > 0 {
+			cert := auth.Certificates[0]
+			return &cert
+		}
+	}
+	return nil
 }
 
 // resolveOption configures resolveTarget behaviour.
@@ -205,10 +243,10 @@ func resolveTarget(ctx context.Context, opts ...resolveOption) (*SelectedDevice,
 		}
 	}
 
-	// If a device hostname was given, connect via gRPC.
+	// If a device hostname was given, connect via gRPC (with mTLS if authenticated).
 	if device != "" {
 		addr := hostPort(device, defaultAgentPort)
-		conn, err := grpcclient.Connect(ctx, addr)
+		conn, err := connectWithAutoTLS(ctx, addr)
 		if err != nil {
 			return nil, err
 		}
@@ -420,7 +458,7 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 		d := entry.mergedDevice
 		if d.LAN != nil {
 			addr := hostPort(d.LAN.Hostname, d.LAN.Port)
-			conn, err := grpcclient.Connect(ctx, addr)
+			conn, err := connectWithAutoTLS(ctx, addr)
 			if err == nil {
 				return &SelectedDevice{Agent: conn}, nil
 			}

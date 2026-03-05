@@ -313,7 +313,7 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	registryImage := fmt.Sprintf("%s/%s:latest", registryAddr, repo)
 
 	fmt.Println("Building and pushing Docker image for linux/arm64...")
-	if err := buildAndPushImage(ctx, cwd, registryImage, "linux/arm64", os.Stdout); err != nil {
+	if err := buildAndPushImage(ctx, cwd, registryAddr, registryImage, "linux/arm64", os.Stdout); err != nil {
 		return fmt.Errorf("building and pushing Docker image: %w", err)
 	}
 	fmt.Println("Build and push completed.")

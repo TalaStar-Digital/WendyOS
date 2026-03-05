@@ -99,10 +99,15 @@ func buildSwiftContainerImage(ctx context.Context, dir, product, registryHost, a
 		"--allow-network-connections=all",
 		"build-container-image",
 		"--from=swift:" + defaultSwiftVersion + "-slim",
-		"--allow-insecure-http=destination",
 		"--product=" + product,
 		"--repository=" + registryHost + ":5000/" + strings.ToLower(product),
 		"--architecture=" + architecture,
+	}
+
+	// Use insecure HTTP when no auth certs are available; otherwise the registry
+	// is running mTLS and swift-container-plugin will use the system trust store.
+	if loadCLICert() == nil {
+		swiftArgs = append(swiftArgs, "--allow-insecure-http=destination")
 	}
 
 	cmd := exec.CommandContext(ctx, "swiftly", append([]string{"run", "+" + defaultSwiftVersion, "swift"}, swiftArgs...)...)
@@ -292,15 +297,80 @@ func findSwiftProduct(dir string) string {
 }
 
 // ensureBuildxBuilder ensures a buildx builder with the docker-container driver
-// exists and returns its name. The docker-container driver is required for
-// cross-platform builds that push directly to a registry.
-func ensureBuildxBuilder(ctx context.Context) (string, error) {
+// exists and returns its name. If the CLI has auth certs, the registry is
+// configured for mTLS; otherwise it falls back to insecure HTTP.
+// If the registry address or certs have changed, the builder is recreated.
+func ensureBuildxBuilder(ctx context.Context, registryAddr string) (string, error) {
 	const builderName = "wendy"
 
-	// Check if builder already exists.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("finding home directory: %w", err)
+	}
+	configDir := filepath.Join(home, ".cache", "wendy")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return "", fmt.Errorf("creating config directory: %w", err)
+	}
+
+	configPath := filepath.Join(configDir, "buildkitd.toml")
+	var buildkitdConfig string
+
+	certInfo := loadCLICert()
+	if certInfo != nil && certInfo.PemCertificate != "" && certInfo.PemPrivateKey != "" {
+		// Write cert files for buildkitd.
+		certDir := filepath.Join(configDir, "certs")
+		if err := os.MkdirAll(certDir, 0o700); err != nil {
+			return "", fmt.Errorf("creating cert directory: %w", err)
+		}
+
+		certPath := filepath.Join(certDir, "client-cert.pem")
+		keyPath := filepath.Join(certDir, "client-key.pem")
+		caPath := filepath.Join(certDir, "ca.pem")
+
+		fullCert := certInfo.PemCertificate
+		if certInfo.PemCertificateChain != "" {
+			fullCert += "\n" + certInfo.PemCertificateChain
+		}
+		if err := os.WriteFile(certPath, []byte(fullCert), 0o644); err != nil {
+			return "", fmt.Errorf("writing client cert: %w", err)
+		}
+		if err := os.WriteFile(keyPath, []byte(certInfo.PemPrivateKey), 0o600); err != nil {
+			return "", fmt.Errorf("writing client key: %w", err)
+		}
+		if certInfo.PemCertificateChain != "" {
+			if err := os.WriteFile(caPath, []byte(certInfo.PemCertificateChain), 0o644); err != nil {
+				return "", fmt.Errorf("writing CA cert: %w", err)
+			}
+			buildkitdConfig = fmt.Sprintf("[registry.\"%s\"]\n  ca=[\"%s\"]\n  [[registry.\"%s\".keypair]]\n    key=\"%s\"\n    cert=\"%s\"\n",
+				registryAddr, caPath, registryAddr, keyPath, certPath)
+		} else {
+			buildkitdConfig = fmt.Sprintf("[registry.\"%s\"]\n  insecure = true\n  [[registry.\"%s\".keypair]]\n    key=\"%s\"\n    cert=\"%s\"\n",
+				registryAddr, registryAddr, keyPath, certPath)
+		}
+	} else {
+		// No auth certs — fall back to insecure HTTP.
+		buildkitdConfig = fmt.Sprintf("[registry.\"%s\"]\n  http = true\n  insecure = true\n", registryAddr)
+	}
+
+	// Check if the config has changed (different device or cert rotation).
+	existing, _ := os.ReadFile(configPath)
+	configChanged := string(existing) != buildkitdConfig
+
+	if err := os.WriteFile(configPath, []byte(buildkitdConfig), 0o644); err != nil {
+		return "", fmt.Errorf("writing buildkitd config: %w", err)
+	}
+
+	// If the builder exists and config hasn't changed, reuse it.
 	cmd := exec.CommandContext(ctx, "docker", "buildx", "inspect", builderName)
-	if err := cmd.Run(); err == nil {
+	builderExists := cmd.Run() == nil
+
+	if builderExists && !configChanged {
 		return builderName, nil
+	}
+
+	// Remove stale builder if config changed.
+	if builderExists && configChanged {
+		exec.CommandContext(ctx, "docker", "buildx", "rm", builderName).Run()
 	}
 
 	// Create builder with docker-container driver.
@@ -308,6 +378,7 @@ func ensureBuildxBuilder(ctx context.Context) (string, error) {
 		"--name", builderName,
 		"--driver", "docker-container",
 		"--driver-opt", "network=host",
+		"--buildkitd-config", configPath,
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("creating buildx builder %q: %s: %w", builderName, string(out), err)
@@ -319,17 +390,28 @@ func ensureBuildxBuilder(ctx context.Context) (string, error) {
 // buildAndPushImage builds a Docker image for the specified platform and pushes
 // it directly to the given registry using docker buildx. The registry is accessed
 // over plain HTTP (insecure).
-func buildAndPushImage(ctx context.Context, dir, registryImage, platform string, streamOutput *os.File) error {
-	builder, err := ensureBuildxBuilder(ctx)
+func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, platform string, streamOutput *os.File) error {
+	builder, err := ensureBuildxBuilder(ctx, registryAddr)
 	if err != nil {
 		return err
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("finding home directory: %w", err)
+	}
+	cacheDir := filepath.Join(home, ".cache", "wendy", "buildx")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return fmt.Errorf("creating cache directory: %w", err)
 	}
 
 	args := []string{
 		"buildx", "build",
 		"--builder", builder,
 		"--platform", platform,
-		"--output", "type=image,name=" + registryImage + ",push=true,registry.insecure=true",
+		"--cache-from", "type=local,src=" + cacheDir,
+		"--cache-to", "type=local,dest=" + cacheDir,
+		"--output", "type=image,name=" + registryImage + ",push=true",
 		".",
 	}
 

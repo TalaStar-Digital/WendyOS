@@ -24,3 +24,5 @@ WendyCLI.app/
 *.msi
 .wendy
 *.resolved
+go/wendy-agent
+go/wendy
