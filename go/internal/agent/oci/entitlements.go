@@ -377,15 +377,17 @@ func applyI2C(spec *Spec, ent appconfig.Entitlement) {
 
 // applyGPIO adds GPIO device access for specified pins.
 func applyGPIO(spec *Spec, ent appconfig.Entitlement) {
-	// Mount all gpiochip devices.
+	// Mount gpiochip devices that exist on the host.
 	for i := 0; i < 8; i++ {
 		devPath := fmt.Sprintf("/dev/gpiochip%d", i)
-		spec.Mounts = append(spec.Mounts, Mount{
-			Destination: devPath,
-			Source:      devPath,
-			Type:        "bind",
-			Options:     []string{"rbind", "rw"},
-		})
+		if _, err := os.Stat(devPath); err == nil {
+			spec.Mounts = append(spec.Mounts, Mount{
+				Destination: devPath,
+				Source:      devPath,
+				Type:        "bind",
+				Options:     []string{"rbind", "rw"},
+			})
+		}
 	}
 
 	// Allow GPIO devices (major 254).

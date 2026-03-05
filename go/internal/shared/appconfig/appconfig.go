@@ -139,9 +139,7 @@ func (c *AppConfig) Validate() error {
 				return fmt.Errorf("entitlement[%d]: i2c entitlement requires a device", i)
 			}
 		case EntitlementGPIO:
-			if len(e.Pins) == 0 {
-				return fmt.Errorf("entitlement[%d]: gpio entitlement requires at least one pin", i)
-			}
+			// Pins are optional; omitting them grants access to all GPIO chips.
 		}
 	}
 
