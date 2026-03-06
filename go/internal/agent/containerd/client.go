@@ -21,8 +21,8 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"go.uber.org/zap"
 
-	"github.com/wendylabsinc/wendy/internal/agent/dbusproxy"
 	"github.com/wendylabsinc/wendy/internal/agent/cdi"
+	"github.com/wendylabsinc/wendy/internal/agent/dbusproxy"
 	localoci "github.com/wendylabsinc/wendy/internal/agent/oci"
 	"github.com/wendylabsinc/wendy/internal/agent/services"
 	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
@@ -474,7 +474,7 @@ func (c *Client) CreateContainer(ctx context.Context, req *agentpb.CreateContain
 		if err := image.Unpack(ctx, ""); err != nil {
 			return fmt.Errorf("unpacking image %q: %w", imageName, err)
 		}
-  }
+	}
 	// If the app has a GPU entitlement, apply the NVIDIA CDI spec to get
 	// platform-correct library mounts (paths vary across Jetson models).
 	if appCfg.HasEntitlement(appconfig.EntitlementGPU) {
