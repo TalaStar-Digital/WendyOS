@@ -53,10 +53,18 @@ func formatError(err error) error {
 		prefix = msg[:idx]
 	}
 
+	isCloudCall := strings.Contains(prefix, "issuing certificate") || strings.Contains(prefix, "refreshing certificate") || strings.Contains(prefix, "connecting to cloud")
+
 	switch {
 	case strings.Contains(msg, "code = Unavailable") && strings.Contains(msg, "connection refused"):
+		if isCloudCall {
+			return fmt.Errorf("%sCould not connect to Wendy Cloud. Please try again later.", prefix)
+		}
 		return fmt.Errorf("%sCould not connect to device. Is it powered on and connected to the network?", prefix)
 	case strings.Contains(msg, "code = Unavailable"):
+		if isCloudCall {
+			return fmt.Errorf("%sWendy Cloud is unavailable. Please try again later.", prefix)
+		}
 		return fmt.Errorf("%sDevice is unavailable.", prefix)
 	case strings.Contains(msg, "code = DeadlineExceeded"):
 		return fmt.Errorf("%sConnection timed out.", prefix)

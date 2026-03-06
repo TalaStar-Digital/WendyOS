@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	tasks "github.com/containerd/containerd/api/services/tasks/v1"
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/core/content"
 	"github.com/containerd/containerd/v2/core/images"
@@ -328,6 +329,10 @@ func (c *Client) CreateContainer(ctx context.Context, req *agentpb.CreateContain
 		if task, taskErr := existing.Task(ctx, nil); taskErr == nil {
 			_ = task.Kill(ctx, syscall.SIGKILL)
 			_, _ = task.Delete(ctx, containerd.WithProcessKill)
+		} else {
+			// Task may be orphaned (shim crashed). Force-delete via the task
+			// service directly so the runtime clears the old task ID.
+			c.forceDeleteTask(ctx, appName)
 		}
 		_ = existing.Delete(ctx, containerd.WithSnapshotCleanup)
 	}
@@ -503,10 +508,11 @@ func (c *Client) StartContainer(ctx context.Context, appName string) (<-chan ser
 	task, err := container.NewTask(ctx, cio.NewCreator(cio.WithStreams(nil, stdoutW, stderrW)))
 	if err != nil {
 		if errdefs.IsAlreadyExists(err) {
-			// Orphaned task: exists in containerd metadata but container.Task()
-			// can't load it. Delete the container (cascades to its task) and
-			// recreate it from the same image+spec+snapshot to clear the state.
-			c.logger.Warn("Orphaned task detected, recreating container", zap.String("app_name", appName))
+			// Orphaned task: exists in the containerd runtime but container.Task()
+			// can't load it. Force-delete via the task service, then recreate the
+			// container and retry.
+			c.logger.Warn("Orphaned task detected, force-deleting and recreating container", zap.String("app_name", appName))
+			c.forceDeleteTask(ctx, appName)
 			if rerr := c.recreateContainer(ctx, container, appName); rerr != nil {
 				c.logger.Error("Failed to recreate container", zap.Error(rerr))
 			} else {
@@ -572,6 +578,25 @@ func (c *Client) deleteStaleTask(ctx context.Context, container containerd.Conta
 		}
 	}
 	_, _ = existingTask.Delete(ctx, containerd.WithProcessKill)
+}
+
+// forceDeleteTask uses the low-level containerd task service to delete a task
+// by container ID. This handles orphaned tasks where container.Task() fails
+// because the shim process is gone but task metadata remains in the runtime.
+func (c *Client) forceDeleteTask(ctx context.Context, containerID string) {
+	_, err := c.client.TaskService().Delete(ctx, &tasks.DeleteTaskRequest{
+		ContainerID: containerID,
+	})
+	if err != nil {
+		c.logger.Debug("Force task delete attempt",
+			zap.String("container_id", containerID),
+			zap.Error(err),
+		)
+	} else {
+		c.logger.Info("Force-deleted orphaned task",
+			zap.String("container_id", containerID),
+		)
+	}
 }
 
 // recreateContainer deletes a container (which cascades to any orphaned task)
