@@ -3,9 +3,11 @@
        build-agent-linux-amd64 build-agent-linux-arm64 \
        build-cli-linux-amd64 build-cli-linux-arm64 \
        build-cli-darwin-amd64 build-cli-darwin-arm64 \
-       build-cli-windows-amd64 build-cli-windows-arm64
+       build-cli-windows-amd64 build-cli-windows-arm64 \
+       msi-windows-amd64 msi-windows-arm64
 
 VERSION ?= dev
+MSI_VERSION ?= 0.0.1
 LDFLAGS := -s -w -X github.com/wendylabsinc/wendy/internal/shared/version.Version=$(VERSION)
 
 # Build both CLI and agent (native)
@@ -48,6 +50,17 @@ build-cli-windows-amd64:
 
 build-cli-windows-arm64:
 	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/wendy-windows-arm64.exe ./cmd/wendy
+
+# Build Windows MSI installers (requires WiX v4+: dotnet tool install --global wix)
+WXS := installer/windows/wendy.wxs
+
+msi-windows-amd64: build-cli-windows-amd64
+	wix build -d Version=$(MSI_VERSION) -d ExePath=bin/wendy-windows-amd64.exe \
+	     -arch x64 -o bin/wendy-windows-amd64.msi $(WXS)
+
+msi-windows-arm64: build-cli-windows-arm64
+	wix build -d Version=$(MSI_VERSION) -d ExePath=bin/wendy-windows-arm64.exe \
+	     -arch arm64 -o bin/wendy-windows-arm64.msi $(WXS)
 
 # Run all tests
 test:

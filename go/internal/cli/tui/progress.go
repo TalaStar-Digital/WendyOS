@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -47,6 +48,7 @@ func (m ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.done = true
+			m.err = context.Canceled
 			return m, tea.Quit
 		}
 
@@ -74,6 +76,11 @@ func (m ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m ProgressModel) View() string {
 	if m.done && m.err != nil {
 		return fmt.Sprintf("Error: %v\n", m.err)
+	}
+	if m.done {
+		// Render at 100% directly — the animation may not have caught up
+		// before tea.Quit was processed.
+		return fmt.Sprintf("%s\n%s\n", m.title, m.progress.ViewAs(1.0))
 	}
 	return fmt.Sprintf("%s\n%s\n", m.title, m.progress.View())
 }

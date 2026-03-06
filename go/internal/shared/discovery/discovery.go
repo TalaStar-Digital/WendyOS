@@ -3,6 +3,8 @@ package discovery
 
 import (
 	"context"
+	"io"
+	"log"
 	"sync"
 	"time"
 
@@ -16,6 +18,9 @@ const (
 	// defaultTimeout is the default mDNS browse duration.
 	defaultTimeout = 5 * time.Second
 )
+
+// silentLogger is a no-op logger used to suppress hashicorp/mdns log output.
+var silentLogger = log.New(io.Discard, "", 0)
 
 // DiscoveryOptions configures a device discovery scan.
 type DiscoveryOptions struct {
@@ -126,4 +131,11 @@ func DiscoverLAN(ctx context.Context, timeout time.Duration) ([]models.LANDevice
 // DiscoverBluetooth discovers Wendy devices via Bluetooth.
 func DiscoverBluetooth(ctx context.Context, activeScan bool) ([]models.BluetoothDevice, error) {
 	return discoverBluetooth(ctx, activeScan)
+}
+
+// DiscoverLANContinuous discovers LAN devices via mDNS continuously,
+// sending each new device to ch as it's found. The scan runs until ctx
+// is cancelled. The channel is closed when discovery stops.
+func DiscoverLANContinuous(ctx context.Context, ch chan<- models.LANDevice) {
+	discoverLANContinuous(ctx, ch)
 }

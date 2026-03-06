@@ -3,9 +3,11 @@ package providers
 import (
 	"bufio"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/wendylabsinc/wendy/internal/shared/models"
@@ -90,7 +92,7 @@ func (p *AndroidProvider) CanBuild(projectPath string) bool {
 
 func (p *AndroidProvider) Build(ctx context.Context, device models.ExternalDevice, projectPath, product string, debug bool) (*BuiltApp, error) {
 	// Use swiftly to invoke the Swift Android SDK bundle-apk command.
-	args := []string{"run", "+main-snapshot", "swift", "package", "bundle-apk"}
+	args := []string{"run", "+main-snapshot", "swift", "package", "--disable-sandbox", "--allow-writing-to-package-directory", "bundle-apk", "--product", product}
 	cmd := exec.CommandContext(ctx, "swiftly", args...)
 	cmd.Dir = projectPath
 	cmd.Stdout = os.Stdout
@@ -99,18 +101,80 @@ func (p *AndroidProvider) Build(ctx context.Context, device models.ExternalDevic
 		return nil, fmt.Errorf("swift bundle-apk: %w", err)
 	}
 
+	packageID, activityName, err := parseAndroidManifest(projectPath)
+	if err != nil {
+		return nil, fmt.Errorf("parsing AndroidManifest.xml: %w", err)
+	}
+
 	serial := device.ConnectionInfo["serial"]
 	return &BuiltApp{
 		ProviderKey: p.Key(),
 		Device:      device,
 		AppName:     product,
 		Context: &androidBuildContext{
-			APKPath:    ".build/apk/" + product + ".apk",
-			PackageID:  product,
-			ActivityID: product + "/.MainActivity",
+			APKPath:    ".build-apk/" + product + ".apk",
+			PackageID:  packageID,
+			ActivityID: packageID + "/" + activityName,
 			Serial:     serial,
 		},
 	}, nil
+}
+
+// parseAndroidManifest reads AndroidManifest.xml from the project directory
+// and returns the package ID and the name of the launcher activity.
+func parseAndroidManifest(projectPath string) (packageID, activityName string, err error) {
+	data, err := os.ReadFile(filepath.Join(projectPath, "AndroidManifest.xml"))
+	if err != nil {
+		return "", "", fmt.Errorf("reading AndroidManifest.xml: %w", err)
+	}
+
+	var manifest struct {
+		Package     string `xml:"package,attr"`
+		Application struct {
+			Activities []struct {
+				Name         string `xml:"http://schemas.android.com/apk/res/android name,attr"`
+				IntentFilter []struct {
+					Actions []struct {
+						Name string `xml:"http://schemas.android.com/apk/res/android name,attr"`
+					} `xml:"action"`
+					Categories []struct {
+						Name string `xml:"http://schemas.android.com/apk/res/android name,attr"`
+					} `xml:"category"`
+				} `xml:"intent-filter"`
+			} `xml:"activity"`
+		} `xml:"application"`
+	}
+
+	if err := xml.Unmarshal(data, &manifest); err != nil {
+		return "", "", fmt.Errorf("parsing AndroidManifest.xml: %w", err)
+	}
+
+	if manifest.Package == "" {
+		return "", "", fmt.Errorf("no package attribute in AndroidManifest.xml")
+	}
+
+	// Find the launcher activity.
+	for _, activity := range manifest.Application.Activities {
+		for _, filter := range activity.IntentFilter {
+			hasMain := false
+			hasLauncher := false
+			for _, action := range filter.Actions {
+				if action.Name == "android.intent.action.MAIN" {
+					hasMain = true
+				}
+			}
+			for _, cat := range filter.Categories {
+				if cat.Name == "android.intent.category.LAUNCHER" {
+					hasLauncher = true
+				}
+			}
+			if hasMain && hasLauncher {
+				return manifest.Package, activity.Name, nil
+			}
+		}
+	}
+
+	return "", "", fmt.Errorf("no launcher activity found in AndroidManifest.xml")
 }
 
 func (p *AndroidProvider) Run(ctx context.Context, app *BuiltApp, detach bool, output chan<- RunOutput) error {

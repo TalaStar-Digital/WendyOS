@@ -154,7 +154,7 @@ func TestValidate_PersistMissingFields(t *testing.T) {
 	}
 }
 
-func TestValidate_GPIORequiresPins(t *testing.T) {
+func TestValidate_GPIOWithoutPins(t *testing.T) {
 	cfg := &AppConfig{
 		AppID: "com.example.app",
 		Entitlements: []Entitlement{
@@ -162,9 +162,8 @@ func TestValidate_GPIORequiresPins(t *testing.T) {
 		},
 	}
 
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("Validate() expected error for gpio without pins, got nil")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() unexpected error for gpio without pins: %v", err)
 	}
 }
 

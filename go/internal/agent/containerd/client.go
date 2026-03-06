@@ -22,6 +22,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/wendylabsinc/wendy/internal/agent/dbusproxy"
+	"github.com/wendylabsinc/wendy/internal/agent/cdi"
 	localoci "github.com/wendylabsinc/wendy/internal/agent/oci"
 	"github.com/wendylabsinc/wendy/internal/agent/services"
 	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
@@ -278,6 +279,34 @@ func (c *Client) AssembleImage(ctx context.Context, imageName string, layers []*
 	return nil
 }
 
+// wrapWithDebugpy modifies the command args to run through debugpy for remote debugging.
+// It injects "-m debugpy --listen 0.0.0.0:5678" after the Python binary.
+func wrapWithDebugpy(args []string) []string {
+	debugpyArgs := []string{"-m", "debugpy", "--listen", "0.0.0.0:5678"}
+
+	if len(args) > 0 {
+		base := args[0]
+		if i := strings.LastIndex(base, "/"); i >= 0 {
+			base = base[i+1:]
+		}
+		if base == "python" || base == "python3" || strings.HasPrefix(base, "python3.") {
+			// python3 app.py -> python3 -m debugpy --listen 0.0.0.0:5678 app.py
+			result := make([]string, 0, len(args)+len(debugpyArgs))
+			result = append(result, args[0])
+			result = append(result, debugpyArgs...)
+			result = append(result, args[1:]...)
+			return result
+		}
+	}
+
+	// No python binary found; prepend python3 -m debugpy.
+	result := make([]string, 0, len(args)+len(debugpyArgs)+1)
+	result = append(result, "python3")
+	result = append(result, debugpyArgs...)
+	result = append(result, args...)
+	return result
+}
+
 // CreateContainer creates (or replaces) a container in containerd for the given
 // app. It builds an OCI runtime specification from the app config and request
 // parameters, unpacks the image, and registers the container.
@@ -300,7 +329,50 @@ func (c *Client) CreateContainer(ctx context.Context, req *agentpb.CreateContain
 		version = "latest"
 	}
 
-	// Build the container command.
+	// Delete any pre-existing container with the same name.
+	if existing, err := c.client.LoadContainer(ctx, appName); err == nil {
+		c.logger.Info("Removing existing container", zap.String("app_name", appName))
+		// Try to stop/kill the task first.
+		if task, taskErr := existing.Task(ctx, nil); taskErr == nil {
+			_ = task.Kill(ctx, syscall.SIGKILL)
+			_, _ = task.Delete(ctx, containerd.WithProcessKill)
+		}
+		_ = existing.Delete(ctx, containerd.WithSnapshotCleanup)
+	}
+
+	// Get the image handle from the local store, or pull from registry.
+	image, err := c.client.GetImage(ctx, imageName)
+	if err != nil {
+		c.logger.Info("Image not in local store, attempting pull from registry",
+			zap.String("image", imageName),
+		)
+		image, err = c.client.Pull(ctx, imageName,
+			containerd.WithPullUnpack,
+		)
+		if err != nil {
+			return fmt.Errorf("getting/pulling image %q: %w", imageName, err)
+		}
+	}
+
+	// Unpack the image into the snapshotter if not already done.
+	unpacked, err := image.IsUnpacked(ctx, "")
+	if err != nil {
+		c.logger.Warn("Failed to check if image is unpacked", zap.Error(err))
+	}
+	if !unpacked {
+		c.logger.Info("Unpacking image", zap.String("image", imageName))
+		if err := image.Unpack(ctx, ""); err != nil {
+			return fmt.Errorf("unpacking image %q: %w", imageName, err)
+		}
+	}
+
+	// Read the image's OCI config (CMD, ENTRYPOINT, ENV, WorkingDir).
+	imageSpec, specErr := image.Spec(ctx)
+	if specErr != nil {
+		c.logger.Warn("Failed to read image spec, using defaults", zap.Error(specErr))
+	}
+
+	// Build the container command: explicit request > image config > /bin/sh.
 	var args []string
 	cmd := req.GetCmd()
 	if cmd != "" {
@@ -309,21 +381,35 @@ func (c *Client) CreateContainer(ctx context.Context, req *agentpb.CreateContain
 	if len(req.GetUserArgs()) > 0 {
 		args = append(args, req.GetUserArgs()...)
 	}
+	if len(args) == 0 && specErr == nil {
+		args = append(imageSpec.Config.Entrypoint, imageSpec.Config.Cmd...)
+	}
 	if len(args) == 0 {
 		args = []string{"/bin/sh"}
 	}
 
-	// Build the working directory.
+	// Wrap Python commands with debugpy for remote debugging.
+	if appCfg.Language == "python" {
+		args = wrapWithDebugpy(args)
+	}
+
+	// Build the working directory: explicit request > image config > /.
 	workingDir := req.GetWorkingDir()
+	if workingDir == "" && specErr == nil && imageSpec.Config.WorkingDir != "" {
+		workingDir = imageSpec.Config.WorkingDir
+	}
 	if workingDir == "" {
 		workingDir = "/"
 	}
 
-	// Build environment variables.
+	// Build environment variables: image env first, then our overrides.
 	env := []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"TERM=xterm",
 		fmt.Sprintf("WENDY_HOSTNAME=%s.local", appName),
+	}
+	if specErr == nil {
+		env = append(imageSpec.Config.Env, env...)
 	}
 
 	// Build OCI spec using local oci package, then apply entitlements.
@@ -388,6 +474,11 @@ func (c *Client) CreateContainer(ctx context.Context, req *agentpb.CreateContain
 		if err := image.Unpack(ctx, ""); err != nil {
 			return fmt.Errorf("unpacking image %q: %w", imageName, err)
 		}
+  }
+	// If the app has a GPU entitlement, apply the NVIDIA CDI spec to get
+	// platform-correct library mounts (paths vary across Jetson models).
+	if appCfg.HasEntitlement(appconfig.EntitlementGPU) {
+		c.applyCDIGPU(spec)
 	}
 
 	// Build labels for the container.
@@ -422,6 +513,32 @@ func (c *Client) CreateContainer(ctx context.Context, req *agentpb.CreateContain
 	return nil
 }
 
+// applyCDIGPU loads the NVIDIA CDI spec (generated by nvidia-ctk at boot)
+// and applies GPU devices, library mounts, and environment variables to the
+// OCI spec. This handles platform-specific paths (Orin Nano vs Thor, etc.).
+func (c *Client) applyCDIGPU(spec *localoci.Spec) {
+	mgr := cdi.NewManager()
+	cdiSpec, err := mgr.LoadNVIDIACDISpec()
+	if err != nil {
+		c.logger.Warn("No NVIDIA CDI spec found, GPU library mounts may be incomplete", zap.Error(err))
+		return
+	}
+
+	// nvidia-ctk in CSV mode generates a device named "all".
+	// Try that first, then fall back to the first device in the spec.
+	if err := cdi.ApplyCDIDevice(spec, cdiSpec, "all"); err == nil {
+		c.logger.Info("Applied NVIDIA CDI spec for GPU access")
+		return
+	}
+	if len(cdiSpec.Devices) > 0 {
+		if err := cdi.ApplyCDIDevice(spec, cdiSpec, cdiSpec.Devices[0].Name); err == nil {
+			c.logger.Info("Applied NVIDIA CDI device", zap.String("device", cdiSpec.Devices[0].Name))
+			return
+		}
+	}
+	c.logger.Warn("CDI spec found but no devices could be applied")
+}
+
 // StartContainer starts the task for a named container and returns a channel
 // that streams stdout/stderr output. When the container exits, a final
 // ContainerOutput with Done=true is sent and the channel is closed.
@@ -433,6 +550,9 @@ func (c *Client) StartContainer(ctx context.Context, appName string) (<-chan ser
 		return nil, fmt.Errorf("loading container %q: %w", appName, err)
 	}
 
+	// Clean up any stale task from a previous run.
+	c.deleteStaleTask(ctx, container, appName)
+
 	// Create pipes for stdout/stderr capture.
 	stdoutR, stdoutW := io.Pipe()
 	stderrR, stderrW := io.Pipe()
@@ -440,11 +560,27 @@ func (c *Client) StartContainer(ctx context.Context, appName string) (<-chan ser
 	// Create a new task with pipe-based stdio for programmatic capture.
 	task, err := container.NewTask(ctx, cio.NewCreator(cio.WithStreams(nil, stdoutW, stderrW)))
 	if err != nil {
-		stdoutR.Close()
-		stdoutW.Close()
-		stderrR.Close()
-		stderrW.Close()
-		return nil, fmt.Errorf("creating task for %q: %w", appName, err)
+		if errdefs.IsAlreadyExists(err) {
+			// Orphaned task: exists in containerd metadata but container.Task()
+			// can't load it. Delete the container (cascades to its task) and
+			// recreate it from the same image+spec+snapshot to clear the state.
+			c.logger.Warn("Orphaned task detected, recreating container", zap.String("app_name", appName))
+			if rerr := c.recreateContainer(ctx, container, appName); rerr != nil {
+				c.logger.Error("Failed to recreate container", zap.Error(rerr))
+			} else {
+				container, err = c.client.LoadContainer(ctx, appName)
+				if err == nil {
+					task, err = container.NewTask(ctx, cio.NewCreator(cio.WithStreams(nil, stdoutW, stderrW)))
+				}
+			}
+		}
+		if err != nil {
+			stdoutR.Close()
+			stdoutW.Close()
+			stderrR.Close()
+			stderrW.Close()
+			return nil, fmt.Errorf("creating task for %q: %w", appName, err)
+		}
 	}
 
 	// Set up the wait channel before starting.
@@ -475,6 +611,72 @@ func (c *Client) StartContainer(ctx context.Context, appName string) (<-chan ser
 	go c.streamOutput(ctx, task, exitStatusCh, outputCh, appName, stdoutR, stderrR, stdoutW, stderrW)
 
 	return outputCh, nil
+}
+
+// deleteStaleTask attempts to load and force-delete any existing task for the
+// container. It handles both the normal case (task loadable) and the edge case
+// where the task exists in containerd but container.Task() can't load it.
+func (c *Client) deleteStaleTask(ctx context.Context, container containerd.Container, appName string) {
+	existingTask, taskErr := container.Task(ctx, nil)
+	if taskErr != nil {
+		return // No task to clean up.
+	}
+	_ = existingTask.Kill(ctx, syscall.SIGKILL)
+	if waitCh, waitErr := existingTask.Wait(ctx); waitErr == nil {
+		select {
+		case <-waitCh:
+		case <-time.After(5 * time.Second):
+			c.logger.Warn("Timed out waiting for stale task to exit", zap.String("app_name", appName))
+		}
+	}
+	_, _ = existingTask.Delete(ctx, containerd.WithProcessKill)
+}
+
+// recreateContainer deletes a container (which cascades to any orphaned task)
+// and recreates it with the same image, spec, and labels. This clears orphaned
+// task metadata that blocks NewTask.
+func (c *Client) recreateContainer(ctx context.Context, ctr containerd.Container, appName string) error {
+	info, err := ctr.Info(ctx)
+	if err != nil {
+		return fmt.Errorf("getting container info: %w", err)
+	}
+
+	image, err := ctr.Image(ctx)
+	if err != nil {
+		return fmt.Errorf("getting container image: %w", err)
+	}
+
+	spec, err := ctr.Spec(ctx)
+	if err != nil {
+		return fmt.Errorf("getting container spec: %w", err)
+	}
+
+	specJSON, err := json.Marshal(spec)
+	if err != nil {
+		return fmt.Errorf("marshaling spec: %w", err)
+	}
+
+	// Delete the container (cascades to orphaned task).
+	if err := ctr.Delete(ctx, containerd.WithSnapshotCleanup); err != nil {
+		return fmt.Errorf("deleting container: %w", err)
+	}
+
+	// Recreate with the same configuration.
+	snapshotKey := fmt.Sprintf("wendy-%s", appName)
+	_, err = c.client.NewContainer(ctx, appName,
+		containerd.WithImage(image),
+		containerd.WithNewSnapshot(snapshotKey, image),
+		containerd.WithContainerLabels(info.Labels),
+		containerd.WithNewSpec(
+			oci.WithSpecFromBytes(specJSON),
+		),
+	)
+	if err != nil {
+		return fmt.Errorf("recreating container: %w", err)
+	}
+
+	c.logger.Info("Recreated container to clear orphaned task", zap.String("app_name", appName))
+	return nil
 }
 
 // streamOutput reads stdout/stderr from pipes and sends it to the output
@@ -589,7 +791,7 @@ func (c *Client) StopContainer(ctx context.Context, appName string) error {
 	}
 
 	// Delete the task.
-	_, err = task.Delete(ctx)
+	_, err = task.Delete(ctx, containerd.WithProcessKill)
 	if err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("deleting task for %q: %w", appName, err)
 	}

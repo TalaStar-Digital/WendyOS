@@ -81,8 +81,10 @@ func detectFeatureset() []string {
 		features = append(features, "gpu")
 	}
 
-	// Audio: check for ALSA or PipeWire.
+	// Audio: check for ALSA, PipeWire, or PulseAudio.
 	if _, err := os.Stat("/proc/asound/cards"); err == nil {
+		features = append(features, "audio")
+	} else if _, err := exec.LookPath("pactl"); err == nil {
 		features = append(features, "audio")
 	}
 
