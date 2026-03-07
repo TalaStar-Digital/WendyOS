@@ -55,8 +55,9 @@ func hostPort(host string, port int) string {
 // Prefer the discovered IP address so commands still work when .local
 // hostname resolution is unavailable on the host machine.
 func lanAgentAddresses(dev models.LANDevice) []string {
-	if dev.Port == 0 {
-		return nil
+	port := dev.Port
+	if port == 0 {
+		port = defaultAgentPort
 	}
 
 	var addresses []string
@@ -66,7 +67,7 @@ func lanAgentAddresses(dev models.LANDevice) []string {
 			continue
 		}
 		seen[host] = true
-		addresses = append(addresses, hostPort(host, dev.Port))
+		addresses = append(addresses, hostPort(host, port))
 	}
 
 	return addresses
@@ -137,18 +138,17 @@ func resolveLANVersions(ctx context.Context, devices []models.LANDevice) []model
 }
 
 // resolveLANVersion queries a single LAN device's gRPC endpoint to populate
-// version metadata. Returns the enriched device and true when metadata lookup
-// succeeded.
-func resolveLANVersion(ctx context.Context, dev models.LANDevice) (models.LANDevice, bool) {
+// version metadata and returns the enriched device.
+func resolveLANVersion(ctx context.Context, dev models.LANDevice) (models.LANDevice, error) {
 	_, resp, err := resolveLANAgentVersion(ctx, dev)
 	if err != nil {
-		return dev, false
+		return dev, err
 	}
 	dev.AgentVersion = resp.GetVersion()
 	dev.OS = resp.GetOs()
 	dev.OSVersion = resp.GetOsVersion()
 	dev.CPUArchitecture = resp.GetCpuArchitecture()
-	return dev, true
+	return dev, nil
 }
 
 // SelectedDevice represents either a gRPC agent, BLE device, or an external provider device.

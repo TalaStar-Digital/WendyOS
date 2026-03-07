@@ -44,6 +44,23 @@ func TestLANAgentAddressesDeduplicatesIdenticalHosts(t *testing.T) {
 	}
 }
 
+func TestLANAgentAddressesFallsBackToDefaultPort(t *testing.T) {
+	dev := models.LANDevice{
+		IPAddress: "192.168.1.23",
+		Hostname:  "wendyos-otter.local",
+	}
+
+	got := lanAgentAddresses(dev)
+	want := []string{
+		"192.168.1.23:50051",
+		"wendyos-otter.local:50051",
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("lanAgentAddresses() = %v, want %v", got, want)
+	}
+}
+
 func TestResolveLANAgentVersionFallsBackAcrossAddresses(t *testing.T) {
 	orig := getAgentVersionAtAddress
 	defer func() { getAgentVersionAtAddress = orig }()
@@ -113,17 +130,20 @@ func TestResolveLANVersionsKeepsDevicesWhenMetadataLookupFails(t *testing.T) {
 		},
 	}
 
+	expected := make([]models.LANDevice, len(devices))
+	copy(expected, devices)
+
 	got := resolveLANVersions(context.Background(), devices)
 
-	if len(got) != len(devices) {
-		t.Fatalf("resolveLANVersions() returned %d devices, want %d", len(got), len(devices))
+	if len(got) != len(expected) {
+		t.Fatalf("resolveLANVersions() returned %d devices, want %d", len(got), len(expected))
 	}
-	for i := range devices {
-		if got[i].DisplayName != devices[i].DisplayName {
-			t.Fatalf("resolveLANVersions()[%d].DisplayName = %q, want %q", i, got[i].DisplayName, devices[i].DisplayName)
+	for i := range expected {
+		if got[i].DisplayName != expected[i].DisplayName {
+			t.Fatalf("resolveLANVersions()[%d].DisplayName = %q, want %q", i, got[i].DisplayName, expected[i].DisplayName)
 		}
-		if got[i].IPAddress != devices[i].IPAddress {
-			t.Fatalf("resolveLANVersions()[%d].IPAddress = %q, want %q", i, got[i].IPAddress, devices[i].IPAddress)
+		if got[i].IPAddress != expected[i].IPAddress {
+			t.Fatalf("resolveLANVersions()[%d].IPAddress = %q, want %q", i, got[i].IPAddress, expected[i].IPAddress)
 		}
 		if got[i].AgentVersion != "" {
 			t.Fatalf("resolveLANVersions()[%d].AgentVersion = %q, want empty", i, got[i].AgentVersion)
