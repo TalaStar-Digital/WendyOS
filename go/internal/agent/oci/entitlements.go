@@ -9,6 +9,17 @@ import (
 	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
 )
 
+func getEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			return trimmed
+		}
+	}
+	return fallback
+}
+
+var systemdServiceName = getEnvOrDefault("WENDY_SYSTEMD_SERVICE_NAME", "edge-agent")
+
 const (
 	// nvidiaGroupGID is the GID for the nvidia group (standard across most distros).
 	nvidiaGroupGID uint32 = 44
@@ -111,13 +122,7 @@ func SetDeviceCapabilities(spec *Spec, appName string) {
 
 	// Configure cgroupsPath: use WENDY_SYSTEMD_SERVICE_NAME env var or default to "edge-agent".
 	path := strings.ReplaceAll(appName, "-", "_")
-	serviceName := "edge-agent"
-	if envVal := os.Getenv("WENDY_SYSTEMD_SERVICE_NAME"); envVal != "" {
-		trimmed := strings.TrimSpace(envVal)
-		if trimmed != "" {
-			serviceName = trimmed
-		}
-	}
+	serviceName := systemdServiceName
 	spec.Linux.CgroupsPath = fmt.Sprintf("system.slice:%s:%s", serviceName, path)
 
 	// Add cgroup namespace.
