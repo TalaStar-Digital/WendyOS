@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/posthog/posthog-go"
 	"github.com/wendylabsinc/wendy/internal/shared/config"
+	"github.com/wendylabsinc/wendy/internal/shared/env"
 	"github.com/wendylabsinc/wendy/internal/shared/version"
 )
 
@@ -25,8 +26,6 @@ var (
 	client     posthog.Client
 	enabled    bool
 	distinctID string
-
-	analyticsDisabledByEnv = strings.EqualFold(os.Getenv("WENDY_ANALYTICS"), "false")
 )
 
 // Init initializes analytics. If disabled by env var, config, or missing API key,
@@ -34,7 +33,7 @@ var (
 // was nil) AND the env var does not override, so the caller can display a notice.
 func Init(cfg *config.Config) (firstRun bool) {
 	// Env var overrides everything
-	if analyticsDisabledByEnv {
+	if !env.Env.Analytics() {
 		enabled = false
 		return false
 	}
@@ -112,7 +111,7 @@ func Enabled() bool {
 
 // EnvOverride reports whether the WENDY_ANALYTICS env var is set to "false".
 func EnvOverride() bool {
-	return analyticsDisabledByEnv
+	return !env.Env.Analytics()
 }
 
 func loadOrCreateID() (string, error) {

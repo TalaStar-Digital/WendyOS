@@ -7,31 +7,35 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/wendylabsinc/wendy/internal/shared/discovery"
+	"github.com/wendylabsinc/wendy/internal/shared/env"
 	"github.com/wendylabsinc/wendy/internal/shared/models"
 )
 
-func TestParseDurationEnv(t *testing.T) {
+func TestEnvDiscoverIntervals(t *testing.T) {
 	tests := []struct {
-		name     string
-		envVal   string
-		fallback time.Duration
-		want     time.Duration
+		name   string
+		envKey string
+		envVal string
+		fn     func() time.Duration
+		want   time.Duration
 	}{
-		{"empty uses fallback", "", 3 * time.Second, 3 * time.Second},
-		{"valid duration", "5s", 3 * time.Second, 5 * time.Second},
-		{"valid ms", "500ms", 3 * time.Second, 500 * time.Millisecond},
-		{"invalid uses fallback", "notaduration", 3 * time.Second, 3 * time.Second},
+		{"usb default", "WENDY_DISCOVER_USB_INTERVAL", "", env.Env.DiscoverUSBInterval, 3 * time.Second},
+		{"usb custom", "WENDY_DISCOVER_USB_INTERVAL", "5s", env.Env.DiscoverUSBInterval, 5 * time.Second},
+		{"usb invalid", "WENDY_DISCOVER_USB_INTERVAL", "notaduration", env.Env.DiscoverUSBInterval, 3 * time.Second},
+		{"ethernet default", "WENDY_DISCOVER_ETHERNET_INTERVAL", "", env.Env.DiscoverEthernetInterval, 3 * time.Second},
+		{"ethernet custom", "WENDY_DISCOVER_ETHERNET_INTERVAL", "500ms", env.Env.DiscoverEthernetInterval, 500 * time.Millisecond},
+		{"external default", "WENDY_DISCOVER_EXTERNAL_INTERVAL", "", env.Env.DiscoverExternalInterval, 5 * time.Second},
+		{"external custom", "WENDY_DISCOVER_EXTERNAL_INTERVAL", "10s", env.Env.DiscoverExternalInterval, 10 * time.Second},
 	}
 
-	const testKey = "WENDY_TEST_PARSE_DURATION"
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.envVal != "" {
-				t.Setenv(testKey, tt.envVal)
+				t.Setenv(tt.envKey, tt.envVal)
 			}
-			got := parseDurationEnv(testKey, tt.fallback)
+			got := tt.fn()
 			if got != tt.want {
-				t.Errorf("parseDurationEnv(%q) = %v; want %v", tt.envVal, got, tt.want)
+				t.Errorf("got %v; want %v", got, tt.want)
 			}
 		})
 	}
@@ -69,20 +73,10 @@ func TestDelayThen_ActuallyDelays(t *testing.T) {
 }
 
 func TestDiscoverModel_UpdateReturnsDelayedCmd(t *testing.T) {
-	// Save and restore poll intervals so the test doesn't depend on env vars.
-	origUSB := usbPollInterval
-	origEth := ethernetPollInterval
-	origExt := externalPollInterval
-	defer func() {
-		usbPollInterval = origUSB
-		ethernetPollInterval = origEth
-		externalPollInterval = origExt
-	}()
-
 	// Use zero intervals so the test doesn't actually sleep.
-	usbPollInterval = 0
-	ethernetPollInterval = 0
-	externalPollInterval = 0
+	t.Setenv("WENDY_DISCOVER_USB_INTERVAL", "0s")
+	t.Setenv("WENDY_DISCOVER_ETHERNET_INTERVAL", "0s")
+	t.Setenv("WENDY_DISCOVER_EXTERNAL_INTERVAL", "0s")
 
 	m := newDiscoverModel(context.Background(), defaultOpts())
 

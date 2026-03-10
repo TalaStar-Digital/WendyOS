@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
 	"github.com/wendylabsinc/wendy/internal/shared/discovery"
+	"github.com/wendylabsinc/wendy/internal/shared/env"
 	"github.com/wendylabsinc/wendy/internal/shared/models"
 )
 
@@ -278,11 +278,11 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case usbScanMsg:
 		m.collection.USBDevices = msg.devices
 		m.hasResults = true
-		return m, delayThen(usbPollInterval, m.scanUSB())
+		return m, delayThen(env.Env.DiscoverUSBInterval(), m.scanUSB())
 	case ethScanMsg:
 		m.collection.EthernetInterfaces = msg.devices
 		m.hasResults = true
-		return m, delayThen(ethernetPollInterval, m.scanEthernet())
+		return m, delayThen(env.Env.DiscoverEthernetInterval(), m.scanEthernet())
 	case lanScanMsg:
 		m.collection.LANDevices = msg.devices
 		m.hasResults = true
@@ -294,22 +294,10 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case extScanMsg:
 		m.collection.ExternalDevices = msg.devices
 		m.hasResults = true
-		return m, delayThen(externalPollInterval, m.scanExternal())
+		return m, delayThen(env.Env.DiscoverExternalInterval(), m.scanExternal())
 	}
 
 	return m, nil
-}
-
-func parseDurationEnv(key string, fallback time.Duration) time.Duration {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return fallback
-	}
-	return d
 }
 
 func delayThen(d time.Duration, cmd tea.Cmd) tea.Cmd {
@@ -318,12 +306,6 @@ func delayThen(d time.Duration, cmd tea.Cmd) tea.Cmd {
 		return cmd()
 	}
 }
-
-var (
-	usbPollInterval      = parseDurationEnv("WENDY_DISCOVER_USB_INTERVAL", 3*time.Second)
-	ethernetPollInterval = parseDurationEnv("WENDY_DISCOVER_ETHERNET_INTERVAL", 3*time.Second)
-	externalPollInterval = parseDurationEnv("WENDY_DISCOVER_EXTERNAL_INTERVAL", 5*time.Second)
-)
 
 var (
 	dimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
