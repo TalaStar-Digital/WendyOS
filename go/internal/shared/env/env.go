@@ -6,29 +6,23 @@ import (
 	"time"
 )
 
-type envNamespace struct{}
-
-// Env provides namespaced access to WENDY_* environment variables.
-// Each method reads os.Getenv on every call — no caching.
-var Env envNamespace
-
-func (envNamespace) DiscoverUSBInterval() time.Duration {
+func DiscoverUSBInterval() time.Duration {
 	return parseDuration("WENDY_DISCOVER_USB_INTERVAL", 3*time.Second)
 }
 
-func (envNamespace) DiscoverEthernetInterval() time.Duration {
+func DiscoverEthernetInterval() time.Duration {
 	return parseDuration("WENDY_DISCOVER_ETHERNET_INTERVAL", 3*time.Second)
 }
 
-func (envNamespace) DiscoverExternalInterval() time.Duration {
+func DiscoverExternalInterval() time.Duration {
 	return parseDuration("WENDY_DISCOVER_EXTERNAL_INTERVAL", 5*time.Second)
 }
 
-func (envNamespace) Analytics() bool {
+func Analytics() bool {
 	return !strings.EqualFold(os.Getenv("WENDY_ANALYTICS"), "false")
 }
 
-func (envNamespace) SystemdServiceName() string {
+func SystemdServiceName() string {
 	return stringOrDefault("WENDY_SYSTEMD_SERVICE_NAME", "edge-agent")
 }
 

@@ -112,7 +112,7 @@ func SetDeviceCapabilities(spec *Spec, appName string) {
 
 	// Configure cgroupsPath: use WENDY_SYSTEMD_SERVICE_NAME env var or default to "edge-agent".
 	path := strings.ReplaceAll(appName, "-", "_")
-	serviceName := env.Env.SystemdServiceName()
+	serviceName := env.SystemdServiceName()
 	spec.Linux.CgroupsPath = fmt.Sprintf("system.slice:%s:%s", serviceName, path)
 
 	// Add cgroup namespace.

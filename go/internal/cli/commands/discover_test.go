@@ -19,13 +19,13 @@ func TestEnvDiscoverIntervals(t *testing.T) {
 		fn     func() time.Duration
 		want   time.Duration
 	}{
-		{"usb default", "WENDY_DISCOVER_USB_INTERVAL", "", env.Env.DiscoverUSBInterval, 3 * time.Second},
-		{"usb custom", "WENDY_DISCOVER_USB_INTERVAL", "5s", env.Env.DiscoverUSBInterval, 5 * time.Second},
-		{"usb invalid", "WENDY_DISCOVER_USB_INTERVAL", "notaduration", env.Env.DiscoverUSBInterval, 3 * time.Second},
-		{"ethernet default", "WENDY_DISCOVER_ETHERNET_INTERVAL", "", env.Env.DiscoverEthernetInterval, 3 * time.Second},
-		{"ethernet custom", "WENDY_DISCOVER_ETHERNET_INTERVAL", "500ms", env.Env.DiscoverEthernetInterval, 500 * time.Millisecond},
-		{"external default", "WENDY_DISCOVER_EXTERNAL_INTERVAL", "", env.Env.DiscoverExternalInterval, 5 * time.Second},
-		{"external custom", "WENDY_DISCOVER_EXTERNAL_INTERVAL", "10s", env.Env.DiscoverExternalInterval, 10 * time.Second},
+		{"usb default", "WENDY_DISCOVER_USB_INTERVAL", "", env.DiscoverUSBInterval, 3 * time.Second},
+		{"usb custom", "WENDY_DISCOVER_USB_INTERVAL", "5s", env.DiscoverUSBInterval, 5 * time.Second},
+		{"usb invalid", "WENDY_DISCOVER_USB_INTERVAL", "notaduration", env.DiscoverUSBInterval, 3 * time.Second},
+		{"ethernet default", "WENDY_DISCOVER_ETHERNET_INTERVAL", "", env.DiscoverEthernetInterval, 3 * time.Second},
+		{"ethernet custom", "WENDY_DISCOVER_ETHERNET_INTERVAL", "500ms", env.DiscoverEthernetInterval, 500 * time.Millisecond},
+		{"external default", "WENDY_DISCOVER_EXTERNAL_INTERVAL", "", env.DiscoverExternalInterval, 5 * time.Second},
+		{"external custom", "WENDY_DISCOVER_EXTERNAL_INTERVAL", "10s", env.DiscoverExternalInterval, 10 * time.Second},
 	}
 
 	for _, tt := range tests {

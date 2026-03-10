@@ -278,11 +278,11 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case usbScanMsg:
 		m.collection.USBDevices = msg.devices
 		m.hasResults = true
-		return m, delayThen(env.Env.DiscoverUSBInterval(), m.scanUSB())
+		return m, delayThen(env.DiscoverUSBInterval(), m.scanUSB())
 	case ethScanMsg:
 		m.collection.EthernetInterfaces = msg.devices
 		m.hasResults = true
-		return m, delayThen(env.Env.DiscoverEthernetInterval(), m.scanEthernet())
+		return m, delayThen(env.DiscoverEthernetInterval(), m.scanEthernet())
 	case lanScanMsg:
 		m.collection.LANDevices = msg.devices
 		m.hasResults = true
@@ -294,7 +294,7 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case extScanMsg:
 		m.collection.ExternalDevices = msg.devices
 		m.hasResults = true
-		return m, delayThen(env.Env.DiscoverExternalInterval(), m.scanExternal())
+		return m, delayThen(env.DiscoverExternalInterval(), m.scanExternal())
 	}
 
 	return m, nil
