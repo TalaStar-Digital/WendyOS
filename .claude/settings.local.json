@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -1 /Volumes/Projects/WendyLabs/wendy-agent.kb-spelunking/Sources/Wendy/cli/commands/*.swift | xargs -I {} basename {})",
+      "Bash(cp -R /Volumes/Projects/WendyLabs/wendy-agent.kb-spelunking/Sources/WendyAgentGRPC/Proto/ swift/Sources/WendyAgentGRPC/Proto/)",
+      "Bash(cp -R /Volumes/Projects/WendyLabs/wendy-agent.kb-spelunking/Sources/WendyCloudGRPC/Proto/ swift/Sources/WendyCloudGRPC/Proto/)",
+      "Bash(cp -R /Volumes/Projects/WendyLabs/wendy-agent.kb-spelunking/Sources/OpenTelemetryGRPC/Proto/ swift/Sources/OpenTelemetryGRPC/Proto/)",
+      "Bash(cd /Volumes/Projects/WendyLabs/wendy-agent.kb-little-fixes/swift && swift build 2>&1)",
+      "Bash(cd /Volumes/Projects/WendyLabs/wendy-agent.kb-little-fixes/swift && swift run wendy-agent --help 2>&1)",
+      "Bash(swift build 2>&1)",
+      "Bash(which grpcurl 2>/dev/null || brew list grpcurl 2>/dev/null || echo \"grpcurl not found\")"
+    ]
+  }
+}
