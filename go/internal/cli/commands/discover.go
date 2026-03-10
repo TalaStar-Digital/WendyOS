@@ -314,9 +314,7 @@ func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 
 func delayThen(d time.Duration, cmd tea.Cmd) tea.Cmd {
 	return func() tea.Msg {
-		if d > 0 {
-			time.Sleep(d)
-		}
+		time.Sleep(d)
 		return cmd()
 	}
 }
