@@ -4,6 +4,7 @@ import GRPCCore
 import GRPCNIOTransportHTTP2
 import GRPCServiceLifecycle
 import Logging
+import OpenTelemetryGRPC
 import ServiceLifecycle
 import WendyAgentGRPC
 
@@ -16,6 +17,9 @@ struct WendyAgent: AsyncParsableCommand {
 
     @Option(name: .shortAndLong, help: "The port to listen on for incoming connections.")
     var port: Int = 50051
+
+    @Option(help: "The port to listen on for OpenTelemetry collection.")
+    var otelPort: Int = 4317
 
     @Option(name: .shortAndLong, help: "The directory to store configuration files in.")
     var configDir: String = "/etc/wendy-agent"
@@ -30,12 +34,14 @@ struct WendyAgent: AsyncParsableCommand {
         let logger = Logger(label: "sh.wendy.agent")
         logger.info("Starting Wendy Agent on port \(port)")
 
+        let broadcaster = TelemetryBroadcaster()
+
         let services: [any RegistrableRPCService] = [
             AgentService(),
             ContainerService(),
             AudioService(),
             ProvisioningService(),
-            TelemetryService(),
+            TelemetryService(broadcaster: broadcaster),
         ]
 
         let server = GRPCServer(
@@ -44,6 +50,21 @@ struct WendyAgent: AsyncParsableCommand {
                 transportSecurity: .plaintext
             ),
             services: services
+        )
+
+        // OTel collector server — receives logs/metrics/traces from local apps
+        let otelServices: [any RegistrableRPCService] = [
+            LocalOTelLogsReceiver(broadcaster: broadcaster),
+            LocalOTelMetricsReceiver(broadcaster: broadcaster),
+            LocalOTelTracesReceiver(broadcaster: broadcaster),
+        ]
+
+        let otelServer = GRPCServer(
+            transport: HTTP2ServerTransport.Posix(
+                address: .ipv4(host: "127.0.0.1", port: otelPort),
+                transportSecurity: .plaintext
+            ),
+            services: otelServices
         )
 
         let bonjour = BonjourAdvertiser(
@@ -56,6 +77,7 @@ struct WendyAgent: AsyncParsableCommand {
             configuration: .init(
                 services: [
                     .init(service: server),
+                    .init(service: otelServer),
                     .init(service: bonjour),
                 ],
                 gracefulShutdownSignals: [.sigint, .sigterm],
@@ -63,7 +85,7 @@ struct WendyAgent: AsyncParsableCommand {
             )
         )
 
-        logger.info("Listening on port \(port)")
+        logger.info("Listening on port \(port), OTel on port \(otelPort)")
         try await serviceGroup.run()
     }
 }
