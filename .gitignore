@@ -26,3 +26,6 @@ WendyCLI.app/
 *.resolved
 go/wendy-agent
 go/wendy
+
+# Local settings
+*.local.*
