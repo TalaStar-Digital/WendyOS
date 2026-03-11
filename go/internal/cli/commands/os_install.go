@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -51,7 +52,7 @@ func runOSInstall(ctx context.Context, nightly bool) error {
 	// Fetch Linux devices from GCS manifest.
 	linuxDevices, err := getAvailableDevices()
 	if err != nil {
-		fmt.Printf("Warning: could not fetch Linux device manifest: %v\n", err)
+		log.Printf("WARNING: could not fetch Linux device manifest: %v", err)
 	}
 
 	// Build picker items.
