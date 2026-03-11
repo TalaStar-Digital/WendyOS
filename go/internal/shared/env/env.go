@@ -1,6 +1,7 @@
 package env
 
 import (
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ func parseDuration(key string, fallback time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
+		log.Printf("WARNING: invalid %s=%q, using default %s", key, v, fallback)
 		return fallback
 	}
 	return d
