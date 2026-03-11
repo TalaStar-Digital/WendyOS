@@ -28,7 +28,7 @@ func SystemdServiceName() string {
 }
 
 func parseDuration(key string, fallback time.Duration) time.Duration {
-	v := os.Getenv(key)
+	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
 		return fallback
 	}
