@@ -2,10 +2,13 @@
 package commands
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 	"github.com/wendylabsinc/wendy/internal/cli/analytics"
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
 	"github.com/wendylabsinc/wendy/internal/shared/config"
+	"github.com/wendylabsinc/wendy/internal/shared/discovery"
 	"github.com/wendylabsinc/wendy/internal/shared/version"
 )
 
@@ -23,6 +26,10 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Skip heavy init for internal subprocess commands.
+			if cmd.Name() == "__ble-check" {
+				return nil
+			}
 			providers.Initialize(cmd.Context())
 
 			cfg, err := config.Load()
@@ -98,7 +105,22 @@ func NewRootCmd() *cobra.Command {
 	analyticsCmd := newAnalyticsCmd()
 	analyticsCmd.GroupID = "misc"
 
+	// Hidden command used as a subprocess to test CoreBluetooth access.
+	// The main process re-execs itself with this command; because exec
+	// replaces the process image, the child gets a fresh Obj-C runtime
+	// and can safely probe CoreBluetooth without risking SIGABRT in the
+	// parent.
+	bleCheckCmd := &cobra.Command{
+		Use:    "__ble-check",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			os.Exit(discovery.RunBLECheck())
+			return nil
+		},
+	}
+
 	root.AddCommand(
+		bleCheckCmd,
 		runCmd,
 		buildCmd,
 		initCmd,

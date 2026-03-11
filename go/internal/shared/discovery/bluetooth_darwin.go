@@ -11,7 +11,11 @@ import "C"
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"os/exec"
 	"sort"
+	"sync"
 	"unsafe"
 
 	"github.com/wendylabsinc/wendy/internal/shared/models"
@@ -22,10 +26,43 @@ const (
 	wendyL2CAPPSM       = 128
 )
 
+var (
+	bleCheckOnce sync.Once
+	bleCheckErr  error
+)
+
+// RunBLECheck calls into CoreBluetooth to test whether BLE is available.
+// This may SIGABRT in sandboxed terminals — it is meant to be called from
+// the __ble-check subprocess, not the main process.
+func RunBLECheck() int {
+	return int(C.wendy_ble_check())
+}
+
 // discoverBluetooth uses CoreBluetooth via CGo to scan for WendyOS BLE
 // peripherals on macOS. It scans for devices advertising the Wendy service
 // UUID and returns them sorted by RSSI (strongest first).
 func discoverBluetooth(ctx context.Context, activeScan bool) ([]models.BluetoothDevice, error) {
+	// Run a one-time subprocess check to test CoreBluetooth access.
+	// We re-exec the wendy binary with __ble-check; because exec replaces
+	// the process image, the child gets a fresh Obj-C runtime and can safely
+	// call CoreBluetooth APIs. If the child is killed (SIGABRT from a
+	// sandboxed terminal) or exits non-zero, BLE is unavailable.
+	bleCheckOnce.Do(func() {
+		exe, err := os.Executable()
+		if err != nil {
+			return // can't locate self, assume BLE is available
+		}
+		cmd := exec.CommandContext(ctx, exe, "__ble-check")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Run(); err != nil {
+			bleCheckErr = fmt.Errorf("Bluetooth unavailable - your terminal may not have Bluetooth permission")
+		}
+	})
+	if bleCheckErr != nil {
+		return nil, bleCheckErr
+	}
+
 	scanSeconds := 5
 	if !activeScan {
 		scanSeconds = 3
@@ -34,6 +71,10 @@ func discoverBluetooth(ctx context.Context, activeScan bool) ([]models.Bluetooth
 	// Run the CoreBluetooth scan (blocks for scanSeconds).
 	result := C.wendy_ble_scan(C.int(scanSeconds))
 	defer C.wendy_ble_free_result(result)
+
+	if result.error != nil {
+		return nil, fmt.Errorf("%s", C.GoString(result.error))
+	}
 
 	if result.count == 0 || result.devices == nil {
 		return nil, nil

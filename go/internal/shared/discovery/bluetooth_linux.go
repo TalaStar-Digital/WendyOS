@@ -2,6 +2,9 @@
 
 package discovery
 
+// RunBLECheck is a no-op on Linux (no CoreBluetooth entitlement issues).
+func RunBLECheck() int { return 0 }
+
 import (
 	"bufio"
 	"context"

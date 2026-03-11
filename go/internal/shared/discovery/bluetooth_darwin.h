@@ -13,7 +13,13 @@ typedef struct {
 typedef struct {
     WendyBLEDevice *devices;
     int count;
+    const char *error; // NULL if no error, otherwise a message (caller must free)
 } WendyBLEScanResult;
+
+// wendy_ble_check tests whether CoreBluetooth is usable. Returns 0 if BLE is
+// available, 1 if denied/restricted. May SIGABRT in sandboxed terminals —
+// callers should run this in a subprocess.
+int wendy_ble_check(void);
 
 // wendy_ble_scan scans for BLE peripherals advertising the WendyOS service UUID
 // for scan_seconds. Returns discovered devices. Caller must call wendy_ble_free_result.

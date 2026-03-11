@@ -2,6 +2,9 @@
 
 package discovery
 
+// RunBLECheck is a no-op on Windows (no CoreBluetooth entitlement issues).
+func RunBLECheck() int { return 0 }
+
 import (
 	"context"
 	"encoding/json"

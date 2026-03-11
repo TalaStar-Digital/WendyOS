@@ -176,7 +176,10 @@ func discoverContinuous(ctx context.Context, opts discovery.DiscoveryOptions) er
 type usbScanMsg struct{ devices []models.USBDevice }
 type ethScanMsg struct{ devices []models.EthernetInterface }
 type lanScanMsg struct{ devices []models.LANDevice }
-type btScanMsg struct{ devices []models.BluetoothDevice }
+type btScanMsg struct {
+	devices []models.BluetoothDevice
+	err     error
+}
 type extScanMsg struct{ devices []models.ExternalDevice }
 
 type discoverModel struct {
@@ -187,6 +190,7 @@ type discoverModel struct {
 	hasResults      bool
 	err             error
 	includeExternal bool
+	bleWarning      string
 }
 
 func newDiscoverModel(ctx context.Context, opts discovery.DiscoveryOptions) discoverModel {
@@ -235,8 +239,8 @@ func (m discoverModel) scanLAN() tea.Cmd {
 func (m discoverModel) scanBluetooth() tea.Cmd {
 	return func() tea.Msg {
 		activeScan := len(m.opts.Types) == 0 || len(m.opts.Types) == 1
-		devices, _ := discovery.DiscoverBluetooth(m.ctx, activeScan)
-		return btScanMsg{devices: devices}
+		devices, err := discovery.DiscoverBluetooth(m.ctx, activeScan)
+		return btScanMsg{devices: devices, err: err}
 	}
 }
 
@@ -289,6 +293,10 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case btScanMsg:
 		m.collection.BluetoothDevices = msg.devices
 		m.hasResults = true
+		if msg.err != nil {
+			m.bleWarning = msg.err.Error()
+			return m, nil // stop retrying BLE scans when unavailable
+		}
 		return m, m.scanBluetooth()
 	case extScanMsg:
 		m.collection.ExternalDevices = msg.devices
@@ -311,7 +319,13 @@ func (m discoverModel) View() string {
 
 	var sb strings.Builder
 
-	sb.WriteString(scanStyle.Render("⟳ Scanning for WendyOS devices...") + dimStyle.Render(" (press q or Ctrl+C to stop)") + "\n\n")
+	sb.WriteString(scanStyle.Render("⟳ Scanning for WendyOS devices...") + dimStyle.Render(" (press q or Ctrl+C to stop)") + "\n")
+
+	if m.bleWarning != "" {
+		sb.WriteString(dimStyle.Render("  Bluetooth: "+m.bleWarning) + "\n")
+	}
+
+	sb.WriteString("\n")
 
 	if m.err != nil {
 		sb.WriteString(fmt.Sprintf("Error: %v\n", m.err))
