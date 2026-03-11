@@ -203,11 +203,9 @@ jobs:
           - arch: amd64
             goarch: amd64
             rpm-arch: x86_64
-            registry-arch: amd64
           - arch: arm64
             goarch: arm64
             rpm-arch: aarch64
-            registry-arch: arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -234,19 +232,6 @@ jobs:
           tar -xzf wendy-agent-linux-${{ matrix.goarch }}-${{ needs.determine-version.outputs.version }}.tar.gz
           ls -la
 
-      - name: Download containerd-registry image
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          REGISTRY_VERSION="v1.1.0"
-          ASSET="containerd-registry-${{ matrix.registry-arch }}.tar.gz"
-          gh release download "$REGISTRY_VERSION" \
-            --repo wendylabsinc/containerd-registry \
-            --pattern "$ASSET"
-          gunzip "$ASSET"
-          ls -lh "containerd-registry-${{ matrix.registry-arch }}.tar"
-
       - name: Prepare package roots
         run: |
           set -euo pipefail
@@ -257,7 +242,6 @@ jobs:
           mkdir -p pkgroot/wendy-agent/etc/default
           mkdir -p pkgroot/wendy-agent/etc/wendy-agent
           mkdir -p pkgroot/wendy-agent/etc/avahi/services
-          mkdir -p pkgroot/wendy-agent/usr/share/wendyos/offline-images
           mkdir -p pkgroot/wendy-agent/var/lib/wendy-agent/storage
 
           install -m755 ./wendy-cli-linux-${{ matrix.goarch }}/wendy \
@@ -271,18 +255,6 @@ jobs:
             pkgroot/wendy-agent/etc/default/wendy-agent
           install -m644 packaging/linux/avahi/wendy-agent.service \
             pkgroot/wendy-agent/etc/avahi/services/wendy-agent.service
-
-          # Dev registry service files
-          install -m644 packaging/linux/wendyos-dev-registry/wendyos-dev-registry.service \
-            pkgroot/wendy-agent/usr/lib/systemd/system/wendyos-dev-registry.service
-          install -m644 packaging/linux/wendyos-dev-registry/wendyos-dev-registry-import.service \
-            pkgroot/wendy-agent/usr/lib/systemd/system/wendyos-dev-registry-import.service
-          install -m755 packaging/linux/wendyos-dev-registry/wendyos-dev-registry.sh \
-            pkgroot/wendy-agent/usr/bin/wendyos-dev-registry
-
-          # Containerd registry offline image
-          install -m644 containerd-registry-${{ matrix.registry-arch }}.tar \
-            pkgroot/wendy-agent/usr/share/wendyos/offline-images/containerd-registry.tar
 
           # Placeholder config created at install time by package manager.
           printf "{}\n" > pkgroot/wendy-agent/etc/wendy-agent/config.json
@@ -325,7 +297,6 @@ jobs:
             --depends "systemd" \
             --depends "ca-certificates" \
             --depends "avahi-daemon" \
-            --deb-recommends "nerdctl" \
             --deb-recommends "network-manager | connman" \
             --deb-recommends "bluez" \
             --config-files /etc/default/wendy-agent \
@@ -403,10 +374,6 @@ jobs:
           dpkg-deb -I "$WENDY_AGENT_DEB" | grep -E "Depends:.*systemd"
           dpkg-deb -I "$WENDY_AGENT_DEB" | grep -E "Depends:.*ca-certificates"
           dpkg-deb -c "$WENDY_AGENT_DEB" | grep "usr/lib/systemd/system/wendy-agent.service" > /dev/null
-          dpkg-deb -c "$WENDY_AGENT_DEB" | grep "usr/lib/systemd/system/wendyos-dev-registry.service" > /dev/null
-          dpkg-deb -c "$WENDY_AGENT_DEB" | grep "usr/lib/systemd/system/wendyos-dev-registry-import.service" > /dev/null
-          dpkg-deb -c "$WENDY_AGENT_DEB" | grep "usr/bin/wendyos-dev-registry" > /dev/null
-          dpkg-deb -c "$WENDY_AGENT_DEB" | grep "usr/share/wendyos/offline-images/containerd-registry.tar" > /dev/null
           dpkg-deb -c "$WENDY_AGENT_DEB" | grep "etc/default/wendy-agent" > /dev/null
           dpkg-deb -c "$WENDY_AGENT_DEB" | grep "etc/avahi/services/wendy-agent.service" > /dev/null
           dpkg-deb -I "$WENDY_AGENT_DEB" | grep -E "Depends:.*avahi-daemon"
@@ -419,10 +386,6 @@ jobs:
           rpm -qp --requires "$WENDY_AGENT_RPM" | grep "^ca-certificates" > /dev/null
           rpm -qp --requires "$WENDY_AGENT_RPM" | grep "^avahi" > /dev/null
           rpm -qpl "$WENDY_AGENT_RPM" | grep "/usr/lib/systemd/system/wendy-agent.service" > /dev/null
-          rpm -qpl "$WENDY_AGENT_RPM" | grep "/usr/lib/systemd/system/wendyos-dev-registry.service" > /dev/null
-          rpm -qpl "$WENDY_AGENT_RPM" | grep "/usr/lib/systemd/system/wendyos-dev-registry-import.service" > /dev/null
-          rpm -qpl "$WENDY_AGENT_RPM" | grep "/usr/bin/wendyos-dev-registry" > /dev/null
-          rpm -qpl "$WENDY_AGENT_RPM" | grep "/usr/share/wendyos/offline-images/containerd-registry.tar" > /dev/null
           rpm -qpl "$WENDY_AGENT_RPM" | grep "/etc/default/wendy-agent" > /dev/null
           rpm -qpl "$WENDY_AGENT_RPM" | grep "/etc/avahi/services/wendy-agent.service" > /dev/null
 
@@ -498,7 +461,7 @@ jobs:
     name: Publish to GCP Artifact Registry
     runs-on: ubuntu-latest
     needs: [determine-version, package-linux]
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    if: needs.determine-version.outputs.is_release == 'true' && needs.determine-version.outputs.is_prerelease == 'false'
     permissions:
       contents: read
       id-token: write
@@ -809,7 +772,7 @@ jobs:
     name: Publish AUR Packages
     runs-on: ubuntu-latest
     needs: [determine-version, release]
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    if: needs.determine-version.outputs.is_release == 'true' && needs.determine-version.outputs.is_prerelease == 'false'
     strategy:
       matrix:
         include:
