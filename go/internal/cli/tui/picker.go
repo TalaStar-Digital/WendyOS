@@ -16,6 +16,10 @@ type PickerItem struct {
 	Type        string // "LAN", "Bluetooth", "External", etc.
 	Address     string
 
+	// DedupKey is used for deduplication. If empty, Name is used.
+	// Items with the same DedupKey (case-insensitive) are merged via MergeItem.
+	DedupKey string
+
 	// Value is the opaque payload returned when this item is selected.
 	Value interface{}
 }
@@ -32,9 +36,15 @@ type PickerDoneMsg struct{}
 // PickerModel is a Bubble Tea model that presents a live-updating list of
 // items and lets the user select one with arrow keys + Enter.
 type PickerModel struct {
-	Title    string // header line, e.g. "Select a device"
+	Title string // header line, e.g. "Select a device"
+
+	// MergeItem is called when a new item shares a DedupKey with an existing
+	// item. The caller can update existing in place (type, address, value, …).
+	// If nil, duplicate items are silently dropped.
+	MergeItem func(existing *PickerItem, incoming PickerItem)
+
 	items    []PickerItem
-	seen     map[string]bool
+	seenIdx  map[string]int // dedup key → index in items
 	cursor   int
 	selected *PickerItem
 	scanning bool
@@ -45,7 +55,7 @@ type PickerModel struct {
 func NewPicker() PickerModel {
 	return PickerModel{
 		Title:    "Select a device",
-		seen:     make(map[string]bool),
+		seenIdx:  make(map[string]int),
 		scanning: true,
 	}
 }
@@ -54,7 +64,7 @@ func NewPicker() PickerModel {
 func NewPickerWithTitle(title string) PickerModel {
 	return PickerModel{
 		Title:    title,
-		seen:     make(map[string]bool),
+		seenIdx:  make(map[string]int),
 		scanning: true,
 	}
 }
@@ -86,11 +96,17 @@ func (m PickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PickerAddMsg:
 		for _, item := range msg.Items {
-			key := item.Name + ":" + item.Type + ":" + item.Address
-			if m.seen[key] {
+			key := strings.ToLower(item.DedupKey)
+			if key == "" {
+				key = strings.ToLower(item.Name)
+			}
+			if idx, ok := m.seenIdx[key]; ok {
+				if m.MergeItem != nil {
+					m.MergeItem(&m.items[idx], item)
+				}
 				continue
 			}
-			m.seen[key] = true
+			m.seenIdx[key] = len(m.items)
 			m.items = append(m.items, item)
 		}
 
@@ -140,7 +156,7 @@ func (m PickerModel) View() string {
 		if item.Type == "" && item.Address == "" {
 			line = fmt.Sprintf("%s%s", cursor, item.Name)
 		} else {
-			line = fmt.Sprintf("%s%-24s %-12s %s", cursor, item.Name, item.Type, item.Address)
+			line = fmt.Sprintf("%s%-24s %-16s %s", cursor, item.Name, item.Type, item.Address)
 		}
 		sb.WriteString(style.Render(line))
 		if item.Description != "" {

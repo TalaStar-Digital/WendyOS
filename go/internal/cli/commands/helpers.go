@@ -460,6 +460,55 @@ type pickerEntry struct {
 	provider       providers.DeviceProvider
 }
 
+// mergePickerItem merges a newly discovered transport into an existing picker
+// item for the same physical device. It combines connection types, prefers
+// LAN addresses, and merges the underlying DiscoveredDevice fields.
+func mergePickerItem(existing *tui.PickerItem, incoming tui.PickerItem) {
+	e, eOK := existing.Value.(*pickerEntry)
+	n, nOK := incoming.Value.(*pickerEntry)
+	if !eOK || !nOK || e.mergedDevice == nil || n.mergedDevice == nil {
+		return
+	}
+
+	md := e.mergedDevice
+	nd := n.mergedDevice
+
+	if nd.LAN != nil && md.LAN == nil {
+		md.LAN = nd.LAN
+		existing.Address = incoming.Address
+	}
+	if nd.Bluetooth != nil && md.Bluetooth == nil {
+		md.Bluetooth = nd.Bluetooth
+	}
+	if nd.External != nil && md.External == nil {
+		md.External = nd.External
+		if md.LAN == nil {
+			existing.Address = incoming.Address
+		}
+	}
+
+	if md.AgentVersion == "" {
+		md.AgentVersion = nd.AgentVersion
+	}
+	if md.OS == "" {
+		md.OS = nd.OS
+	}
+	if md.OSVersion == "" {
+		md.OSVersion = nd.OSVersion
+	}
+	if md.CPUArchitecture == "" {
+		md.CPUArchitecture = nd.CPUArchitecture
+	}
+
+	// Prefer the name that includes the version suffix.
+	if len(incoming.Name) > len(existing.Name) {
+		existing.Name = incoming.Name
+	}
+
+	// Rebuild the type string from the merged transports.
+	existing.Type = md.ConnectionTypes()
+}
+
 // pickDevice runs an interactive TUI that discovers devices across all
 // transports and providers, then lets the user select one.
 // LAN discovery runs continuously so devices that come online after the
@@ -467,6 +516,7 @@ type pickerEntry struct {
 // excludeProviders hides the named provider keys from the picker.
 func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBluetooth bool) (*SelectedDevice, error) {
 	picker := tui.NewPicker()
+	picker.MergeItem = mergePickerItem
 	p := tea.NewProgram(picker)
 
 	// Cancel continuous discovery when the picker exits.
@@ -484,9 +534,10 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 			}
 			lanDev := dev // copy for stable pointer
 			p.Send(tui.PickerAddMsg{Items: []tui.PickerItem{{
-				Name:    name,
-				Type:    "LAN",
-				Address: preferredLANAddress(dev),
+				Name:     name,
+				Type:     "LAN",
+				Address:  preferredLANAddress(dev),
+				DedupKey: dev.DisplayName,
 				Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
 					DisplayName:     dev.DisplayName,
 					AgentVersion:    dev.AgentVersion,
@@ -513,9 +564,10 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 					for i := range devices {
 						if prov.Key() == "wendy-lite" {
 							items = append(items, tui.PickerItem{
-								Name:    devices[i].DisplayName,
-								Type:    "LAN (Lite)",
-								Address: devices[i].ConnectionInfo["ip"],
+								Name:     devices[i].DisplayName,
+								DedupKey: devices[i].DisplayName,
+								Type:     "LAN (Lite)",
+								Address:  devices[i].ConnectionInfo["ip"],
 								Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
 									DisplayName:     devices[i].DisplayName,
 									CPUArchitecture: devices[i].CPUArchitecture,
@@ -558,9 +610,10 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 							connType = "BLE (Lite)"
 						}
 						items = append(items, tui.PickerItem{
-							Name:    bleDevices[i].DisplayName,
-							Type:    connType,
-							Address: bleDevices[i].Address,
+							Name:     bleDevices[i].DisplayName,
+							DedupKey: bleDevices[i].DisplayName,
+							Type:     connType,
+							Address:  bleDevices[i].Address,
 							Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
 								DisplayName:     bleDevices[i].DisplayName,
 								AgentVersion:    bleDevices[i].AgentVersion,
