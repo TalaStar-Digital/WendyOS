@@ -77,6 +77,10 @@ func (p *MicroWendyProvider) DiscoverDevices(ctx context.Context) ([]models.Exte
 	return devices, nil
 }
 
+func (p *MicroWendyProvider) SupportedBuildTypes() []string {
+	return []string{"swift"}
+}
+
 func (p *MicroWendyProvider) CanBuild(projectPath string) bool {
 	_, err := os.Stat(filepath.Join(projectPath, "Package.swift"))
 	return err == nil

@@ -38,6 +38,20 @@ func newBuildCmd() *cobra.Command {
 
 			target, _ := resolveTarget(cmd.Context())
 
+			// Detect all build options and filter by target capabilities.
+			options := detectBuildOptions(cwd)
+			if target != nil && target.Provider != nil {
+				options = filterBuildOptions(options, target.Provider)
+			}
+			if len(options) == 0 {
+				return fmt.Errorf("no supported build type found for this target; check that the project contains the right files")
+			}
+
+			selected, err := pickBuildOption(options)
+			if err != nil {
+				return err
+			}
+
 			// If the target is an external provider device, use the provider build path.
 			if target != nil && target.External != nil && target.Provider != nil {
 				product := filepath.Base(cwd)
@@ -70,23 +84,83 @@ func newBuildCmd() *cobra.Command {
 				}
 			}
 
-			// Existing agent-targeted build path.
-			var language string
-			if cfgErr == nil {
-				language = appCfg.Language
-			}
-
 			appID := filepath.Base(cwd)
 			if cfgErr == nil {
 				appID = appCfg.AppID
 			}
 
-			projectType := detectProjectTypeWithLanguage(cwd, language)
-			return buildProject(cmd.Context(), cwd, projectType, appID, platform)
+			return buildProject(cmd.Context(), cwd, selected, appID, platform)
 		},
 	}
 
 	return cmd
+}
+
+// pickBuildOption presents an interactive picker when multiple build options
+// are detected. If only one option exists, it is returned directly.
+func pickBuildOption(options []BuildOption) (*BuildOption, error) {
+	if len(options) == 1 {
+		return &options[0], nil
+	}
+
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		var names []string
+		for _, o := range options {
+			names = append(names, o.Label)
+		}
+		return nil, fmt.Errorf("multiple build types detected (%s); specify which to use or run interactively", strings.Join(names, ", "))
+	}
+
+	picker := tui.NewPickerWithTitle("Select a build type")
+	p := tea.NewProgram(picker)
+
+	go func() {
+		var items []tui.PickerItem
+		for i := range options {
+			items = append(items, tui.PickerItem{
+				Name:  options[i].Label,
+				Value: &options[i],
+			})
+		}
+		p.Send(tui.PickerAddMsg{Items: items})
+		p.Send(tui.PickerDoneMsg{})
+	}()
+
+	finalModel, err := p.Run()
+	if err != nil {
+		return nil, fmt.Errorf("build type picker: %w", err)
+	}
+
+	pm := finalModel.(tui.PickerModel)
+	if pm.Cancelled() {
+		return nil, ErrUserCancelled
+	}
+	sel := pm.Selected()
+	if sel == nil {
+		return nil, fmt.Errorf("no build type selected")
+	}
+
+	opt, ok := sel.Value.(*BuildOption)
+	if !ok {
+		return nil, fmt.Errorf("invalid selection")
+	}
+	return opt, nil
+}
+
+// filterBuildOptions removes options whose Type is not in the provider's
+// SupportedBuildTypes list.
+func filterBuildOptions(options []BuildOption, provider providers.DeviceProvider) []BuildOption {
+	supported := make(map[string]bool)
+	for _, t := range provider.SupportedBuildTypes() {
+		supported[t] = true
+	}
+	var filtered []BuildOption
+	for _, o := range options {
+		if supported[o.Type] {
+			filtered = append(filtered, o)
+		}
+	}
+	return filtered
 }
 
 // detectProjectTypeWithLanguage determines the project type using the wendy.json
@@ -101,12 +175,12 @@ func detectProjectTypeWithLanguage(dir, language string) string {
 	return detectProjectType(dir)
 }
 
-func buildProject(ctx context.Context, dir, projectType, appID, platform string) error {
+func buildProject(ctx context.Context, dir string, option *BuildOption, appID, platform string) error {
 	imageName := strings.ToLower(appID) + ":latest"
 
-	switch projectType {
+	switch option.Type {
 	case "docker":
-		return buildDockerProject(dir, imageName, platform)
+		return buildDockerProject(dir, imageName, platform, option.File)
 	case "python":
 		return buildPythonProject(dir, imageName, platform)
 	case "swift":
@@ -116,11 +190,12 @@ func buildProject(ctx context.Context, dir, projectType, appID, platform string)
 	}
 }
 
-func buildDockerProject(dir, imageName, platform string) error {
+func buildDockerProject(dir, imageName, platform, dockerfile string) error {
 	fmt.Printf("Building Docker image %s for %s...\n", imageName, platform)
 
 	cmd := exec.Command("docker", "buildx", "build",
 		"--platform", platform,
+		"-f", dockerfile,
 		"-t", imageName,
 		"--load",
 		".")
@@ -173,7 +248,7 @@ func buildPythonProject(dir, imageName, platform string) error {
 		fmt.Println("Generated Dockerfile.")
 	}
 
-	err := buildDockerProject(dir, imageName, platform)
+	err := buildDockerProject(dir, imageName, platform, "Dockerfile")
 
 	if generatedDockerfile {
 		os.Remove(dockerfilePath)
@@ -183,10 +258,6 @@ func buildPythonProject(dir, imageName, platform string) error {
 }
 
 func buildSwiftProject(dir, appID, platform string) error {
-	if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil {
-		return buildDockerProject(dir, strings.ToLower(appID)+":latest", platform)
-	}
-
 	fmt.Println("Building Swift project locally...")
 
 	cmd := exec.Command("swift", "build")
