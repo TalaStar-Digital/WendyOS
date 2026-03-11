@@ -84,8 +84,10 @@ func newDeviceVersionCmd() *cobra.Command {
 			fmt.Printf("Architecture: %s\n", resp.GetCpuArchitecture())
 			fmt.Printf("CLI Version: %s\n", version.Version)
 
-			if resp.GetVersion() != version.Version {
-				fmt.Println("\nNote: CLI and agent versions differ. Consider running 'wendy device update'.")
+			if cmp := version.CompareVersions(version.Version, resp.GetVersion()); cmp > 0 {
+				fmt.Println("\nNote: Agent is behind the CLI. Consider running 'wendy device update'.")
+			} else if cmp < 0 {
+				fmt.Println("\nNote: CLI is behind the agent. Consider updating the CLI.")
 			}
 
 			return nil
@@ -235,9 +237,12 @@ func newDeviceSetupCmd() *cobra.Command {
 				fmt.Printf("Unable to check agent version: %v\n", err)
 			} else {
 				fmt.Printf("Agent version: %s\n", versionResp.GetVersion())
-				if versionResp.GetVersion() != version.Version {
-					fmt.Printf("CLI version: %s (differs from agent)\n", version.Version)
+				if cmp := version.CompareVersions(version.Version, versionResp.GetVersion()); cmp > 0 {
+					fmt.Printf("CLI version: %s (agent is behind)\n", version.Version)
 					fmt.Println("Consider running 'wendy device update' to update the agent.")
+				} else if cmp < 0 {
+					fmt.Printf("CLI version: %s (CLI is behind)\n", version.Version)
+					fmt.Println("Consider updating the CLI to match the agent.")
 				} else {
 					fmt.Println("Agent is up to date.")
 				}

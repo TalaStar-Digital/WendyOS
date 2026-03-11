@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
 	"golang.org/x/term"
 )
 
@@ -25,7 +26,7 @@ func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "build",
 		Short: "Build the application in the current directory",
-		Long:  "Detects the project type and builds a Docker image for linux/arm64.",
+		Long:  "Detects the project type and builds a Docker image for the target device architecture.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -58,6 +59,17 @@ func newBuildCmd() *cobra.Command {
 				defer target.Agent.Close()
 			}
 
+			// Query the device architecture when an agent connection is available.
+			platform := "linux/arm64"
+			if target != nil && target.Agent != nil {
+				versionResp, err := target.Agent.AgentService.GetAgentVersion(cmd.Context(), &agentpb.GetAgentVersionRequest{})
+				if err == nil {
+					if arch := versionResp.GetCpuArchitecture(); arch != "" {
+						platform = "linux/" + arch
+					}
+				}
+			}
+
 			// Existing agent-targeted build path.
 			var language string
 			if cfgErr == nil {
@@ -70,7 +82,7 @@ func newBuildCmd() *cobra.Command {
 			}
 
 			projectType := detectProjectTypeWithLanguage(cwd, language)
-			return buildProject(cmd.Context(), cwd, projectType, appID)
+			return buildProject(cmd.Context(), cwd, projectType, appID, platform)
 		},
 	}
 
@@ -89,26 +101,26 @@ func detectProjectTypeWithLanguage(dir, language string) string {
 	return detectProjectType(dir)
 }
 
-func buildProject(ctx context.Context, dir, projectType, appID string) error {
+func buildProject(ctx context.Context, dir, projectType, appID, platform string) error {
 	imageName := strings.ToLower(appID) + ":latest"
 
 	switch projectType {
 	case "docker":
-		return buildDockerProject(dir, imageName)
+		return buildDockerProject(dir, imageName, platform)
 	case "python":
-		return buildPythonProject(dir, imageName)
+		return buildPythonProject(dir, imageName, platform)
 	case "swift":
-		return buildSwiftProject(dir, appID)
+		return buildSwiftProject(dir, appID, platform)
 	default:
 		return fmt.Errorf("unknown project type; add a Dockerfile, Package.swift, or requirements.txt")
 	}
 }
 
-func buildDockerProject(dir, imageName string) error {
-	fmt.Printf("Building Docker image %s for linux/arm64...\n", imageName)
+func buildDockerProject(dir, imageName, platform string) error {
+	fmt.Printf("Building Docker image %s for %s...\n", imageName, platform)
 
 	cmd := exec.Command("docker", "buildx", "build",
-		"--platform", "linux/arm64",
+		"--platform", platform,
 		"-t", imageName,
 		"--load",
 		".")
@@ -149,7 +161,7 @@ func buildDockerProject(dir, imageName string) error {
 	return nil
 }
 
-func buildPythonProject(dir, imageName string) error {
+func buildPythonProject(dir, imageName, platform string) error {
 	dockerfilePath := filepath.Join(dir, "Dockerfile")
 	generatedDockerfile := false
 	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
@@ -161,7 +173,7 @@ func buildPythonProject(dir, imageName string) error {
 		fmt.Println("Generated Dockerfile.")
 	}
 
-	err := buildDockerProject(dir, imageName)
+	err := buildDockerProject(dir, imageName, platform)
 
 	if generatedDockerfile {
 		os.Remove(dockerfilePath)
@@ -170,9 +182,9 @@ func buildPythonProject(dir, imageName string) error {
 	return err
 }
 
-func buildSwiftProject(dir, appID string) error {
+func buildSwiftProject(dir, appID, platform string) error {
 	if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil {
-		return buildDockerProject(dir, strings.ToLower(appID)+":latest")
+		return buildDockerProject(dir, strings.ToLower(appID)+":latest", platform)
 	}
 
 	fmt.Println("Building Swift project locally...")

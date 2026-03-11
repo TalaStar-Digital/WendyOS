@@ -342,6 +342,17 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 		return fmt.Errorf("unable to detect project type; ensure a Dockerfile, requirements.txt, or Package.swift is present")
 	}
 
+	// Query the device architecture.
+	versionResp, err := conn.AgentService.GetAgentVersion(ctx, &agentpb.GetAgentVersionRequest{})
+	if err != nil {
+		return fmt.Errorf("querying device version: %w", err)
+	}
+	architecture := versionResp.GetCpuArchitecture()
+	if architecture == "" {
+		architecture = "arm64"
+	}
+	platform := "linux/" + architecture
+
 	// Verify auth certs are available if the device's registry requires mTLS.
 	if err := requireRegistryAuth(ctx, conn); err != nil {
 		return err
@@ -352,8 +363,8 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	repo := strings.ToLower(appCfg.AppID)
 	registryImage := fmt.Sprintf("%s/%s:latest", registryAddr, repo)
 
-	cliLogln("Building and pushing Docker image for linux/arm64...")
-	if err := buildAndPushImage(ctx, cwd, registryAddr, registryImage, "linux/arm64", os.Stdout); err != nil {
+	cliLogln("Building and pushing Docker image for %s...", platform)
+	if err := buildAndPushImage(ctx, cwd, registryAddr, registryImage, platform, os.Stdout); err != nil {
 		return fmt.Errorf("building and pushing Docker image: %w", err)
 	}
 	cliLogln("Build and push completed.")
@@ -361,7 +372,7 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	// Inject debugpy for Python remote debugging.
 	if appCfg.Language == "python" {
 		cliLogln("Injecting debugpy for remote debugging...")
-		if err := injectDebugpy(ctx, registryAddr, registryImage, "linux/arm64", os.Stdout); err != nil {
+		if err := injectDebugpy(ctx, registryAddr, registryImage, platform, os.Stdout); err != nil {
 			return fmt.Errorf("injecting debugpy: %w", err)
 		}
 	}
