@@ -24,6 +24,9 @@ struct WendyAgent: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "The directory to store configuration files in.")
     var configDir: String = "/etc/wendy-agent"
 
+    @Option(help: "Path to the app executable to run.")
+    var appPath: String = ""
+
     func run() async throws {
         LoggingSystem.bootstrap { label in
             var handler = StreamLogHandler.standardError(label: label)
@@ -38,7 +41,7 @@ struct WendyAgent: AsyncParsableCommand {
 
         let services: [any RegistrableRPCService] = [
             AgentService(),
-            ContainerService(),
+            ContainerService(broadcaster: broadcaster, executablePath: appPath),
             AudioService(),
             ProvisioningService(),
             TelemetryService(broadcaster: broadcaster),

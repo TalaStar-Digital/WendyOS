@@ -12,7 +12,10 @@
       "WebSearch",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:forums.swift.org)"
+      "WebFetch(domain:forums.swift.org)",
+      "Bash(cd /Volumes/Projects/WendyLabs/wendy-agent.kb-little-fixes/Examples/DemoApp && swift build 2>&1)",
+      "Bash(timeout 5 swift run wendy-agent --app-path ../Examples/DemoApp/.build/debug/DemoApp 2>&1 || true)",
+      "Bash(gtimeout 5 swift run wendy-agent --app-path ../Examples/DemoApp/.build/debug/DemoApp 2>&1 || true)"
     ]
   }
 }
