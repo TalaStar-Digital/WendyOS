@@ -44,6 +44,15 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         let imageName = request.message.imageName
         logger.info("CreateContainer called", metadata: ["app_name": "\(appName)", "image_name": "\(imageName)"])
 
+        // Stop any existing process before re-deploying.
+        if let existing = runningProcesses.removeValue(forKey: appName) {
+            if existing.isRunning {
+                existing.terminate()
+                existing.waitUntilExit()
+            }
+            logger.info("Stopped existing process for re-deploy", metadata: ["app_name": "\(appName)"])
+        }
+
         if imageName.hasPrefix("sha256:") {
             // OCI image: parse manifest → config → extract layer.
             let appDir = "\(appsDir)/\(appName)"
@@ -67,7 +76,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             guard let layerDesc = manifest.layers.first else {
                 throw RPCError(code: .invalidArgument, message: "OCI manifest has no layers")
             }
-            try extractTarGz(blobDigest: layerDesc.digest, to: appDir)
+            try await extractTarGz(blobDigest: layerDesc.digest, to: appDir)
 
             let binaryPath = "\(appDir)/\(binaryName)"
             guard FileManager.default.fileExists(atPath: binaryPath) else {
@@ -363,15 +372,25 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         return data
     }
 
-    private func extractTarGz(blobDigest: String, to destDir: String) throws {
+    private func extractTarGz(blobDigest: String, to destDir: String) async throws {
         let blobPath = "\(blobsDir)/\(blobDigest.replacingOccurrences(of: ":", with: "/"))"
-        let process = Foundation.Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        process.arguments = ["-xzf", blobPath, "-C", destDir]
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw RPCError(code: .internalError, message: "tar extraction failed with status \(process.terminationStatus)")
+        let tarProcess = Foundation.Process()
+        tarProcess.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        tarProcess.arguments = ["-xzf", blobPath, "-C", destDir]
+
+        let status = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, Error>) in
+            tarProcess.terminationHandler = { p in
+                continuation.resume(returning: p.terminationStatus)
+            }
+            do {
+                try tarProcess.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+
+        guard status == 0 else {
+            throw RPCError(code: .internalError, message: "tar extraction failed with status \(status)")
         }
     }
 
