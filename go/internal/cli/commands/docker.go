@@ -50,6 +50,60 @@ func detectProjectType(dir string) string {
 	return "unknown"
 }
 
+// BuildOption represents a detected build type in a project directory.
+type BuildOption struct {
+	Label string // display name shown in the picker
+	Type  string // build type key: "docker", "swift", "python"
+	File  string // the marker filename (e.g. "Dockerfile.production", "Package.swift")
+}
+
+// detectBuildOptions finds all buildable project markers in the given directory.
+// Unlike detectProjectType, this returns ALL options rather than the first match,
+// including multiple Dockerfiles (Dockerfile, Dockerfile.*, Dockerfile-*).
+func detectBuildOptions(dir string) []BuildOption {
+	var options []BuildOption
+
+	// Find all Dockerfiles.
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == "Dockerfile" || strings.HasPrefix(name, "Dockerfile.") || strings.HasPrefix(name, "Dockerfile-") {
+				options = append(options, BuildOption{
+					Label: name,
+					Type:  "docker",
+					File:  name,
+				})
+			}
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "Package.swift")); err == nil {
+		options = append(options, BuildOption{
+			Label: "Package.swift (Swift)",
+			Type:  "swift",
+			File:  "Package.swift",
+		})
+	}
+
+	// Python — only add once even if multiple markers exist.
+	for _, marker := range []string{"requirements.txt", "pyproject.toml", "setup.py"} {
+		if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+			options = append(options, BuildOption{
+				Label: marker + " (Python)",
+				Type:  "python",
+				File:  marker,
+			})
+			break
+		}
+	}
+
+	return options
+}
+
 // injectDebugpy builds a wrapper image on top of the given image that installs debugpy.
 func injectDebugpy(ctx context.Context, registryAddr, registryImage, platform string, streamOutput *os.File) error {
 	tmpDir, err := os.MkdirTemp("", "wendy-debugpy-*")

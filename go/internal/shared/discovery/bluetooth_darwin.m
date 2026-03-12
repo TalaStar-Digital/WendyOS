@@ -114,11 +114,16 @@
 
 #pragma mark - Result building
 
+- (void)waitForReady:(int)timeoutSeconds {
+    dispatch_semaphore_wait(self.readySem,
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)timeoutSeconds * NSEC_PER_SEC));
+}
+
 - (WendyBLEScanResult)buildResult {
     NSArray<NSDictionary *> *values = [self.discovered allValues];
     int count = (int)values.count;
     if (count == 0) {
-        return (WendyBLEScanResult){NULL, 0};
+        return (WendyBLEScanResult){NULL, 0, NULL};
     }
 
     WendyBLEDevice *devices = (WendyBLEDevice *)calloc(count, sizeof(WendyBLEDevice));
@@ -130,23 +135,34 @@
         devices[i].is_lite = [d[@"is_lite"] intValue];
     }
 
-    return (WendyBLEScanResult){devices, count};
+    return (WendyBLEScanResult){devices, count, NULL};
 }
 
 @end
 
 #pragma mark - C entry points
 
+int wendy_ble_check(void) {
+    @autoreleasepool {
+        // Create a full scanner (with delegate) and wait for the state callback.
+        // The abort from sandboxed terminals happens asynchronously when
+        // CoreBluetooth communicates with bluetoothd via XPC, so we must wait
+        // for the state update to actually fire — not just create the manager.
+        WendyBLEScanner *scanner = [[WendyBLEScanner alloc] init];
+        [scanner waitForReady:5];
+        return scanner.isReady ? 0 : 1;
+    }
+}
+
 WendyBLEScanResult wendy_ble_scan(int scan_seconds) {
     @autoreleasepool {
         WendyBLEScanner *scanner = [[WendyBLEScanner alloc] init];
 
         // Wait for the Bluetooth adapter to become ready (up to 5 seconds).
-        dispatch_semaphore_wait(scanner.readySem,
-            dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+        [scanner waitForReady:5];
 
         if (!scanner.isReady) {
-            return (WendyBLEScanResult){NULL, 0};
+            return (WendyBLEScanResult){NULL, 0, NULL};
         }
 
         // Scan all peripherals. Wendy Lite (ESP32) devices do not advertise
@@ -173,6 +189,9 @@ WendyBLEScanResult wendy_ble_scan(int scan_seconds) {
 }
 
 void wendy_ble_free_result(WendyBLEScanResult result) {
+    if (result.error != NULL) {
+        free((void *)result.error);
+    }
     if (result.devices == NULL) {
         return;
     }

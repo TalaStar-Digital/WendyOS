@@ -42,6 +42,10 @@ func (p *LocalProvider) DiscoverDevices(_ context.Context) ([]models.ExternalDev
 	}, nil
 }
 
+func (p *LocalProvider) SupportedBuildTypes() []string {
+	return []string{"docker", "swift", "go", "python"}
+}
+
 func (p *LocalProvider) CanBuild(projectPath string) bool {
 	for _, marker := range []string{"Dockerfile", "Package.swift", "go.mod", "requirements.txt", "pyproject.toml", "setup.py"} {
 		if _, err := os.Stat(filepath.Join(projectPath, marker)); err == nil {

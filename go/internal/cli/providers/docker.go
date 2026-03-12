@@ -58,6 +58,10 @@ func (p *DockerProvider) DiscoverDevices(ctx context.Context) ([]models.External
 	}, nil
 }
 
+func (p *DockerProvider) SupportedBuildTypes() []string {
+	return []string{"docker"}
+}
+
 func (p *DockerProvider) CanBuild(projectPath string) bool {
 	_, err := os.Stat(projectPath + "/Dockerfile")
 	return err == nil

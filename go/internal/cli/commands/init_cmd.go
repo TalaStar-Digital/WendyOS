@@ -506,7 +506,7 @@ func promptYesNo(reader *bufio.Reader, question string) (bool, error) {
 func scaffoldProject(dir, appID, target, language string) error {
 	switch {
 	case language == langSwift:
-		return initSwiftProject(dir, appID, "")
+		return initSwiftProject(dir, appID, target)
 	case language == langPython:
 		return initPythonUVProject(dir, appID)
 	default:
@@ -793,15 +793,34 @@ func defaultEntitlements(language, template string) []appconfig.Entitlement {
 
 // --- Legacy scaffolding helpers (kept for non-interactive / Swift / Docker use) ---
 
-func initSwiftProject(dir, appID, template string) error {
-	_ = template
-
+func initSwiftProject(dir, appID, target string) error {
 	pkgPath := filepath.Join(dir, "Package.swift")
 	if _, err := os.Stat(pkgPath); err == nil {
 		return nil
 	}
 
-	content := fmt.Sprintf(`// swift-tools-version:6.0
+	var content string
+	if target == "wendy-lite" {
+		content = fmt.Sprintf(`// swift-tools-version:6.2
+import PackageDescription
+
+let package = Package(
+    name: "%s",
+    dependencies: [
+        .package(url: "https://github.com/wendylabsinc/wendy-lite", branch: "main"),
+    ],
+    targets: [
+        .executableTarget(
+            name: "%s",
+            dependencies: [
+                .product(name: "WendyLite", package: "wendy-lite"),
+            ]
+        ),
+    ]
+)
+`, appID, appID)
+	} else {
+		content = fmt.Sprintf(`// swift-tools-version:6.2
 import PackageDescription
 
 let package = Package(
@@ -811,6 +830,7 @@ let package = Package(
     ]
 )
 `, appID, appID)
+	}
 
 	if err := os.WriteFile(pkgPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("creating Package.swift: %w", err)

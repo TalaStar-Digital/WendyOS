@@ -24,6 +24,9 @@ const (
 	wendyL2CAPPSM = 128
 )
 
+// RunBLECheck is a no-op on Linux (no CoreBluetooth entitlement issues).
+func RunBLECheck() int { return 0 }
+
 // discoverBluetooth uses bluetoothctl to scan for WendyOS BLE devices on Linux.
 // If activeScan is true, an LE scan runs for up to 5 seconds before listing devices.
 func discoverBluetooth(ctx context.Context, activeScan bool) ([]models.BluetoothDevice, error) {

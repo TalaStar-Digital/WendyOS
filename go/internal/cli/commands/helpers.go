@@ -197,7 +197,14 @@ func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.Age
 
 	addr, err := resolveDeviceAddress()
 	if err == nil {
-		return connectWithAutoTLS(ctx, addr)
+		conn, connErr := connectWithAutoTLS(ctx, addr)
+		if connErr != nil {
+			return nil, connErr
+		}
+		if !cfg.suppressProvisioningHint {
+			suggestProvisioning(conn)
+		}
+		return conn, nil
 	}
 
 	// No device configured — fall back to interactive picker.
@@ -211,7 +218,9 @@ func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.Age
 	}
 
 	if target.Agent != nil {
-		// If the picker used plaintext, try to upgrade to mTLS.
+		if !cfg.suppressProvisioningHint {
+			suggestProvisioning(target.Agent)
+		}
 		return target.Agent, nil
 	}
 
@@ -241,7 +250,15 @@ func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.
 			mtlsAddr := hostPort(host, port+1)
 			conn, tlsErr := grpcclient.ConnectWithTLS(ctx, mtlsAddr, certInfo)
 			if tlsErr == nil {
-				return conn, nil
+				// grpc.NewClient is lazy — verify the connection actually
+				// works with a fast probe before committing to mTLS.
+				probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				_, probeErr := conn.AgentService.GetAgentVersion(probeCtx, &agentpb.GetAgentVersionRequest{})
+				cancel()
+				if probeErr == nil {
+					return conn, nil
+				}
+				conn.Close()
 			}
 			// mTLS failed — fall back to plaintext.
 		}
@@ -249,16 +266,34 @@ func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.
 	return grpcclient.Connect(ctx, plaintextAddr)
 }
 
+// suggestProvisioning prints a hint when the connection is not using mTLS,
+// nudging the user to provision the device.
+func suggestProvisioning(conn *grpcclient.AgentConnection) {
+	if conn.IsMTLS || jsonOutput {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Hint: connected without mTLS. Run 'wendy device setup' to provision this device.\n")
+}
+
 // loadCLICert returns the first available certificate from the CLI config, or nil.
 func loadCLICert() *config.CertificateInfo {
+	auth := loadCLIAuth()
+	if auth == nil {
+		return nil
+	}
+	cert := auth.Certificates[0]
+	return &cert
+}
+
+// loadCLIAuth returns the first auth entry that has certificates, or nil.
+func loadCLIAuth() *config.AuthConfig {
 	cfg, err := config.Load()
 	if err != nil || len(cfg.Auth) == 0 {
 		return nil
 	}
 	for _, auth := range cfg.Auth {
 		if len(auth.Certificates) > 0 {
-			cert := auth.Certificates[0]
-			return &cert
+			return &auth
 		}
 	}
 	return nil
@@ -268,8 +303,17 @@ func loadCLICert() *config.CertificateInfo {
 type resolveOption func(*resolveConfig)
 
 type resolveConfig struct {
-	excludeProviderKeys map[string]bool
-	excludeBluetooth    bool
+	excludeProviderKeys      map[string]bool
+	excludeBluetooth         bool
+	suppressProvisioningHint bool
+}
+
+// SuppressProvisioningHint prevents connectToAgent from printing the
+// "run 'wendy device setup'" hint when connected without mTLS.
+func SuppressProvisioningHint() resolveOption {
+	return func(c *resolveConfig) {
+		c.suppressProvisioningHint = true
+	}
 }
 
 // ExcludeBluetooth skips the BLE scan and filters out BLE-only devices
@@ -416,6 +460,55 @@ type pickerEntry struct {
 	provider       providers.DeviceProvider
 }
 
+// mergePickerItem merges a newly discovered transport into an existing picker
+// item for the same physical device. It combines connection types, prefers
+// LAN addresses, and merges the underlying DiscoveredDevice fields.
+func mergePickerItem(existing *tui.PickerItem, incoming tui.PickerItem) {
+	e, eOK := existing.Value.(*pickerEntry)
+	n, nOK := incoming.Value.(*pickerEntry)
+	if !eOK || !nOK || e.mergedDevice == nil || n.mergedDevice == nil {
+		return
+	}
+
+	md := e.mergedDevice
+	nd := n.mergedDevice
+
+	if nd.LAN != nil && md.LAN == nil {
+		md.LAN = nd.LAN
+		existing.Address = incoming.Address
+	}
+	if nd.Bluetooth != nil && md.Bluetooth == nil {
+		md.Bluetooth = nd.Bluetooth
+	}
+	if nd.External != nil && md.External == nil {
+		md.External = nd.External
+		if md.LAN == nil {
+			existing.Address = incoming.Address
+		}
+	}
+
+	if md.AgentVersion == "" {
+		md.AgentVersion = nd.AgentVersion
+	}
+	if md.OS == "" {
+		md.OS = nd.OS
+	}
+	if md.OSVersion == "" {
+		md.OSVersion = nd.OSVersion
+	}
+	if md.CPUArchitecture == "" {
+		md.CPUArchitecture = nd.CPUArchitecture
+	}
+
+	// Prefer the name that includes the version suffix.
+	if len(incoming.Name) > len(existing.Name) {
+		existing.Name = incoming.Name
+	}
+
+	// Rebuild the type string from the merged transports.
+	existing.Type = md.ConnectionTypes()
+}
+
 // pickDevice runs an interactive TUI that discovers devices across all
 // transports and providers, then lets the user select one.
 // LAN discovery runs continuously so devices that come online after the
@@ -423,6 +516,7 @@ type pickerEntry struct {
 // excludeProviders hides the named provider keys from the picker.
 func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBluetooth bool) (*SelectedDevice, error) {
 	picker := tui.NewPicker()
+	picker.MergeItem = mergePickerItem
 	p := tea.NewProgram(picker)
 
 	// Cancel continuous discovery when the picker exits.
@@ -440,9 +534,10 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 			}
 			lanDev := dev // copy for stable pointer
 			p.Send(tui.PickerAddMsg{Items: []tui.PickerItem{{
-				Name:    name,
-				Type:    "LAN",
-				Address: preferredLANAddress(dev),
+				Name:     name,
+				Type:     "LAN",
+				Address:  preferredLANAddress(dev),
+				DedupKey: dev.DisplayName,
 				Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
 					DisplayName:     dev.DisplayName,
 					AgentVersion:    dev.AgentVersion,
@@ -469,9 +564,10 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 					for i := range devices {
 						if prov.Key() == "wendy-lite" {
 							items = append(items, tui.PickerItem{
-								Name:    devices[i].DisplayName,
-								Type:    "LAN (Lite)",
-								Address: devices[i].ConnectionInfo["ip"],
+								Name:     devices[i].DisplayName,
+								DedupKey: devices[i].DisplayName,
+								Type:     "LAN (Lite)",
+								Address:  devices[i].ConnectionInfo["ip"],
 								Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
 									DisplayName:     devices[i].DisplayName,
 									CPUArchitecture: devices[i].CPUArchitecture,
@@ -514,9 +610,10 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 							connType = "BLE (Lite)"
 						}
 						items = append(items, tui.PickerItem{
-							Name:    bleDevices[i].DisplayName,
-							Type:    connType,
-							Address: bleDevices[i].Address,
+							Name:     bleDevices[i].DisplayName,
+							DedupKey: bleDevices[i].DisplayName,
+							Type:     connType,
+							Address:  bleDevices[i].Address,
 							Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
 								DisplayName:     bleDevices[i].DisplayName,
 								AgentVersion:    bleDevices[i].AgentVersion,

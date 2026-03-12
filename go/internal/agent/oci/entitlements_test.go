@@ -171,10 +171,10 @@ func TestApplyEntitlements_Persist(t *testing.T) {
 		t.Error("persist entitlement did not add /app/data mount")
 	}
 
-	// Verify the source path includes the app ID and volume name.
+	// Verify the source path uses the volume name (shared across apps).
 	for _, m := range spec.Mounts {
 		if m.Destination == "/app/data" {
-			expected := "/var/lib/wendy/volumes/my-app/data"
+			expected := "/var/lib/wendy/volumes/data"
 			if m.Source != expected {
 				t.Errorf("persist mount source = %q, want %q", m.Source, expected)
 			}

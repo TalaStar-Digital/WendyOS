@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/wendylabsinc/wendy/internal/shared/certs"
 	"github.com/wendylabsinc/wendy/internal/shared/config"
@@ -19,6 +20,7 @@ import (
 type AgentConnection struct {
 	Conn                *grpc.ClientConn
 	Host                string // hostname or IP of the connected agent
+	IsMTLS              bool   // true when connected via mutual TLS
 	AgentService        agentpb.WendyAgentServiceClient
 	ContainerService    agentpb.WendyContainerServiceClient
 	AudioService        agentpb.WendyAudioServiceClient
@@ -28,7 +30,7 @@ type AgentConnection struct {
 
 // Connect creates an insecure gRPC connection to the agent at the given address.
 func Connect(ctx context.Context, address string) (*AgentConnection, error) {
-	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(grpcTarget(address), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("connecting to agent at %s: %w", address, err)
 	}
@@ -53,14 +55,27 @@ func ConnectWithTLS(ctx context.Context, address string, certInfo *config.Certif
 	tlsCfg.InsecureSkipVerify = true // agent uses self-signed certs
 	tlsCfg.MinVersion = tls.VersionTLS12
 
-	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	conn, err := grpc.NewClient(grpcTarget(address), grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	if err != nil {
 		return nil, fmt.Errorf("connecting to agent at %s with TLS: %w", address, err)
 	}
 
 	ac := newAgentConnection(conn)
 	ac.Host = hostFromAddress(address)
+	ac.IsMTLS = true
 	return ac, nil
+}
+
+// grpcTarget converts a host:port address into a gRPC target string.
+// IPv6 link-local addresses contain a zone ID with a bare "%" (e.g.
+// [fe80::1%en0]:50051) which grpc.NewClient interprets as an invalid
+// URL percent-encoding. Using the passthrough scheme avoids URI parsing
+// entirely and passes the address straight to the dialer.
+func grpcTarget(address string) string {
+	if strings.Contains(address, "%") {
+		return "passthrough:///" + address
+	}
+	return address
 }
 
 // hostFromAddress extracts the hostname/IP from a host:port address string.

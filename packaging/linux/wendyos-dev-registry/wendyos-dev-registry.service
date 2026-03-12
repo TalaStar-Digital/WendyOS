@@ -10,7 +10,7 @@ Type=oneshot
 RemainAfterExit=yes
 Environment=REGISTRY_NAMESPACE=default
 Environment=REGISTRY_NAME=wendyos-dev-registry
-Environment=REGISTRY_IMAGE=wendyos/containerd-registry:v1.1.0
+Environment=REGISTRY_IMAGE=wendyos/containerd-registry:v1.2.0
 Environment=LISTEN_ADDRESS=0.0.0.0:5000
 
 # Pre-flight checks: Verify image exists, import if missing (self-healing)
@@ -18,7 +18,7 @@ ExecStartPre=/bin/sh -c '\
   if ! /usr/bin/ctr -n ${REGISTRY_NAMESPACE} images ls | /bin/grep -q ${REGISTRY_IMAGE}; then \
     echo "Registry image not found, importing from archive..."; \
     /usr/bin/ctr -n ${REGISTRY_NAMESPACE} images import /usr/share/wendyos/offline-images/containerd-registry.tar; \
-    /usr/bin/ctr -n ${REGISTRY_NAMESPACE} images tag wendyos/containerd-registry:v1.1.0 wendyos/containerd-registry:latest || true; \
+    /usr/bin/ctr -n ${REGISTRY_NAMESPACE} images tag wendyos/containerd-registry:v1.2.0 wendyos/containerd-registry:latest || true; \
     echo "Registry image imported successfully"; \
   fi'
 # Cleanup any existing container

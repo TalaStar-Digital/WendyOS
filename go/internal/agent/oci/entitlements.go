@@ -301,9 +301,22 @@ func applyVideo(spec *Spec) {
 	}
 }
 
-// applyPersist adds a persistent volume bind mount.
+// applyPersist adds a persistent volume bind mount, creating the host
+// directory if it does not already exist. Volumes are shared across all
+// apps by name — two apps that declare the same volume name will see the
+// same host directory.
 func applyPersist(spec *Spec, ent appconfig.Entitlement, appID string) {
-	hostPath := filepath.Join("/var/lib/wendy/volumes", appID, ent.Name)
+	// Sanitize the volume name to prevent path traversal.
+	name := filepath.Base(ent.Name)
+	if name == "." || name == ".." || name == "/" || name == "" {
+		return
+	}
+	hostPath := filepath.Join("/var/lib/wendy/volumes", name)
+	if err := os.MkdirAll(hostPath, 0o755); err != nil {
+		// Best-effort: the container will fail to start with a clear mount error
+		// if the directory truly cannot be created, so we don't abort here.
+		_ = err
+	}
 	spec.Mounts = append(spec.Mounts, Mount{
 		Destination: ent.Path,
 		Source:      hostPath,

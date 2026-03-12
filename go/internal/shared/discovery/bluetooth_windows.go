@@ -17,6 +17,9 @@ const (
 	wendyL2CAPPSM           = 128
 )
 
+// RunBLECheck is a no-op on Windows (no CoreBluetooth entitlement issues).
+func RunBLECheck() int { return 0 }
+
 // discoverBluetooth queries Windows for known Bluetooth devices with "Wendy" in the name.
 // Unlike macOS (CoreBluetooth) and Linux (bluetoothctl), this cannot perform active
 // BLE scanning without WinRT. Only paired or previously cached devices are found.

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -24,6 +25,7 @@ import (
 	"github.com/wendylabsinc/wendy/internal/agent/interceptor"
 	"github.com/wendylabsinc/wendy/internal/agent/mtls"
 	agentnet "github.com/wendylabsinc/wendy/internal/agent/network"
+	"github.com/wendylabsinc/wendy/internal/agent/registry"
 	"github.com/wendylabsinc/wendy/internal/agent/services"
 	"github.com/wendylabsinc/wendy/internal/shared/version"
 	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
@@ -60,6 +62,7 @@ func main() {
 
 	// Clean up old agent binary backups from previous updates.
 	services.CleanupOldBackups(logger)
+
 	networkMgr := agentnet.NewNMCLINetworkManager(logger)
 	hwDiscoverer := hardware.NewSystemHardwareDiscoverer(logger)
 	btManager := bluetooth.NewManager(logger)
@@ -75,6 +78,9 @@ func main() {
 	// Initialize containerd client (best-effort; may fail on non-Linux or without containerd).
 	var containerdClient services.ContainerdClient
 	containerdAddr := os.Getenv("WENDY_CONTAINERD_ADDR")
+	if containerdAddr == "" {
+		containerdAddr = agentcontainerd.DefaultAddress
+	}
 	ctrdClient, ctrdErr := agentcontainerd.NewClient(logger, containerdAddr, proxyMgr)
 	if ctrdErr != nil {
 		logger.Warn("Failed to connect to containerd (container features will be unavailable)", zap.Error(ctrdErr))
@@ -106,6 +112,17 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Start the embedded dev container registry (Linux only, best-effort).
+	if runtime.GOOS == "linux" && ctrdErr == nil {
+		registryAddr := "0.0.0.0:5000"
+		if addr := os.Getenv("WENDY_REGISTRY_ADDR"); addr != "" {
+			registryAddr = addr
+		}
+		if _, err := registry.Start(ctx, containerdAddr, registryAddr, logger); err != nil {
+			logger.Warn("Failed to start embedded dev registry (image push will be unavailable)", zap.Error(err))
+		}
+	}
 
 	var wg sync.WaitGroup
 

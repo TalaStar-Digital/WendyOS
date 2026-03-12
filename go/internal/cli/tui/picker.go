@@ -16,11 +16,16 @@ type PickerItem struct {
 	Type        string // "LAN", "Bluetooth", "External", etc.
 	Address     string
 
+	// DedupKey is used for deduplication. If empty, Name is used.
+	// Items with the same DedupKey (case-insensitive) are merged via MergeItem.
+	DedupKey string
+
 	// Value is the opaque payload returned when this item is selected.
 	Value interface{}
 }
 
-// PickerAddMsg adds new items to the picker. Duplicates are ignored.
+// PickerAddMsg adds new items to the picker. Duplicates (by DedupKey, or Name
+// if DedupKey is empty) are merged via MergeItem or silently dropped.
 type PickerAddMsg struct {
 	Items []PickerItem
 }
@@ -32,9 +37,15 @@ type PickerDoneMsg struct{}
 // PickerModel is a Bubble Tea model that presents a live-updating list of
 // items and lets the user select one with arrow keys + Enter.
 type PickerModel struct {
-	Title    string // header line, e.g. "Select a device"
+	Title string // header line, e.g. "Select a device"
+
+	// MergeItem is called when a new item shares a DedupKey with an existing
+	// item. The caller can update existing in place (type, address, value, ...).
+	// If nil, duplicate items are silently dropped.
+	MergeItem func(existing *PickerItem, incoming PickerItem)
+
 	items    []PickerItem
-	seen     map[string]bool
+	seenIdx  map[string]int // dedup key -> index in items
 	table    bubbleTable.Model
 	selected *PickerItem
 	scanning bool
@@ -46,7 +57,7 @@ type PickerModel struct {
 func NewPicker() PickerModel {
 	m := PickerModel{
 		Title:    "Select a device",
-		seen:     make(map[string]bool),
+		seenIdx:  make(map[string]int),
 		table:    newPickerTable(),
 		scanning: true,
 	}
@@ -58,7 +69,7 @@ func NewPicker() PickerModel {
 func NewPickerWithTitle(title string) PickerModel {
 	m := PickerModel{
 		Title:    title,
-		seen:     make(map[string]bool),
+		seenIdx:  make(map[string]int),
 		table:    newPickerTable(),
 		scanning: true,
 	}
@@ -95,11 +106,18 @@ func (m PickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PickerAddMsg:
 		changed := false
 		for _, item := range msg.Items {
-			key := item.Name + ":" + item.Type + ":" + item.Address
-			if m.seen[key] {
+			key := strings.ToLower(item.DedupKey)
+			if key == "" {
+				key = strings.ToLower(item.Name)
+			}
+			if idx, ok := m.seenIdx[key]; ok {
+				if m.MergeItem != nil {
+					m.MergeItem(&m.items[idx], item)
+					changed = true
+				}
 				continue
 			}
-			m.seen[key] = true
+			m.seenIdx[key] = len(m.items)
 			m.items = append(m.items, item)
 			changed = true
 		}

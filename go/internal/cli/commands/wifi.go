@@ -46,9 +46,9 @@ func newWifiListCmd() *cobra.Command {
 				return wifiListViaBLEAgent(target.Bluetooth)
 			}
 
-			// BLE Wendy Lite — no network scan support
+			// BLE Wendy Lite — scan from the host machine
 			if target.Bluetooth != nil {
-				return fmt.Errorf("Wendy Lite devices do not support listing WiFi networks; use 'wendy wifi connect' with --ssid instead")
+				return wifiListFromHost()
 			}
 
 			// gRPC LAN path
@@ -278,7 +278,14 @@ func pickWifiNetwork(ctx context.Context, target *SelectedDevice) (string, error
 		}
 
 	case target.Bluetooth != nil:
-		return "", fmt.Errorf("Wendy Lite devices do not support listing WiFi networks; use --ssid to specify the network")
+		fmt.Println("Scanning for WiFi networks on this computer...")
+		nets, err := scanLocalWifiNetworks()
+		if err != nil {
+			return "", fmt.Errorf("scanning local WiFi networks: %w", err)
+		}
+		for _, n := range nets {
+			networks = append(networks, wifiEntry{ssid: n.SSID, signalStrength: n.SignalStrength})
+		}
 
 	case target.Agent != nil:
 		fmt.Println("Scanning for WiFi networks...")
@@ -449,6 +456,42 @@ func wifiDisconnectViaBLEAgent(device *models.BluetoothDevice) error {
 	}
 
 	fmt.Println("Disconnected from WiFi.")
+	return nil
+}
+
+// ── Local host WiFi scan (for Wendy Lite) ──────────────────────────
+
+func wifiListFromHost() error {
+	fmt.Println("Scanning for WiFi networks on this computer...")
+	networks, err := scanLocalWifiNetworks()
+	if err != nil {
+		return err
+	}
+
+	if jsonOutput {
+		data, err := json.MarshalIndent(networks, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	if len(networks) == 0 {
+		fmt.Println("No WiFi networks found.")
+		return nil
+	}
+
+	headers := []string{"SSID", "Signal"}
+	var rows [][]string
+	for _, n := range networks {
+		signal := ""
+		if n.SignalStrength > 0 {
+			signal = fmt.Sprintf("%d%%", n.SignalStrength)
+		}
+		rows = append(rows, []string{n.SSID, signal})
+	}
+	fmt.Print(tui.RenderTable(headers, rows))
 	return nil
 }
 

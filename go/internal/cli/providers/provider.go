@@ -20,6 +20,9 @@ type DeviceProvider interface {
 	CheckRequirements(ctx context.Context) error
 	// DiscoverDevices returns the devices currently reachable through this provider.
 	DiscoverDevices(ctx context.Context) ([]models.ExternalDevice, error)
+	// SupportedBuildTypes returns the build type keys (e.g. "docker", "swift")
+	// that this provider can handle. Used to filter the build-type picker.
+	SupportedBuildTypes() []string
 	// CanBuild reports whether this provider can build the project at projectPath.
 	CanBuild(projectPath string) bool
 	// Build compiles the project for the given device and returns a BuiltApp handle.

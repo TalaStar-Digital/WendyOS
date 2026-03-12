@@ -85,6 +85,10 @@ func (p *AndroidProvider) DiscoverDevices(ctx context.Context) ([]models.Externa
 	return devices, nil
 }
 
+func (p *AndroidProvider) SupportedBuildTypes() []string {
+	return []string{"swift"}
+}
+
 func (p *AndroidProvider) CanBuild(projectPath string) bool {
 	_, err := os.Stat(projectPath + "/Package.swift")
 	return err == nil
