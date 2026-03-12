@@ -9,10 +9,12 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
     private let executablePath: String
     private let logger = Logger(label: "sh.wendy.agent.container")
     private var runningProcesses: [String: Foundation.Process] = [:]
+    private let sandboxProfilePath: String?
 
-    init(broadcaster: TelemetryBroadcaster, executablePath: String) {
+    init(broadcaster: TelemetryBroadcaster, executablePath: String, sandboxProfilePath: String? = nil) {
         self.broadcaster = broadcaster
         self.executablePath = executablePath
+        self.sandboxProfilePath = sandboxProfilePath
     }
 
     // MARK: - Implemented
@@ -42,7 +44,12 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         }
 
         let process = Foundation.Process()
-        process.executableURL = URL(fileURLWithPath: executablePath)
+        if let sandboxProfilePath {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+            process.arguments = ["-f", sandboxProfilePath, executablePath]
+        } else {
+            process.executableURL = URL(fileURLWithPath: executablePath)
+        }
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

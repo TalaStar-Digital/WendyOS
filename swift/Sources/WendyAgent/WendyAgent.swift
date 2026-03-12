@@ -27,6 +27,9 @@ struct WendyAgent: AsyncParsableCommand {
     @Option(help: "Path to the app executable to run.")
     var appPath: String = ""
 
+    @Option(help: "Path to a sandbox-exec profile to run the app under.")
+    var sandboxProfile: String = ""
+
     func run() async throws {
         LoggingSystem.bootstrap { label in
             var handler = StreamLogHandler.standardError(label: label)
@@ -41,7 +44,11 @@ struct WendyAgent: AsyncParsableCommand {
 
         let services: [any RegistrableRPCService] = [
             AgentService(),
-            ContainerService(broadcaster: broadcaster, executablePath: appPath),
+            ContainerService(
+                broadcaster: broadcaster,
+                executablePath: appPath,
+                sandboxProfilePath: sandboxProfile.isEmpty ? nil : sandboxProfile
+            ),
             AudioService(),
             ProvisioningService(),
             TelemetryService(broadcaster: broadcaster),
