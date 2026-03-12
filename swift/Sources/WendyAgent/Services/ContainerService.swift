@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import GRPCCore
 import Logging
@@ -5,16 +6,29 @@ import OpenTelemetryGRPC
 import WendyAgentGRPC
 
 actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServiceProtocol {
+    private let appsDir: String
     private let broadcaster: TelemetryBroadcaster
     private let executablePath: String
     private let logger = Logger(label: "sh.wendy.agent.container")
     private var runningProcesses: [String: Foundation.Process] = [:]
     private let sandboxProfilePath: String?
 
-    init(broadcaster: TelemetryBroadcaster, executablePath: String, sandboxProfilePath: String? = nil) {
+    /// Maps app name → (appDir, binaryName) for apps uploaded via WriteLayer.
+    private var appDirs: [String: (dir: String, binaryName: String)] = [:]
+
+    init(broadcaster: TelemetryBroadcaster, executablePath: String, sandboxProfilePath: String? = nil, appsDir: String? = nil) {
         self.broadcaster = broadcaster
         self.executablePath = executablePath
         self.sandboxProfilePath = sandboxProfilePath
+
+        let dir = appsDir ?? {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            return "\(home)/Library/Application Support/wendy-agent/apps"
+        }()
+        self.appsDir = dir
+
+        // Ensure the apps directory exists.
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     }
 
     // MARK: - Implemented
@@ -23,7 +37,21 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         request: ServerRequest<Wendy_Agent_Services_V1_CreateContainerRequest>,
         context: ServerContext
     ) async throws -> ServerResponse<Wendy_Agent_Services_V1_CreateContainerResponse> {
-        logger.info("CreateContainer called", metadata: ["app_name": "\(request.message.appName)"])
+        let appName = request.message.appName
+        let binaryName = request.message.imageName
+        logger.info("CreateContainer called", metadata: ["app_name": "\(appName)", "image_name": "\(binaryName)"])
+
+        // If imageName is set and a matching binary was uploaded, register the app directory.
+        if !binaryName.isEmpty {
+            let appDir = "\(appsDir)/\(appName)"
+            let binaryPath = "\(appDir)/\(binaryName)"
+            guard FileManager.default.fileExists(atPath: binaryPath) else {
+                throw RPCError(code: .notFound, message: "Binary not found at \(binaryPath)")
+            }
+            appDirs[appName] = (dir: appDir, binaryName: binaryName)
+            logger.info("Registered app directory", metadata: ["app_name": "\(appName)", "binary": "\(binaryPath)"])
+        }
+
         return ServerResponse(message: Wendy_Agent_Services_V1_CreateContainerResponse())
     }
 
@@ -43,14 +71,26 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             runningProcesses.removeValue(forKey: appName)
         }
 
-        let process = Foundation.Process()
-        if let sandboxProfilePath {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-            process.arguments = ["-f", sandboxProfilePath, executablePath]
-            logger.info("Launching \(executablePath) sandboxed with profile \(sandboxProfilePath)")
+        // Resolve binary path: prefer uploaded app, fall back to --appPath.
+        let binaryPath: String
+        let profilePath: String?
+        if let entry = appDirs[appName] {
+            binaryPath = "\(entry.dir)/\(entry.binaryName)"
+            let candidateProfile = "\(entry.dir)/sandbox.sb"
+            profilePath = FileManager.default.fileExists(atPath: candidateProfile) ? candidateProfile : nil
         } else {
-            process.executableURL = URL(fileURLWithPath: executablePath)
-            logger.info("Launching \(executablePath) (not sandboxed)")
+            binaryPath = executablePath
+            profilePath = sandboxProfilePath
+        }
+
+        let process = Foundation.Process()
+        if let profilePath {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+            process.arguments = ["-f", profilePath, binaryPath]
+            logger.info("Launching \(binaryPath) sandboxed with profile \(profilePath)")
+        } else {
+            process.executableURL = URL(fileURLWithPath: binaryPath)
+            logger.info("Launching \(binaryPath) (not sandboxed)")
         }
 
         let stdoutPipe = Pipe()
@@ -191,7 +231,64 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         request: StreamingServerRequest<Wendy_Agent_Services_V1_WriteLayerRequest>,
         context: ServerContext
     ) async throws -> StreamingServerResponse<Wendy_Agent_Services_V1_WriteLayerResponse> {
-        throw RPCError(code: .unimplemented, message: "WriteLayer is not implemented")
+        // Digest format: "<appName>:<filename>:sha256:<hash>"
+        var appName = ""
+        var filename = ""
+        var expectedHash = ""
+        var accumulated = Data()
+
+        for try await message in request.messages {
+            // Parse digest from the first message that carries it.
+            if !message.digest.isEmpty && appName.isEmpty {
+                let parts = message.digest.split(separator: ":", maxSplits: 3).map(String.init)
+                guard parts.count == 4, parts[2] == "sha256" else {
+                    throw RPCError(code: .invalidArgument, message: "Invalid digest format: expected <appName>:<filename>:sha256:<hash>")
+                }
+                appName = parts[0]
+                filename = parts[1]
+                expectedHash = parts[3]
+                logger.info("WriteLayer started", metadata: ["app_name": "\(appName)", "filename": "\(filename)"])
+            }
+            if !message.data.isEmpty {
+                accumulated.append(message.data)
+            }
+        }
+
+        guard !appName.isEmpty else {
+            throw RPCError(code: .invalidArgument, message: "No digest received in WriteLayer stream")
+        }
+
+        // Verify SHA256.
+        let computedHash = SHA256.hash(data: accumulated)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        guard computedHash == expectedHash else {
+            throw RPCError(
+                code: .dataLoss,
+                message: "SHA256 mismatch: expected \(expectedHash), got \(computedHash)"
+            )
+        }
+
+        // Write to disk.
+        let appDir = "\(appsDir)/\(appName)"
+        try FileManager.default.createDirectory(atPath: appDir, withIntermediateDirectories: true)
+        let filePath = "\(appDir)/\(filename)"
+        try accumulated.write(to: URL(fileURLWithPath: filePath))
+
+        // Set executable permission if this is not the sandbox profile.
+        if filename != "sandbox.sb" {
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: filePath)
+        }
+
+        logger.info("WriteLayer completed", metadata: [
+            "app_name": "\(appName)",
+            "filename": "\(filename)",
+            "size": "\(accumulated.count)",
+        ])
+
+        return StreamingServerResponse { _ in
+            return Metadata()
+        }
     }
 
     func createContainerWithProgress(

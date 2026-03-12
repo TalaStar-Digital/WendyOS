@@ -2,12 +2,16 @@ package commands
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -272,6 +276,192 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 	return nil
 }
 
+// runMacOSWithAgent builds a Swift project locally and uploads the binary
+// to a macOS device running the Swift wendy-agent via WriteLayer.
+func runMacOSWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd string, appCfg *appconfig.AppConfig, opts runOptions) error {
+	// Verify CPU architecture matches.
+	versionResp, err := conn.AgentService.GetAgentVersion(ctx, &agentpb.GetAgentVersionRequest{})
+	if err != nil {
+		return fmt.Errorf("querying device version: %w", err)
+	}
+	deviceArch := versionResp.GetCpuArchitecture()
+	if deviceArch == "" {
+		deviceArch = "arm64"
+	}
+	if deviceArch != runtime.GOARCH {
+		return fmt.Errorf("architecture mismatch: device is %s but host is %s", deviceArch, runtime.GOARCH)
+	}
+
+	product := findSwiftProduct(cwd)
+
+	// Build locally.
+	cliLogln("Building Swift project locally...")
+	cmd := exec.CommandContext(ctx, "swift", "build")
+	cmd.Dir = cwd
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("swift build failed: %w", err)
+	}
+	cliLogln("Build completed.")
+
+	// Locate the binary.
+	binaryPath := filepath.Join(cwd, ".build", "debug", product)
+	if _, err := os.Stat(binaryPath); err != nil {
+		return fmt.Errorf("binary not found at %s: %w", binaryPath, err)
+	}
+
+	// Upload binary via WriteLayer.
+	cliLogln("Uploading %s to device...", product)
+	if err := uploadFileViaWriteLayer(ctx, conn, appCfg.AppID, product, binaryPath); err != nil {
+		return fmt.Errorf("uploading binary: %w", err)
+	}
+
+	// Upload sandbox profile if present.
+	sandboxPath := filepath.Join(cwd, "sandbox.sb")
+	if _, err := os.Stat(sandboxPath); err == nil {
+		cliLogln("Uploading sandbox profile...")
+		if err := uploadFileViaWriteLayer(ctx, conn, appCfg.AppID, "sandbox.sb", sandboxPath); err != nil {
+			return fmt.Errorf("uploading sandbox profile: %w", err)
+		}
+	}
+
+	cliLogln("Upload completed.")
+
+	// Create container.
+	createReq := &agentpb.CreateContainerRequest{
+		ImageName: product,
+		AppName:   appCfg.AppID,
+	}
+
+	if opts.deploy {
+		if _, err := conn.ContainerService.CreateContainer(ctx, createReq); err != nil {
+			return fmt.Errorf("creating container: %w", err)
+		}
+		cliLogln("Container %s created (not started).", appCfg.AppID)
+		return nil
+	}
+
+	if _, err := conn.ContainerService.CreateContainer(ctx, createReq); err != nil {
+		return fmt.Errorf("creating container: %w", err)
+	}
+	cliLogln("Container %s created.", appCfg.AppID)
+
+	if opts.detach {
+		stream, err := conn.ContainerService.StartContainer(ctx, &agentpb.StartContainerRequest{
+			AppName: appCfg.AppID,
+		})
+		if err != nil {
+			return fmt.Errorf("starting container: %w", err)
+		}
+		if _, err := stream.Recv(); err != nil && err != io.EOF {
+			return fmt.Errorf("waiting for container start: %w", err)
+		}
+		cliLogln("Application %s running in detached mode.", appCfg.AppID)
+		return nil
+	}
+
+	// Start and stream output.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+
+	stream, err := conn.ContainerService.StartContainer(runCtx, &agentpb.StartContainerRequest{
+		AppName: appCfg.AppID,
+	})
+	if err != nil {
+		return fmt.Errorf("starting container: %w", err)
+	}
+
+	cliLogln("Application %s started.", appCfg.AppID)
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	go func() {
+		<-sigCh
+		cliLogln("\nStopping container...")
+		_, _ = conn.ContainerService.StopContainer(context.Background(), &agentpb.StopContainerRequest{
+			AppName: appCfg.AppID,
+		})
+		runCancel()
+	}()
+
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			if runCtx.Err() != nil {
+				break
+			}
+			return fmt.Errorf("receiving container output: %w", recvErr)
+		}
+		if out := resp.GetStdoutOutput(); out != nil {
+			_, _ = os.Stdout.Write(out.GetData())
+		}
+		if out := resp.GetStderrOutput(); out != nil {
+			_, _ = os.Stderr.Write(out.GetData())
+		}
+	}
+
+	cliLogln("\nApplication %s stopped.", appCfg.AppID)
+	return nil
+}
+
+// uploadFileViaWriteLayer uploads a file to the device agent using the
+// WriteLayer streaming RPC. The digest encodes the app name, filename, and
+// SHA256 hash: "<appName>:<filename>:sha256:<hash>".
+func uploadFileViaWriteLayer(ctx context.Context, conn *grpcclient.AgentConnection, appName, filename, filePath string) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("reading file: %w", err)
+	}
+
+	hash := sha256.Sum256(data)
+	digest := fmt.Sprintf("%s:%s:sha256:%s", appName, filename, hex.EncodeToString(hash[:]))
+
+	stream, err := conn.ContainerService.WriteLayer(ctx)
+	if err != nil {
+		return fmt.Errorf("opening WriteLayer stream: %w", err)
+	}
+
+	const chunkSize = 64 * 1024
+	for offset := 0; offset < len(data); offset += chunkSize {
+		end := offset + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+
+		req := &agentpb.WriteLayerRequest{
+			Data: data[offset:end],
+		}
+		// Send digest only on the first chunk.
+		if offset == 0 {
+			req.Digest = digest
+		}
+
+		if err := stream.Send(req); err != nil {
+			return fmt.Errorf("sending chunk: %w", err)
+		}
+	}
+
+	if err := stream.CloseSend(); err != nil {
+		return fmt.Errorf("closing send: %w", err)
+	}
+
+	// Drain responses (the server sends none but we need to wait for completion).
+	for {
+		if _, err := stream.Recv(); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("receiving response: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // runWithProvider builds and runs via an external device provider.
 func runWithProvider(ctx context.Context, p providers.DeviceProvider, device models.ExternalDevice, projectPath, product string, opts runOptions) error {
 	// For Swift projects, resolve the actual executable product name from
@@ -344,10 +534,17 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	// Detect project type and ensure a Dockerfile exists.
 	projectType := detectProjectType(cwd)
 
-	// Swift projects without a Dockerfile use swift-container-plugin to push
-	// directly to the device's registry, bypassing the Docker build pipeline.
+	// Swift projects without a Dockerfile: check if the device is macOS
+	// (binary upload) or Linux (swift-container-plugin).
 	if projectType == "swift" {
 		if _, err := os.Stat(filepath.Join(cwd, "Dockerfile")); os.IsNotExist(err) {
+			versionResp, err := conn.AgentService.GetAgentVersion(ctx, &agentpb.GetAgentVersionRequest{})
+			if err != nil {
+				return fmt.Errorf("querying device version: %w", err)
+			}
+			if versionResp.GetOs() == "darwin" {
+				return runMacOSWithAgent(ctx, conn, cwd, appCfg, opts)
+			}
 			return runSwiftWithAgent(ctx, conn, cwd, appCfg, opts)
 		}
 	}
