@@ -47,8 +47,10 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         if let sandboxProfilePath {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
             process.arguments = ["-f", sandboxProfilePath, executablePath]
+            logger.info("Launching \(executablePath) sandboxed with profile \(sandboxProfilePath)")
         } else {
             process.executableURL = URL(fileURLWithPath: executablePath)
+            logger.info("Launching \(executablePath) (not sandboxed)")
         }
 
         let stdoutPipe = Pipe()
