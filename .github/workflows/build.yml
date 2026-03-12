@@ -293,10 +293,12 @@ jobs:
             --vendor "Wendy Labs Inc." \
             --category "devel" \
             --depends "containerd" \
+            --depends "xdg-dbus-proxy" \
             --depends "dbus" \
             --depends "systemd" \
             --depends "ca-certificates" \
             --depends "avahi-daemon" \
+            --deb-recommends "nerdctl" \
             --deb-recommends "network-manager | connman" \
             --deb-recommends "bluez" \
             --config-files /etc/default/wendy-agent \
@@ -344,6 +346,7 @@ jobs:
             --vendor "Wendy Labs Inc." \
             --category "Development/Tools" \
             --depends "containerd" \
+            --depends "xdg-dbus-proxy" \
             --depends "dbus" \
             --depends "systemd" \
             --depends "ca-certificates" \

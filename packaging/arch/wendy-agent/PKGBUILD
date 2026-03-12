@@ -10,8 +10,9 @@ url="https://wendy.sh"
 license=('custom:proprietary')
 provides=('wendy-agent')
 conflicts=('wendy-agent-git')
-depends=('containerd' 'dbus' 'systemd' 'ca-certificates')
+depends=('containerd' 'xdg-dbus-proxy' 'dbus' 'systemd' 'ca-certificates')
 optdepends=(
+    'nerdctl: CLI for managing containerd containers'
     'networkmanager: Wi-Fi support via NetworkManager'
     'connman: Wi-Fi support via ConnMan'
     'bluez: Bluetooth support'
