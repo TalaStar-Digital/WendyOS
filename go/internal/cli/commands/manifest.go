@@ -26,8 +26,8 @@ type manifestDevice struct {
 
 // deviceManifest contains version info for a specific device.
 type deviceManifest struct {
-	DeviceID string                    `json:"device_id"`
-	Versions map[string]deviceVersion  `json:"versions"`
+	DeviceID string                   `json:"device_id"`
+	Versions map[string]deviceVersion `json:"versions"`
 }
 
 // deviceVersion describes one OS image version.

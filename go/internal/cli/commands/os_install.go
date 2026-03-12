@@ -39,9 +39,9 @@ func newOSInstallCmd() *cobra.Command {
 // pickerDevice is a unified entry for the device selection picker.
 type pickerDevice struct {
 	Name       string
-	Version    string          // display version (e.g. "0.10.5 (nightly)")
-	RawVersion string          // exact version key for manifest lookup
-	Category   string          // e.g. "Linux" or "Wendy Lite"
+	Version    string // display version (e.g. "0.10.5 (nightly)")
+	RawVersion string // exact version key for manifest lookup
+	Category   string // e.g. "Linux" or "Wendy Lite"
 	IsESP32    bool
 	ESP32Chip  string          // e.g. "esp32c6", "esp32c5"
 	Manifest   *deviceManifest // cached manifest for Linux devices
