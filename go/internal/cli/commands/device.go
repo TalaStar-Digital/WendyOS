@@ -246,21 +246,25 @@ func newDeviceSetupCmd() *cobra.Command {
 					}
 				} else {
 					fmt.Print("Password (leave empty for open networks): ")
-					passwordBytes, _ := term.ReadPassword(int(os.Stdin.Fd()))
+					passwordBytes, readErr := term.ReadPassword(int(os.Stdin.Fd()))
 					fmt.Println()
-					password := strings.TrimSpace(string(passwordBytes))
-
-					fmt.Printf("Connecting to %s...\n", ssid)
-					wifiConnResp, connectErr := conn.AgentService.ConnectToWiFi(ctx, &agentpb.ConnectToWiFiRequest{
-						Ssid:     ssid,
-						Password: password,
-					})
-					if connectErr != nil {
-						fmt.Printf("Failed to connect to WiFi: %v\n", connectErr)
-					} else if !wifiConnResp.GetSuccess() {
-						fmt.Printf("Failed to connect: %s\n", wifiConnResp.GetErrorMessage())
+					if readErr != nil {
+						fmt.Printf("Failed to read password: %v\n", readErr)
 					} else {
-						fmt.Printf("Connected to %s\n", ssid)
+						password := strings.TrimSpace(string(passwordBytes))
+
+						fmt.Printf("Connecting to %s...\n", ssid)
+						wifiConnResp, connectErr := conn.AgentService.ConnectToWiFi(ctx, &agentpb.ConnectToWiFiRequest{
+							Ssid:     ssid,
+							Password: password,
+						})
+						if connectErr != nil {
+							fmt.Printf("Failed to connect to WiFi: %v\n", connectErr)
+						} else if !wifiConnResp.GetSuccess() {
+							fmt.Printf("Failed to connect: %s\n", wifiConnResp.GetErrorMessage())
+						} else {
+							fmt.Printf("Connected to %s\n", ssid)
+						}
 					}
 				}
 			}

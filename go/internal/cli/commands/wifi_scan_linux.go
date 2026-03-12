@@ -51,5 +51,9 @@ func scanLocalWifiNetworks() ([]localWifiNetwork, error) {
 		networks = append(networks, localWifiNetwork{SSID: ssid, SignalStrength: signal})
 	}
 
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("parsing WiFi scan output: %w", err)
+	}
+
 	return networks, nil
 }

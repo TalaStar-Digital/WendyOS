@@ -38,20 +38,6 @@ func newBuildCmd() *cobra.Command {
 
 			target, _ := resolveTarget(cmd.Context())
 
-			// Detect all build options and filter by target capabilities.
-			options := detectBuildOptions(cwd)
-			if target != nil && target.Provider != nil {
-				options = filterBuildOptions(options, target.Provider)
-			}
-			if len(options) == 0 {
-				return fmt.Errorf("no supported build type found for this target; check that the project contains the right files")
-			}
-
-			selected, err := pickBuildOption(options)
-			if err != nil {
-				return err
-			}
-
 			// If the target is an external provider device, use the provider build path.
 			if target != nil && target.External != nil && target.Provider != nil {
 				product := filepath.Base(cwd)
@@ -71,6 +57,20 @@ func newBuildCmd() *cobra.Command {
 			// Close the agent connection if one was opened during target resolution.
 			if target != nil && target.Agent != nil {
 				defer target.Agent.Close()
+			}
+
+			// Detect all build options and filter by target capabilities.
+			options := detectBuildOptions(cwd)
+			if target != nil && target.Provider != nil {
+				options = filterBuildOptions(options, target.Provider)
+			}
+			if len(options) == 0 {
+				return fmt.Errorf("no supported build type found for this target; check that the project contains the right files")
+			}
+
+			selected, err := pickBuildOption(options)
+			if err != nil {
+				return err
 			}
 
 			// Query the device architecture when an agent connection is available.
@@ -108,7 +108,7 @@ func pickBuildOption(options []BuildOption) (*BuildOption, error) {
 		for _, o := range options {
 			names = append(names, o.Label)
 		}
-		return nil, fmt.Errorf("multiple build types detected (%s); specify which to use or run interactively", strings.Join(names, ", "))
+		return nil, fmt.Errorf("multiple build types detected (%s); run in an interactive terminal or remove extra build markers so that only one remains", strings.Join(names, ", "))
 	}
 
 	picker := tui.NewPickerWithTitle("Select a build type")

@@ -199,6 +199,7 @@ func (r containerdRegistry) Repositories(ctx context.Context, startAfter string)
 		return ociregistry.ErrorSeq[string](err)
 	}
 
+	seen := make(map[string]bool)
 	var names []string
 	for _, img := range imgs {
 		ref, err := reference.Parse(img.Name)
@@ -210,9 +211,10 @@ func (r containerdRegistry) Repositories(ctx context.Context, startAfter string)
 			continue
 		}
 		repo := named.Name()
-		if len(names) > 0 && names[len(names)-1] == repo {
+		if seen[repo] {
 			continue
 		}
+		seen[repo] = true
 		names = append(names, repo)
 	}
 
@@ -538,6 +540,7 @@ func (r containerdRegistry) PushBlob(ctx context.Context, repo string, desc ocir
 	if err != nil {
 		return ociregistry.Descriptor{}, err
 	}
+	defer func() { _ = deleteLease(ctx) }()
 
 	reader = io.LimitReader(reader, desc.Size+1)
 	ingestRef := string(desc.Digest)
@@ -548,7 +551,6 @@ func (r containerdRegistry) PushBlob(ctx context.Context, repo string, desc ocir
 
 	if err := content.WriteBlob(ctx, cs, ingestRef, reader, desc); err != nil {
 		_ = cs.Abort(ctx, ingestRef)
-		_ = deleteLease(ctx)
 		return ociregistry.Descriptor{}, err
 	}
 
@@ -556,10 +558,11 @@ func (r containerdRegistry) PushBlob(ctx context.Context, repo string, desc ocir
 }
 
 type containerdBlobWriter struct {
-	ctx       context.Context
-	cs        content.Store
-	id        string
-	chunkSize int
+	ctx         context.Context
+	cs          content.Store
+	id          string
+	chunkSize   int
+	deleteLease func(context.Context) error
 	content.Writer
 
 	closedStatus *content.Status
@@ -574,7 +577,12 @@ func (bw *containerdBlobWriter) cacheStatus() error {
 }
 
 func (bw *containerdBlobWriter) Close() error {
-	return errors.Join(bw.cacheStatus(), bw.Writer.Close())
+	err := errors.Join(bw.cacheStatus(), bw.Writer.Close())
+	if bw.deleteLease != nil {
+		err = errors.Join(err, bw.deleteLease(bw.ctx))
+		bw.deleteLease = nil
+	}
+	return err
 }
 
 func (bw *containerdBlobWriter) Size() int64 {
@@ -639,13 +647,14 @@ func (r containerdRegistry) PushBlobChunkedResume(ctx context.Context, repo, id 
 		id = u.String()
 	}
 
-	ctx, _, err := r.client.WithLease(ctx, leases.WithExpiration(r.blobLeaseExpiration))
+	ctx, deleteLease, err := r.client.WithLease(ctx, leases.WithExpiration(r.blobLeaseExpiration))
 	if err != nil {
 		return nil, err
 	}
 
 	writer, err := content.OpenWriter(ctx, cs, content.WithRef(id))
 	if err != nil {
+		_ = deleteLease(ctx)
 		return nil, err
 	}
 
@@ -661,11 +670,12 @@ func (r containerdRegistry) PushBlobChunkedResume(ctx context.Context, repo, id 
 	}
 
 	return &containerdBlobWriter{
-		ctx:       ctx,
-		cs:        cs,
-		id:        id,
-		chunkSize: chunkSize,
-		Writer:    writer,
+		ctx:         ctx,
+		cs:          cs,
+		id:          id,
+		chunkSize:   chunkSize,
+		deleteLease: deleteLease,
+		Writer:      writer,
 	}, nil
 }
 
@@ -721,6 +731,8 @@ func (r containerdRegistry) PushManifest(ctx context.Context, repo string, tag s
 	if err != nil {
 		return ociregistry.Descriptor{}, err
 	}
+	defer func() { _ = deleteLease(ctx) }()
+
 	cs := r.client.ContentStore()
 	ingestRef := string(desc.Digest)
 	if err := cs.Abort(ctx, ingestRef); err != nil && !errdefs.IsNotFound(err) {
@@ -745,9 +757,6 @@ func (r containerdRegistry) PushManifest(ctx context.Context, repo string, tag s
 			if err != nil {
 				return desc, err
 			}
-		}
-		if err := deleteLease(ctx); err != nil {
-			return desc, err
 		}
 	}
 

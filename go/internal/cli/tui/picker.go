@@ -24,7 +24,8 @@ type PickerItem struct {
 	Value interface{}
 }
 
-// PickerAddMsg adds new items to the picker. Duplicates (by Address) are ignored.
+// PickerAddMsg adds new items to the picker. Duplicates (by DedupKey, or Name
+// if DedupKey is empty) are merged via MergeItem or silently dropped.
 type PickerAddMsg struct {
 	Items []PickerItem
 }
