@@ -111,7 +111,10 @@ func (p *DockerProvider) Run(ctx context.Context, app *BuiltApp, detach bool, ou
 		return fmt.Errorf("docker provider: invalid build context")
 	}
 
-	args := []string{"run", "--rm", "--name", bc.ContainerName}
+	// Remove any existing container with the same name to avoid conflicts.
+	exec.CommandContext(ctx, "docker", "rm", "-f", bc.ContainerName).Run()
+
+	args := []string{"run", "--name", bc.ContainerName, "--label", "wendy.managed=true"}
 	if detach {
 		args = append(args, "-d")
 	}
@@ -175,4 +178,58 @@ func (p *DockerProvider) Stop(ctx context.Context, app *BuiltApp) error {
 	}
 	cmd := exec.CommandContext(ctx, "docker", "stop", bc.ContainerName)
 	return cmd.Run()
+}
+
+// ContainerManager implementation for Docker Desktop.
+
+func (p *DockerProvider) ListContainers(ctx context.Context) ([]ContainerInfo, error) {
+	cmd := exec.CommandContext(ctx, "docker", "ps", "-a",
+		"--filter", "label=wendy.managed=true",
+		"--format", "{{.Names}}\t{{.Image}}\t{{.State}}\t{{.Status}}")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker ps: %w", err)
+	}
+
+	var containers []ContainerInfo
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 4)
+		if len(parts) < 4 {
+			continue
+		}
+		containers = append(containers, ContainerInfo{
+			Name:   parts[0],
+			Image:  parts[1],
+			State:  parts[2],
+			Status: parts[3],
+		})
+	}
+	return containers, nil
+}
+
+func (p *DockerProvider) StartContainer(ctx context.Context, name string) error {
+	cmd := exec.CommandContext(ctx, "docker", "start", name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("docker start: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func (p *DockerProvider) StopContainer(ctx context.Context, name string) error {
+	cmd := exec.CommandContext(ctx, "docker", "stop", name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("docker stop: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func (p *DockerProvider) RemoveContainer(ctx context.Context, name string) error {
+	cmd := exec.CommandContext(ctx, "docker", "rm", "-f", name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("docker rm: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
 }

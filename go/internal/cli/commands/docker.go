@@ -409,7 +409,7 @@ func findSwiftProduct(dir string) (string, error) {
 		return "", fmt.Errorf("Package.swift declares multiple products (%s); wendy run requires a single executable product", strings.Join(productNames, ", "))
 	}
 
-	// No products — look for a single executable target and suggest adding a product.
+	// No products — look for executable targets.
 	var execTargets []string
 	for _, t := range manifest.Targets {
 		if t.Type == "executable" {
@@ -417,7 +417,7 @@ func findSwiftProduct(dir string) (string, error) {
 		}
 	}
 	if len(execTargets) == 1 {
-		return "", fmt.Errorf("Package.swift has no executable product. Add one to Package.swift:\n\n  products: [\n      .executable(name: %q, targets: [%q]),\n  ]", execTargets[0], execTargets[0])
+		return execTargets[0], nil
 	}
 	if len(execTargets) > 1 {
 		return "", fmt.Errorf("Package.swift has multiple executable targets but no products; add an executable product for the target you want to run")
