@@ -37,11 +37,18 @@ func newOSListDrivesCmd() *cobra.Command {
 
 				out := make([]jsonDrive, len(drives))
 				for i, d := range drives {
+					isExternal := d.IsRemovable
+					// When not listing all drives, the lister has already filtered for "external"
+					// devices, which may include non-removable ones (e.g., some USB/hotplug drives).
+					// In that mode, everything returned should be considered external.
+					if !all {
+						isExternal = true
+					}
 					out[i] = jsonDrive{
 						ID:         d.DevicePath,
 						Name:       d.Name,
 						Capacity:   d.SizeBytes,
-						IsExternal: d.IsRemovable,
+						IsExternal: isExternal,
 					}
 				}
 
