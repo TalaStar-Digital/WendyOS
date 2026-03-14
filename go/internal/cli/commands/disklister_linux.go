@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+
+	"github.com/dustin/go-humanize"
 )
 
 // drive represents an external disk suitable for image writing.
@@ -79,7 +81,7 @@ func listDrivesLinux(removableOnly bool) ([]drive, error) {
 			DevicePath:  devPath,
 			RawPath:     devPath,
 			Name:        dev.Name,
-			Size:        dev.Size.String(),
+			Size:        humanize.Bytes(uint64(sizeBytes)),
 			SizeBytes:   sizeBytes,
 			IsRemovable: dev.Removable == "1",
 		})
