@@ -29,12 +29,7 @@ type ProgressModel struct {
 
 // NewProgress creates a new ProgressModel with the given title.
 func NewProgress(title string) ProgressModel {
-	p := progress.New(progress.WithGradient(string(Emerald400), string(Emerald700)),
-		progress.WithFillCharacters('█', '░'),
-		progress.WithWidth(40),
-	)
-	p.FullColor = string(Emerald400)
-	p.EmptyColor = string(Emerald950)
+	p := progress.New(progress.WithGradient(string(Emerald400), string(Emerald700)))
 	return ProgressModel{
 		progress: p,
 		title:    title,
