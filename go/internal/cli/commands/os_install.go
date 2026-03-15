@@ -19,6 +19,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/internal/shared/config"
 	"github.com/wendylabsinc/wendy/internal/shared/discovery"
 )
 
@@ -127,11 +128,11 @@ func runOSInstall(ctx context.Context, nightly bool) error {
 	if device.IsESP32 {
 		return installESP32Firmware(ctx, nightly, device.ESP32Chip)
 	}
-	return installLinuxImage(ctx, device)
+	return installLinuxImage(ctx, selected, device)
 }
 
 // installLinuxImage handles the Linux device path: pick drive → download → write.
-func installLinuxImage(ctx context.Context, device pickerDevice) error {
+func installLinuxImage(ctx context.Context, deviceKey string, device pickerDevice) error {
 	// List external drives.
 	drives, err := listExternalDrives()
 	if err != nil {
@@ -176,29 +177,16 @@ func installLinuxImage(ctx context.Context, device pickerDevice) error {
 		return nil
 	}
 
-	// Download image.
+	// Download image (or use cached copy).
 	fmt.Printf("\nDownloading %s image...\n", device.Name)
 	imgInfo, err := getImageInfo(device.Manifest, device.RawVersion)
 	if err != nil {
 		return fmt.Errorf("getting image info: %w", err)
 	}
 
-	downloadPath, err := downloadImage(imgInfo)
+	imagePath, err := resolveOSImage(deviceKey, imgInfo)
 	if err != nil {
-		return fmt.Errorf("downloading image: %w", err)
-	}
-	defer os.Remove(downloadPath)
-
-	// Extract .img from .zip if needed.
-	imagePath := downloadPath
-	if strings.HasSuffix(strings.ToLower(imgInfo.DownloadURL), ".zip") {
-		fmt.Println("Extracting image...")
-		extracted, err := extractImageFromZip(downloadPath)
-		if err != nil {
-			return fmt.Errorf("extracting image: %w", err)
-		}
-		defer os.Remove(extracted)
-		imagePath = extracted
+		return fmt.Errorf("resolving OS image: %w", err)
 	}
 
 	// Get image size for progress tracking.
@@ -315,8 +303,9 @@ func downloadImage(img *imageInfo) (string, error) {
 	return tmpFile.Name(), nil
 }
 
-// extractImageFromZip opens a zip archive and extracts the first .img file to a temp file.
-func extractImageFromZip(zipPath string) (string, error) {
+// extractImageFromZipWithProgress opens a zip archive, extracts the first .img
+// file to a temp file, and displays a progress bar.
+func extractImageFromZipWithProgress(zipPath string) (string, error) {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return "", fmt.Errorf("opening zip: %w", err)
@@ -343,10 +332,49 @@ func extractImageFromZip(zipPath string) (string, error) {
 			return "", fmt.Errorf("creating temp file: %w", err)
 		}
 
-		if _, err := io.Copy(tmpFile, rc); err != nil {
+		totalSize := int64(f.UncompressedSize64)
+
+		prog := tui.NewProgress("Extracting image...")
+		p := tea.NewProgram(prog)
+
+		go func() {
+			buf := make([]byte, 64*1024)
+			var extracted int64
+			for {
+				n, readErr := rc.Read(buf)
+				if n > 0 {
+					if _, writeErr := tmpFile.Write(buf[:n]); writeErr != nil {
+						p.Send(tui.ProgressDoneMsg{Err: writeErr})
+						return
+					}
+					extracted += int64(n)
+					if totalSize > 0 {
+						p.Send(tui.ProgressUpdateMsg{Percent: float64(extracted) / float64(totalSize)})
+					}
+				}
+				if readErr == io.EOF {
+					p.Send(tui.ProgressDoneMsg{})
+					return
+				}
+				if readErr != nil {
+					p.Send(tui.ProgressDoneMsg{Err: readErr})
+					return
+				}
+			}
+		}()
+
+		finalModel, err := p.Run()
+		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpFile.Name())
-			return "", fmt.Errorf("extracting %s: %w", f.Name, err)
+			return "", fmt.Errorf("progress TUI: %w", err)
+		}
+
+		model := finalModel.(tui.ProgressModel)
+		if model.Err() != nil {
+			tmpFile.Close()
+			os.Remove(tmpFile.Name())
+			return "", model.Err()
 		}
 
 		tmpFile.Close()
@@ -354,6 +382,95 @@ func extractImageFromZip(zipPath string) (string, error) {
 	}
 
 	return "", fmt.Errorf("no .img file found in zip archive")
+}
+
+// osCacheDir returns the OS image cache directory, e.g.
+// ~/Library/Caches/wendy/os-images (macOS) or ~/.cache/wendy/os-images (Linux).
+func osCacheDir() (string, error) {
+	base, err := config.CacheDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(base, "os-images")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("creating OS cache directory: %w", err)
+	}
+	return dir, nil
+}
+
+// osCachedImagePath returns the expected cache path for a device+version image.
+// Format: <cache>/os-images/<device>-<version>.img
+func osCachedImagePath(deviceKey, version string) (string, error) {
+	dir, err := osCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, fmt.Sprintf("%s-%s.img", deviceKey, version)), nil
+}
+
+// resolveOSImage returns the path to a ready-to-write .img file.
+// It checks the local cache first; on a miss it downloads (and extracts if
+// zipped), then stores the result in the cache.
+func resolveOSImage(deviceKey string, img *imageInfo) (string, error) {
+	cached, err := osCachedImagePath(deviceKey, img.Version)
+	if err != nil {
+		return "", err
+	}
+
+	// Cache hit.
+	if info, statErr := os.Stat(cached); statErr == nil && info.Size() > 0 {
+		fmt.Printf("Using cached image (%s)\n", cached)
+		return cached, nil
+	}
+
+	// Download.
+	downloadPath, err := downloadImage(img)
+	if err != nil {
+		return "", fmt.Errorf("downloading image: %w", err)
+	}
+
+	// Extract from zip if needed, otherwise the download is the image.
+	imagePath := downloadPath
+	if strings.HasSuffix(strings.ToLower(img.DownloadURL), ".zip") {
+		extracted, err := extractImageFromZipWithProgress(downloadPath)
+		os.Remove(downloadPath) // zip no longer needed
+		if err != nil {
+			return "", fmt.Errorf("extracting image: %w", err)
+		}
+		imagePath = extracted
+	}
+
+	// Move into cache.
+	if err := os.Rename(imagePath, cached); err != nil {
+		// Rename fails across filesystems; fall back to copy.
+		if cpErr := copyFile(imagePath, cached); cpErr != nil {
+			// Cache write failed — use the temp file directly.
+			return imagePath, nil
+		}
+		os.Remove(imagePath)
+	}
+
+	return cached, nil
+}
+
+// copyFile copies src to dst.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
 }
 
 // installESP32Firmware handles the ESP32 path: detect device → download → flash.

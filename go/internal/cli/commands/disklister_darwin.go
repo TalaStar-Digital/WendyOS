@@ -50,6 +50,12 @@ func listExternalDrivesText() ([]drive, error) {
 			desc = strings.Trim(parts[1], " ():")
 		}
 
+		// Skip non-physical disks (e.g. Xcode simulator disk images,
+		// synthesized APFS containers).
+		if !strings.Contains(desc, "physical") {
+			continue
+		}
+
 		// Get disk info for size and name.
 		info, infoErr := getDiskInfo(devPath)
 		name := devPath

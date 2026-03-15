@@ -3,7 +3,6 @@ package commands
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/wendylabsinc/wendy/internal/shared/config"
@@ -81,9 +80,5 @@ func newCacheClearCmd() *cobra.Command {
 }
 
 func getCacheDir() (string, error) {
-	cfgDir, err := config.ConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(cfgDir, "cache"), nil
+	return config.CacheDir()
 }
