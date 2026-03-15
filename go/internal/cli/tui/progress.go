@@ -100,7 +100,7 @@ func (m ProgressModel) View() string {
 		}
 		return fmt.Sprintf("%s\n%s%s\n", m.title, m.progress.ViewAs(1.0), byteInfo)
 	}
-	return fmt.Sprintf("%s\n%s%s\n", m.title, m.progress.View(), byteInfo)
+	return fmt.Sprintf("%s\n%s%s\n", m.title, m.progress.ViewAs(m.percent), byteInfo)
 }
 
 // formatBytes returns a human-readable byte string.
