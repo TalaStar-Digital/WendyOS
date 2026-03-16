@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -174,11 +175,14 @@ var wendySDKChecksums = map[string]string{
 
 // ensureSwiftVersion makes sure the required Swift toolchain is installed via swiftly.
 // If the version is already present this is a no-op.
-func ensureSwiftVersion() error {
-	cmd := exec.Command("swiftly", "install", defaultSwiftVersion)
+func ensureSwiftVersion(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "swiftly", "install", defaultSwiftVersion)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return fmt.Errorf("swiftly is required but not installed; see https://swiftlang.github.io/swiftly for installation instructions")
+		}
 		return fmt.Errorf("installing Swift %s via swiftly: %w", defaultSwiftVersion, err)
 	}
 	return nil
@@ -187,9 +191,6 @@ func ensureSwiftVersion() error {
 // buildSwiftContainerImage builds a Swift package and pushes the container image
 // directly to the device's registry using swift-container-plugin.
 func buildSwiftContainerImage(ctx context.Context, dir, product, registryHost, architecture string, useMTLS bool) error {
-	if err := ensureSwiftVersion(); err != nil {
-		return err
-	}
 	if err := ensureContainerPlugin(dir); err != nil {
 		return err
 	}
@@ -697,10 +698,6 @@ func registryHost(host string, port int) string {
 // have a Dockerfile, as an alternative to swift-container-plugin (which only
 // supports pushing to registries).
 func buildSwiftDockerImage(ctx context.Context, dir, product string) (string, error) {
-	if err := ensureSwiftVersion(); err != nil {
-		return "", err
-	}
-
 	arch := runtime.GOARCH
 	sdk, err := findSwiftSDK(arch)
 	if err != nil {
