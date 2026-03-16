@@ -279,6 +279,13 @@ func newAppsRemoveCmd() *cobra.Command {
 		Short: "Remove an application",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// If an explicit name was given without --force, print confirmation
+			// without requiring a device connection (preserves original behavior).
+			if len(args) > 0 && !force {
+				fmt.Printf("Are you sure you want to remove %s? This cannot be undone. Use --force to skip confirmation.\n", args[0])
+				return nil
+			}
+
 			ctx := cmd.Context()
 			target, err := resolveTarget(ctx)
 			if err != nil {
@@ -294,11 +301,10 @@ func newAppsRemoveCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-			}
-
-			if !force {
-				fmt.Printf("Are you sure you want to remove %s? This cannot be undone. Use --force to skip confirmation.\n", appName)
-				return nil
+				if !force {
+					fmt.Printf("Are you sure you want to remove %s? This cannot be undone. Use --force to skip confirmation.\n", appName)
+					return nil
+				}
 			}
 
 			if target.Agent != nil {
