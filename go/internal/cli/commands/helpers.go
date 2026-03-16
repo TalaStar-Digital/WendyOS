@@ -43,6 +43,10 @@ var getAgentVersionAtAddress = func(ctx context.Context, address string) (*agent
 // ErrUserCancelled is returned when the user cancels an interactive prompt (e.g. Ctrl+C).
 var ErrUserCancelled = errors.New("cancelled")
 
+// ErrDefaultCleared is returned after the user chooses to unset the default
+// device from the recovery menu. main.go treats this as a graceful exit (code 0).
+var ErrDefaultCleared = errors.New("default device cleared")
+
 // hostPort formats a host and port into an address string,
 // wrapping IPv6 addresses in brackets as required by RFC 3986.
 func hostPort(host string, port int) string {
@@ -296,7 +300,7 @@ func handleDefaultDeviceRecovery(ctx context.Context, hostname string, origErr e
 			return nil, fmt.Errorf("saving config: %w", err)
 		}
 		fmt.Println("Default device cleared.")
-		return nil, ErrUserCancelled
+		return nil, ErrDefaultCleared
 	default:
 		return nil, origErr
 	}
@@ -318,7 +322,7 @@ func connectToAgent(ctx context.Context, opts ...resolveOption) (*grpcclient.Age
 		conn, connErr := connectWithAutoTLS(ctx, addr)
 		if connErr != nil {
 			// Default device is unreachable — offer interactive recovery.
-			if isDefault && !jsonOutput {
+			if isDefault && !jsonOutput && term.IsTerminal(int(os.Stdin.Fd())) {
 				hostname, _, _ := net.SplitHostPort(addr)
 				target, recErr := handleDefaultDeviceRecovery(ctx, hostname, connErr, cfg.excludeProviderKeys, cfg.excludeBluetooth)
 				if recErr != nil {

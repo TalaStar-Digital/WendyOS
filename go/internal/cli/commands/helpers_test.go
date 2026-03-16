@@ -2,10 +2,7 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
@@ -111,25 +108,17 @@ func TestResolveLANAgentVersionFallsBackAcrossAddresses(t *testing.T) {
 	}
 }
 
-// setTempConfig writes a Config to a temp dir and sets HOME so config.Load
-// reads from it. It returns a cleanup function that restores the original HOME.
-func setTempConfig(t *testing.T, cfg *config.Config) func() {
+// setTempConfig points HOME at a temp dir and writes cfg via config.Save so
+// the test uses the same serialisation path as production code. t.Setenv
+// automatically restores the original HOME when the test finishes.
+func setTempConfig(t *testing.T, cfg *config.Config) {
 	t.Helper()
-	origHome := os.Getenv("HOME")
 	tmp := t.TempDir()
-	wendyDir := filepath.Join(tmp, ".wendy")
-	if err := os.MkdirAll(wendyDir, 0o700); err != nil {
+	t.Setenv("HOME", tmp)
+	// config.Save calls ConfigDir() which creates ~/.wendy and writes config.json.
+	if err := config.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wendyDir, "config.json"), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	os.Setenv("HOME", tmp)
-	return func() { os.Setenv("HOME", origHome) }
 }
 
 func TestResolveDeviceAddress_Flag(t *testing.T) {
@@ -154,8 +143,7 @@ func TestResolveDeviceAddress_DefaultDevice(t *testing.T) {
 	defer func() { deviceFlag = origFlag }()
 	deviceFlag = ""
 
-	cleanup := setTempConfig(t, &config.Config{DefaultDevice: "wendy-thor.local"})
-	defer cleanup()
+	setTempConfig(t, &config.Config{DefaultDevice: "wendy-thor.local"})
 
 	addr, isDefault, err := resolveDeviceAddress()
 	if err != nil {
@@ -174,8 +162,7 @@ func TestResolveDeviceAddress_NoDevice(t *testing.T) {
 	defer func() { deviceFlag = origFlag }()
 	deviceFlag = ""
 
-	cleanup := setTempConfig(t, &config.Config{})
-	defer cleanup()
+	setTempConfig(t, &config.Config{})
 
 	_, _, err := resolveDeviceAddress()
 	if err == nil {
