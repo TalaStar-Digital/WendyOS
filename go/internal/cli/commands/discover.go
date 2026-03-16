@@ -209,8 +209,8 @@ type discoverModel struct {
 	includeExternal bool
 	windowHeight    int
 	bleWarning      string
-	flashMessage string
-	flashIsError bool
+	flashMessage    string
+	flashIsError    bool
 }
 
 func newDiscoverModel(ctx context.Context, opts discovery.DiscoveryOptions) discoverModel {
