@@ -469,7 +469,7 @@ func ensureBuildxBuilder(ctx context.Context, registryAddr string, useMTLS bool)
 	if ipv6IP != "" {
 		containerName := "buildx_buildkit_" + builderName + "0"
 		hostsCmd := exec.CommandContext(ctx, "docker", "exec", containerName, "sh", "-c",
-			fmt.Sprintf("grep -q wendy-registry /etc/hosts || echo '%s wendy-registry' >> /etc/hosts", ipv6IP))
+			fmt.Sprintf("if grep -q ' wendy-registry' /etc/hosts; then sed -i 's/^[^#]* wendy-registry$/%s wendy-registry/' /etc/hosts; else echo '%s wendy-registry' >> /etc/hosts; fi", ipv6IP, ipv6IP))
 		if out, cmdErr := hostsCmd.CombinedOutput(); cmdErr != nil {
 			return "", "", fmt.Errorf("adding hosts entry to builder: %s: %w", string(out), cmdErr)
 		}
