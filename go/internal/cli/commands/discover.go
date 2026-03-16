@@ -209,7 +209,8 @@ type discoverModel struct {
 	includeExternal bool
 	windowHeight    int
 	bleWarning      string
-	flashMessage    string
+	flashMessage string
+	flashIsError bool
 }
 
 func newDiscoverModel(ctx context.Context, opts discovery.DiscoveryOptions) discoverModel {
@@ -308,19 +309,9 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cursor := m.table.Cursor()
 			if len(rows) > 0 && cursor >= 0 && cursor < len(rows) {
 				row := rows[cursor]
-				info := discoverDeviceInfo{
-					Name:    row[0],
-					Type:    row[1],
-					Address: row[2],
-					Port:    row[3],
-					Version: row[4],
-				}
-				if data, err := json.MarshalIndent(info, "", "  "); err == nil {
-					if copyToClipboard(string(data)) == nil {
-						m.flashMessage = "Copied device info as JSON to clipboard."
-						return m, clearFlashAfter(5 * time.Second)
-					}
-				}
+				info := deviceInfoFromRow(row)
+				m.flashMessage, m.flashIsError = copyDeviceJSON(info)
+				return m, clearFlashAfter(5 * time.Second)
 			}
 			return m, nil
 		case "a":
@@ -328,20 +319,13 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(rows) > 0 {
 				var all []discoverDeviceInfo
 				for _, row := range rows {
-					all = append(all, discoverDeviceInfo{
-						Name:    row[0],
-						Type:    row[1],
-						Address: row[2],
-						Port:    row[3],
-						Version: row[4],
-					})
+					all = append(all, deviceInfoFromRow(row))
 				}
-				if data, err := json.MarshalIndent(all, "", "  "); err == nil {
-					if copyToClipboard(string(data)) == nil {
-						m.flashMessage = "Copied all devices as JSON to clipboard."
-						return m, clearFlashAfter(5 * time.Second)
-					}
+				m.flashMessage, m.flashIsError = copyDeviceJSON(all)
+				if !m.flashIsError {
+					m.flashMessage = "Copied all devices as JSON to clipboard."
 				}
+				return m, clearFlashAfter(5 * time.Second)
 			}
 			return m, nil
 		}
@@ -380,6 +364,7 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, delayThen(env.DiscoverExternalInterval(), m.scanExternal())
 	case flashClearMsg:
 		m.flashMessage = ""
+		m.flashIsError = false
 	}
 
 	return m, nil
@@ -393,8 +378,10 @@ func delayThen(d time.Duration, cmd tea.Cmd) tea.Cmd {
 }
 
 var (
-	dimStyle  = lipgloss.NewStyle().Foreground(tui.ColorDim)
-	scanStyle = lipgloss.NewStyle().Foreground(tui.ColorPrimary)
+	dimStyle        = lipgloss.NewStyle().Foreground(tui.ColorDim)
+	scanStyle       = lipgloss.NewStyle().Foreground(tui.ColorPrimary)
+	flashStyle      = lipgloss.NewStyle().Foreground(tui.ColorAccent)
+	flashErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // red
 )
 
 func (m discoverModel) View() string {
@@ -423,8 +410,11 @@ func (m discoverModel) View() string {
 	}
 
 	if m.flashMessage != "" {
-		flashStyle := lipgloss.NewStyle().Foreground(tui.ColorAccent)
-		sb.WriteString("\n" + flashStyle.Render("  "+m.flashMessage) + "\n")
+		style := flashStyle
+		if m.flashIsError {
+			style = flashErrorStyle
+		}
+		sb.WriteString("\n" + style.Render("  "+m.flashMessage) + "\n")
 	}
 
 	return sb.String()
@@ -546,6 +536,30 @@ func discoverTableHeight(rowCount, windowHeight int, interactive bool) int {
 	return min(height, 12)
 }
 
+// deviceInfoFromRow converts a table row to a discoverDeviceInfo.
+func deviceInfoFromRow(row bubbleTable.Row) discoverDeviceInfo {
+	return discoverDeviceInfo{
+		Name:    row[0],
+		Type:    row[1],
+		Address: row[2],
+		Port:    row[3],
+		Version: row[4],
+	}
+}
+
+// copyDeviceJSON marshals v as indented JSON, copies it to the clipboard,
+// and returns a user-facing message and whether it's an error.
+func copyDeviceJSON(v interface{}) (message string, isError bool) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("Copy failed: %v", err), true
+	}
+	if err := clipboardWriter(string(data)); err != nil {
+		return fmt.Sprintf("Copy failed: %v", err), true
+	}
+	return "Copied device info as JSON to clipboard.", false
+}
+
 // clearFlashAfter returns a tea.Cmd that sends flashClearMsg after the given duration.
 func clearFlashAfter(d time.Duration) tea.Cmd {
 	return func() tea.Msg {
@@ -554,17 +568,30 @@ func clearFlashAfter(d time.Duration) tea.Cmd {
 	}
 }
 
-// copyToClipboard writes text to the system clipboard.
+// clipboardWriter is the function used to copy text to the clipboard.
+// It is a package-level variable so tests can replace it.
+var clipboardWriter = copyToClipboard
+
+// copyToClipboard writes text to the system clipboard using platform tools.
 func copyToClipboard(text string) error {
-	var cmd *exec.Cmd
+	var name string
+	var args []string
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("pbcopy")
+		name = "pbcopy"
 	case "linux":
-		cmd = exec.Command("xclip", "-selection", "clipboard")
+		name = "xclip"
+		args = []string{"-selection", "clipboard"}
 	default:
-		return fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
+		return fmt.Errorf("clipboard not supported on %s; copy the output manually", runtime.GOOS)
 	}
+	if _, err := exec.LookPath(name); err != nil {
+		return fmt.Errorf("%s not found; install it to enable clipboard copy", name)
+	}
+	cmd := exec.Command(name, args...)
 	cmd.Stdin = strings.NewReader(text)
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("clipboard write failed: %w", err)
+	}
+	return nil
 }
