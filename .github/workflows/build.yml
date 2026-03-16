@@ -895,3 +895,8 @@ jobs:
               exit $LASTEXITCODE
             }
           }
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Winget package publication failed with exit code $LASTEXITCODE."
+            exit $LASTEXITCODE
+          }

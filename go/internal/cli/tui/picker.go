@@ -187,7 +187,7 @@ var pickerColumnDefs = []pickerColumnDef{
 	{
 		title:    "Name",
 		minWidth: 18,
-		maxWidth: 28,
+		maxWidth: 48,
 		value: func(item PickerItem) string {
 			return item.Name
 		},

@@ -5,12 +5,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
+
 	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
 	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
+)
+
+var (
+	// Styled icons for static (non-interactive) table output.
+	stateIconRunning = lipgloss.NewStyle().Foreground(tui.Emerald400).Render("●")
+	stateIconStopped = lipgloss.NewStyle().Foreground(tui.ColorDim).Render("●")
 )
 
 func newAppsCmd() *cobra.Command {
@@ -107,13 +119,13 @@ func appsListAgent(ctx context.Context, conn *grpcclient.AgentConnection) error 
 		return nil
 	}
 
-	headers := []string{"Name", "Version", "State", "Failures"}
+	headers := []string{"", "Name", "Version", "Failures"}
 	var rows [][]string
 	for _, c := range containers {
 		rows = append(rows, []string{
+			stateIcon(c.GetRunningState().String()),
 			c.GetAppName(),
 			c.GetAppVersion(),
-			c.GetRunningState().String(),
 			fmt.Sprintf("%d", c.GetFailureCount()),
 		})
 	}
@@ -141,10 +153,10 @@ func appsListProvider(ctx context.Context, cm providers.ContainerManager) error 
 		return nil
 	}
 
-	headers := []string{"Name", "Image", "State", "Status"}
+	headers := []string{"", "Name", "Image", "Status"}
 	var rows [][]string
 	for _, c := range containers {
-		rows = append(rows, []string{c.Name, c.Image, c.State, c.Status})
+		rows = append(rows, []string{stateIcon(c.State), c.Name, c.Image, c.Status})
 	}
 	fmt.Print(tui.RenderTable(headers, rows))
 	return nil
@@ -154,7 +166,7 @@ func newAppsStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start [app-name]",
 		Short: "Start an application",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			target, err := resolveTarget(ctx)
@@ -163,7 +175,15 @@ func newAppsStartCmd() *cobra.Command {
 			}
 			defer target.Close()
 
-			appName := args[0]
+			var appName string
+			if len(args) > 0 {
+				appName = args[0]
+			} else {
+				appName, err = pickApp(ctx, target, "Select an app to start")
+				if err != nil {
+					return err
+				}
+			}
 
 			if target.Agent != nil {
 				stream, err := target.Agent.ContainerService.StartContainer(ctx, &agentpb.StartContainerRequest{
@@ -212,7 +232,7 @@ func newAppsStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop [app-name]",
 		Short: "Stop an application",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			target, err := resolveTarget(ctx)
@@ -221,7 +241,15 @@ func newAppsStopCmd() *cobra.Command {
 			}
 			defer target.Close()
 
-			appName := args[0]
+			var appName string
+			if len(args) > 0 {
+				appName = args[0]
+			} else {
+				appName, err = pickApp(ctx, target, "Select an app to stop")
+				if err != nil {
+					return err
+				}
+			}
 
 			if target.Agent != nil {
 				_, err = target.Agent.ContainerService.StopContainer(ctx, &agentpb.StopContainerRequest{
@@ -257,12 +285,12 @@ func newAppsRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove [app-name]",
 		Short: "Remove an application",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appName := args[0]
-
-			if !force {
-				fmt.Printf("Are you sure you want to remove %s? This cannot be undone. Use --force to skip confirmation.\n", appName)
+			// If an explicit name was given without --force, print confirmation
+			// without requiring a device connection (preserves original behavior).
+			if len(args) > 0 && !force {
+				fmt.Printf("Are you sure you want to remove %s? This cannot be undone. Use --force to skip confirmation.\n", args[0])
 				return nil
 			}
 
@@ -272,6 +300,20 @@ func newAppsRemoveCmd() *cobra.Command {
 				return err
 			}
 			defer target.Close()
+
+			var appName string
+			if len(args) > 0 {
+				appName = args[0]
+			} else {
+				appName, err = pickApp(ctx, target, "Select an app to remove")
+				if err != nil {
+					return err
+				}
+				if !force {
+					fmt.Printf("Are you sure you want to remove %s? This cannot be undone. Use --force to skip confirmation.\n", appName)
+					return nil
+				}
+			}
 
 			if target.Agent != nil {
 				_, err = target.Agent.ContainerService.DeleteContainer(ctx, &agentpb.DeleteContainerRequest{
@@ -302,4 +344,130 @@ func newAppsRemoveCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
 	return cmd
+}
+
+// stateIcon returns a colored dot for the given state string (for static tables).
+func stateIcon(state string) string {
+	switch strings.ToLower(state) {
+	case "running":
+		return stateIconRunning
+	default:
+		return stateIconStopped
+	}
+}
+
+// stateIconPlain returns a plain unicode dot for use in interactive (bubbles) tables
+// where ANSI styling in cell content breaks width calculation and selection.
+func stateIconPlain(state string) string {
+	switch strings.ToLower(state) {
+	case "running":
+		return "●"
+	default:
+		return "○"
+	}
+}
+
+// appInfo holds the display information for an app returned by the agent or provider.
+type appInfo struct {
+	Name    string
+	Version string
+	State   string
+}
+
+// listApps fetches the list of apps from the target device.
+func listApps(ctx context.Context, target *SelectedDevice) ([]appInfo, error) {
+	if target.Agent != nil {
+		stream, err := target.Agent.ContainerService.ListContainers(ctx, &agentpb.ListContainersRequest{})
+		if err != nil {
+			return nil, fmt.Errorf("listing containers: %w", err)
+		}
+		var apps []appInfo
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return nil, fmt.Errorf("receiving container list: %w", err)
+			}
+			if c := resp.GetContainer(); c != nil {
+				apps = append(apps, appInfo{
+					Name:    c.GetAppName(),
+					Version: c.GetAppVersion(),
+					State:   c.GetRunningState().String(),
+				})
+			}
+		}
+		return apps, nil
+	}
+
+	if target.Provider != nil {
+		cm, ok := target.Provider.(providers.ContainerManager)
+		if !ok {
+			return nil, fmt.Errorf("selected device does not support container management")
+		}
+		containers, err := cm.ListContainers(ctx)
+		if err != nil {
+			return nil, err
+		}
+		apps := make([]appInfo, len(containers))
+		for i, c := range containers {
+			apps[i] = appInfo{Name: c.Name, State: c.State}
+		}
+		return apps, nil
+	}
+
+	return nil, fmt.Errorf("selected device does not support this command")
+}
+
+// pickApp presents an interactive picker for selecting an app from the target
+// device. It returns the selected app name or an error.
+func pickApp(ctx context.Context, target *SelectedDevice, title string) (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("no app name specified; run in an interactive terminal or pass the app name as an argument")
+	}
+
+	apps, err := listApps(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	if len(apps) == 0 {
+		return "", fmt.Errorf("no applications found on device")
+	}
+
+	picker := tui.NewPickerWithTitle(title)
+	p := tea.NewProgram(picker)
+
+	go func() {
+		var items []tui.PickerItem
+		for _, app := range apps {
+			items = append(items, tui.PickerItem{
+				Name:        stateIconPlain(app.State) + " " + app.Name,
+				Description: app.Version,
+				Value:       app.Name,
+			})
+		}
+		p.Send(tui.PickerAddMsg{Items: items})
+		p.Send(tui.PickerDoneMsg{})
+	}()
+
+	finalModel, err := p.Run()
+	if err != nil {
+		return "", fmt.Errorf("app picker: %w", err)
+	}
+
+	pm := finalModel.(tui.PickerModel)
+	if pm.Cancelled() {
+		return "", ErrUserCancelled
+	}
+	sel := pm.Selected()
+	if sel == nil {
+		return "", fmt.Errorf("no app selected")
+	}
+
+	name, ok := sel.Value.(string)
+	if !ok {
+		return "", fmt.Errorf("invalid selection")
+	}
+	return name, nil
 }
