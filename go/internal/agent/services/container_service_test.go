@@ -19,19 +19,19 @@ import (
 // ---------- mock containerd client ----------
 
 type mockContainerdClient struct {
-	containers       []*agentpb.AppContainer
-	listErr          error
-	stopErr          error
-	deleteErr        error
-	layers           []*agentpb.LayerHeader
-	listLayersErr    error
-	writeLayerErr    error
-	writtenDigest    string
-	writtenData      []byte
-	createErr        error
-	progressPhases   []agentpb.CreateContainerProgress_Phase
-	startOutputCh    chan ContainerOutput
-	startErr         error
+	containers     []*agentpb.AppContainer
+	listErr        error
+	stopErr        error
+	deleteErr      error
+	layers         []*agentpb.LayerHeader
+	listLayersErr  error
+	writeLayerErr  error
+	writtenDigest  string
+	writtenData    []byte
+	createErr      error
+	progressPhases []agentpb.CreateContainerProgress_Phase
+	startOutputCh  chan ContainerOutput
+	startErr       error
 }
 
 func (m *mockContainerdClient) ListContainers(_ context.Context) ([]*agentpb.AppContainer, error) {

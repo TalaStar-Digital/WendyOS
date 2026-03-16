@@ -12,13 +12,13 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
 	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
 	"github.com/wendylabsinc/wendy/internal/shared/models"
 	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"golang.org/x/term"
 )
 
 var cliStyle = lipgloss.NewStyle().Foreground(tui.ColorDim)
