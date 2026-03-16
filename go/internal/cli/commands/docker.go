@@ -180,6 +180,36 @@ var execCommandContext = exec.CommandContext
 // ensureSwiftVersion makes sure the required Swift toolchain is installed via swiftly.
 // If the version is already present this is a no-op.
 func ensureSwiftVersion(ctx context.Context) error {
+	// Avoid starting any subprocesses if the context is already canceled.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// First, check whether the requested Swift toolchain is already installed.
+	checkCmd := execCommandContext(ctx, "swiftly", "which", defaultSwiftVersion)
+	// Discard output for the existence check; this is only used as a probe.
+	checkCmd.Stdout = io.Discard
+	checkCmd.Stderr = io.Discard
+	if err := checkCmd.Run(); err == nil {
+		// Toolchain is already installed; nothing to do.
+		return nil
+	} else {
+		// If swiftly itself is missing, surface a helpful error.
+		if errors.Is(err, exec.ErrNotFound) {
+			return fmt.Errorf("swiftly is required but not installed; see https://swiftlang.github.io/swiftly for installation instructions")
+		}
+		// If the context was canceled or expired during the check, propagate that rather than starting an install.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		// For other errors (e.g., version not installed), fall through and attempt installation.
+	}
+
+	// Re-check the context before starting installation.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	cmd := execCommandContext(ctx, "swiftly", "install", defaultSwiftVersion)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
