@@ -189,16 +189,18 @@ func TestValidate_AllEntitlementTypes(t *testing.T) {
 	}
 }
 
-func TestLoadFromFile_WithPostRun(t *testing.T) {
+func TestLoadFromFile_WithHooksPostStart(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wendy.json")
 
 	content := `{
 		"appId": "com.example.webapp",
 		"entitlements": [{"type": "network"}],
-		"postRun": {
-			"cli": "open http://${WENDY_HOSTNAME}:3000",
-			"agent": "xdg-open http://localhost:3000"
+		"hooks": {
+			"postStart": {
+				"cli": "open http://${WENDY_HOSTNAME}:3000",
+				"agent": "xdg-open http://localhost:3000"
+			}
 		}
 	}`
 
@@ -211,18 +213,21 @@ func TestLoadFromFile_WithPostRun(t *testing.T) {
 		t.Fatalf("LoadFromFile() error = %v", err)
 	}
 
-	if cfg.PostRun == nil {
-		t.Fatal("PostRun is nil, expected non-nil")
+	if cfg.Hooks == nil {
+		t.Fatal("Hooks is nil, expected non-nil")
 	}
-	if cfg.PostRun.CLI != "open http://${WENDY_HOSTNAME}:3000" {
-		t.Errorf("PostRun.CLI = %q, want %q", cfg.PostRun.CLI, "open http://${WENDY_HOSTNAME}:3000")
+	if cfg.Hooks.PostStart == nil {
+		t.Fatal("Hooks.PostStart is nil, expected non-nil")
 	}
-	if cfg.PostRun.Agent != "xdg-open http://localhost:3000" {
-		t.Errorf("PostRun.Agent = %q, want %q", cfg.PostRun.Agent, "xdg-open http://localhost:3000")
+	if cfg.Hooks.PostStart.CLI != "open http://${WENDY_HOSTNAME}:3000" {
+		t.Errorf("Hooks.PostStart.CLI = %q, want %q", cfg.Hooks.PostStart.CLI, "open http://${WENDY_HOSTNAME}:3000")
+	}
+	if cfg.Hooks.PostStart.Agent != "xdg-open http://localhost:3000" {
+		t.Errorf("Hooks.PostStart.Agent = %q, want %q", cfg.Hooks.PostStart.Agent, "xdg-open http://localhost:3000")
 	}
 }
 
-func TestLoadFromFile_WithoutPostRun(t *testing.T) {
+func TestLoadFromFile_WithoutHooks(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wendy.json")
 
@@ -240,19 +245,21 @@ func TestLoadFromFile_WithoutPostRun(t *testing.T) {
 		t.Fatalf("LoadFromFile() error = %v", err)
 	}
 
-	if cfg.PostRun != nil {
-		t.Errorf("PostRun = %+v, want nil", cfg.PostRun)
+	if cfg.Hooks != nil {
+		t.Errorf("Hooks = %+v, want nil", cfg.Hooks)
 	}
 }
 
-func TestLoadFromFile_PostRunCLIOnly(t *testing.T) {
+func TestLoadFromFile_HooksPostStartCLIOnly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wendy.json")
 
 	content := `{
 		"appId": "com.example.app",
-		"postRun": {
-			"cli": "echo hello"
+		"hooks": {
+			"postStart": {
+				"cli": "echo hello"
+			}
 		}
 	}`
 
@@ -265,14 +272,14 @@ func TestLoadFromFile_PostRunCLIOnly(t *testing.T) {
 		t.Fatalf("LoadFromFile() error = %v", err)
 	}
 
-	if cfg.PostRun == nil {
-		t.Fatal("PostRun is nil")
+	if cfg.Hooks == nil || cfg.Hooks.PostStart == nil {
+		t.Fatal("Hooks.PostStart is nil")
 	}
-	if cfg.PostRun.CLI != "echo hello" {
-		t.Errorf("PostRun.CLI = %q, want %q", cfg.PostRun.CLI, "echo hello")
+	if cfg.Hooks.PostStart.CLI != "echo hello" {
+		t.Errorf("Hooks.PostStart.CLI = %q, want %q", cfg.Hooks.PostStart.CLI, "echo hello")
 	}
-	if cfg.PostRun.Agent != "" {
-		t.Errorf("PostRun.Agent = %q, want empty", cfg.PostRun.Agent)
+	if cfg.Hooks.PostStart.Agent != "" {
+		t.Errorf("Hooks.PostStart.Agent = %q, want empty", cfg.Hooks.PostStart.Agent)
 	}
 }
 

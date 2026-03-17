@@ -65,13 +65,18 @@ type AppConfig struct {
 	Platform     string        `json:"platform,omitempty"`
 	Language     string        `json:"language,omitempty"`
 	Entitlements []Entitlement `json:"entitlements,omitempty"`
-	PostRun      *PostRunConfig `json:"postRun,omitempty"`
+	Hooks        *HooksConfig   `json:"hooks,omitempty"`
 	Python       *PythonConfig  `json:"python,omitempty"`
 	Debug        bool           `json:"debug,omitempty"`
 }
 
-// PostRunConfig holds optional commands to execute after the container starts.
-type PostRunConfig struct {
+// HooksConfig holds optional lifecycle hook commands.
+type HooksConfig struct {
+	PostStart *HookCommand `json:"postStart,omitempty"`
+}
+
+// HookCommand holds CLI and agent-side commands for a lifecycle hook.
+type HookCommand struct {
 	CLI   string `json:"cli,omitempty"`   // Command to run on the developer's machine
 	Agent string `json:"agent,omitempty"` // Command to run on the device
 }
