@@ -174,9 +174,23 @@ func runCommand(ctx context.Context, opts runOptions) error {
 		return runWithProvider(ctx, target.Provider, *target.External, cwd, appCfg.AppID, opts)
 	}
 
-	// Wendy Lite devices don't run the WendyOS agent — they can't execute containers.
+	// Devices without a reachable WendyOS agent can't execute containers.
 	if target.Agent == nil {
-		return fmt.Errorf("selected device is a Wendy Lite device, which does not support 'wendy run'. To provision it, first connect it to WiFi using 'wendy device wifi connect'")
+		// SelectedDevice sets exactly one of Agent/Bluetooth/External.
+		// At this point we've already handled the External+Provider case above,
+		// so a nil Agent here typically means we're talking to the device over BLE.
+		if target.Bluetooth != nil {
+			if target.Bluetooth.IsWendyAgent() {
+				// Full WendyOS device reachable only over Bluetooth: instruct user
+				// to get it onto WiFi / LAN so the agent can be reached.
+				return fmt.Errorf("selected device is currently reachable only over Bluetooth. To run apps on it, first connect it to WiFi or ensure it has a LAN address, then retry 'wendy run'")
+			}
+			// BLE-only Wendy Lite device: these cannot run containers.
+			return fmt.Errorf("selected device is a Wendy Lite device, which does not support 'wendy run'. To provision it, first connect it to WiFi using 'wendy device wifi connect'")
+		}
+
+		// Fallback: no agent and no Bluetooth/External path we can use.
+		return fmt.Errorf("selected device does not have a reachable WendyOS agent and cannot run 'wendy run'")
 	}
 
 	// Agent-based run path (existing gRPC pipeline).
