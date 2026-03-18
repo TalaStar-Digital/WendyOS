@@ -875,31 +875,90 @@ jobs:
           $tag = "${{ needs.determine-version.outputs.tag_name }}"
           $base = "https://github.com/wendylabsinc/wendy-agent/releases/download/$tag"
           $token = "${{ secrets.WINGET_GITHUB_TOKEN }}"
-          $amd64 = "$base/wendy-cli-windows-amd64-$version.msi"
-          $arm64 = "$base/wendy-cli-windows-arm64-$version.msi"
+          $amd64Url = "$base/wendy-cli-windows-amd64-$version.msi"
+          $arm64Url = "$base/wendy-cli-windows-arm64-$version.msi"
 
-          # Try update first; if the package doesn't exist yet, fall back to new
+          # Try update first (works once the package exists in winget-pkgs)
           .\wingetcreate.exe update WendyLabs.Wendy `
             --version $version `
-            --urls $amd64 $arm64 `
+            --urls $amd64Url $arm64Url `
             --submit `
             --token $token
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "Update failed, attempting initial submission with 'new'..."
-            .\wingetcreate.exe new $amd64 $arm64 `
-              --version $version `
-              --id WendyLabs.Wendy `
-              --name Wendy `
-              --publisher "Wendy Labs" `
-              --submit `
-              --token $token
-            if ($LASTEXITCODE -ne 0) {
-              Write-Error "Winget package submission failed (update and new both failed) with exit code $LASTEXITCODE."
-              exit $LASTEXITCODE
-            }
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Winget package updated successfully."
+            exit 0
           }
 
+          Write-Host "Update failed (package may not exist yet). Generating initial manifest..."
+
+          # Download installers to compute SHA256 hashes
+          Invoke-WebRequest -Uri $amd64Url -OutFile amd64.msi
+          Invoke-WebRequest -Uri $arm64Url -OutFile arm64.msi
+          $amd64Hash = (Get-FileHash -Algorithm SHA256 amd64.msi).Hash
+          $arm64Hash = (Get-FileHash -Algorithm SHA256 arm64.msi).Hash
+
+          # Generate the three manifest YAML files required by winget-pkgs
+          $manifestDir = "manifests\w\WendyLabs\Wendy\$version"
+          New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+
+          @"
+          # yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.1.9.0.schema.json
+          PackageIdentifier: WendyLabs.Wendy
+          PackageVersion: $version
+          DefaultLocale: en-US
+          ManifestType: version
+          ManifestVersion: 1.9.0
+          "@ -replace '(?m)^          ', '' | Set-Content "$manifestDir\WendyLabs.Wendy.yaml" -Encoding utf8
+
+          @"
+          # yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+          PackageIdentifier: WendyLabs.Wendy
+          PackageVersion: $version
+          Platform:
+          - Windows.Desktop
+          MinimumOSVersion: 10.0.17763.0
+          InstallerType: msi
+          UpgradeBehavior: install
+          ReleaseDate: $(Get-Date -Format 'yyyy-MM-dd')
+          Installers:
+          - Architecture: x64
+            InstallerUrl: $amd64Url
+            InstallerSha256: $amd64Hash
+          - Architecture: arm64
+            InstallerUrl: $arm64Url
+            InstallerSha256: $arm64Hash
+          ManifestType: installer
+          ManifestVersion: 1.9.0
+          "@ -replace '(?m)^          ', '' | Set-Content "$manifestDir\WendyLabs.Wendy.installer.yaml" -Encoding utf8
+
+          @"
+          # yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json
+          PackageIdentifier: WendyLabs.Wendy
+          PackageVersion: $version
+          PackageLocale: en-US
+          Publisher: Wendy Labs
+          PublisherUrl: https://github.com/wendylabsinc
+          PublisherSupportUrl: https://github.com/wendylabsinc/wendy-agent/issues
+          PackageName: Wendy
+          PackageUrl: https://github.com/wendylabsinc/wendy-agent
+          License: Proprietary
+          ShortDescription: CLI for building and deploying apps to WendyOS edge devices.
+          Tags:
+          - cli
+          - edge-computing
+          - iot
+          - developer-tools
+          ManifestType: defaultLocale
+          ManifestVersion: 1.9.0
+          "@ -replace '(?m)^          ', '' | Set-Content "$manifestDir\WendyLabs.Wendy.locale.en-US.yaml" -Encoding utf8
+
+          # Submit the generated manifest
+          .\wingetcreate.exe submit `
+            --prtitle "New package: WendyLabs.Wendy version $version" `
+            --token $token `
+            $manifestDir
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "Winget package publication failed with exit code $LASTEXITCODE."
+            Write-Error "Winget manifest submission failed with exit code $LASTEXITCODE."
             exit $LASTEXITCODE
           }
+          Write-Host "Initial Winget manifest submitted successfully."
