@@ -38,7 +38,7 @@ func discoverLAN(ctx context.Context, timeout time.Duration) ([]models.LANDevice
 		dev, err := dnssdResolve(resolveCtx, inst)
 		resolveCancel()
 		if err != nil {
-			// Resolve failed (e.g. no TXT records) — fall back to
+			// Resolve failed (e.g. could not parse hostname) — fall back to
 			// a device derived from the browse instance name.
 			dev = deviceFromBrowse(inst)
 		}
