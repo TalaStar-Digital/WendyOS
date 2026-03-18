@@ -191,7 +191,6 @@ type discoverDeviceInfo struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`
 	Address string `json:"address"`
-	Port    string `json:"port,omitempty"`
 	Version string `json:"version,omitempty"`
 }
 
@@ -449,9 +448,9 @@ func renderDeviceTable(collection *models.DevicesCollection) string {
 }
 
 var (
-	discoverTableHeaders   = []string{"Name", "Type", "Address", "Port", "Version"}
-	discoverTableMinWidths = []int{12, 12, 14, 6, 10}
-	discoverTableMaxWidths = []int{28, 18, 28, 8, 16}
+	discoverTableHeaders   = []string{"Name", "Type", "Address", "Version"}
+	discoverTableMinWidths = []int{12, 12, 14, 10}
+	discoverTableMaxWidths = []int{28, 18, 28, 16}
 )
 
 func newDiscoverTable(interactive bool) bubbleTable.Model {
@@ -462,17 +461,13 @@ func discoverTableRows(collection *models.DevicesCollection) []bubbleTable.Row {
 	var rows []bubbleTable.Row
 
 	for _, d := range collection.USBDevices {
-		rows = append(rows, bubbleTable.Row{d.DisplayName, "USB", d.Hostname, "", d.AgentVersion})
+		rows = append(rows, bubbleTable.Row{d.DisplayName, "USB", d.Hostname, d.AgentVersion})
 	}
 	for _, d := range collection.MergedDevices() {
-		port := ""
-		if d.Port() > 0 {
-			port = fmt.Sprintf("%d", d.Port())
-		}
-		rows = append(rows, bubbleTable.Row{d.DisplayName, d.ConnectionTypes(), d.Address(), port, d.AgentVersion})
+		rows = append(rows, bubbleTable.Row{d.DisplayName, d.ConnectionTypes(), d.Address(), d.AgentVersion})
 	}
 	for _, d := range collection.EthernetInterfaces {
-		rows = append(rows, bubbleTable.Row{d.DisplayName, "Ethernet", d.IPAddress, "", d.AgentVersion})
+		rows = append(rows, bubbleTable.Row{d.DisplayName, "Ethernet", d.IPAddress, d.AgentVersion})
 	}
 	for _, d := range collection.ExternalDevices {
 		// Wendy Lite devices are merged with BLE Lite in MergedDevices().
@@ -484,7 +479,7 @@ func discoverTableRows(collection *models.DevicesCollection) []bubbleTable.Row {
 		if p := providers.ProviderForKey(d.ProviderKey); p != nil {
 			typeName = p.DisplayName()
 		}
-		rows = append(rows, bubbleTable.Row{d.DisplayName, typeName, addr, "", d.AgentVersion})
+		rows = append(rows, bubbleTable.Row{d.DisplayName, typeName, addr, d.AgentVersion})
 	}
 
 	sort.Slice(rows, func(i, j int) bool {
@@ -542,8 +537,7 @@ func deviceInfoFromRow(row bubbleTable.Row) discoverDeviceInfo {
 		Name:    row[0],
 		Type:    row[1],
 		Address: row[2],
-		Port:    row[3],
-		Version: row[4],
+		Version: row[3],
 	}
 }
 

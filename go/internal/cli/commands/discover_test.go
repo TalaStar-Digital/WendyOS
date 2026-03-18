@@ -160,7 +160,7 @@ func TestRenderDeviceTable(t *testing.T) {
 	}
 
 	output := renderDeviceTable(collection)
-	for _, want := range []string{"Name", "Type", "Address", "Port", "Version", "wendy-alpha", "LAN", "192.168.1.10", "8443", "1.2.3"} {
+	for _, want := range []string{"Name", "Type", "Address", "Version", "wendy-alpha", "LAN", "192.168.1.10", "1.2.3"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected output to contain %q, got %q", want, output)
 		}
@@ -172,7 +172,6 @@ func TestDiscoverDeviceInfo_JSONSingleDevice(t *testing.T) {
 		Name:    "wendyos-brave-phoenix",
 		Type:    "LAN",
 		Address: "192.168.1.42",
-		Port:    "50051",
 		Version: "2026.03.16-163942",
 	}
 
@@ -211,9 +210,6 @@ func TestDiscoverDeviceInfo_OmitsEmptyFields(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if _, ok := parsed["port"]; ok {
-		t.Error("empty port should be omitted")
-	}
 	if _, ok := parsed["version"]; ok {
 		t.Error("empty version should be omitted")
 	}
@@ -221,7 +217,7 @@ func TestDiscoverDeviceInfo_OmitsEmptyFields(t *testing.T) {
 
 func TestDiscoverDeviceInfo_AllDevicesArray(t *testing.T) {
 	all := []discoverDeviceInfo{
-		{Name: "device-1", Type: "LAN", Address: "192.168.1.1", Port: "50051"},
+		{Name: "device-1", Type: "LAN", Address: "192.168.1.1"},
 		{Name: "device-2", Type: "USB", Address: "192.168.55.100"},
 	}
 
