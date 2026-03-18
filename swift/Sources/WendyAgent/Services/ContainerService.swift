@@ -17,10 +17,31 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
     /// Maps app name → (appDir, binaryName) for apps uploaded via WriteLayer.
     private var appDirs: [String: (dir: String, binaryName: String)] = [:]
 
-    init(broadcaster: TelemetryBroadcaster, executablePath: String, sandboxProfilePath: String? = nil, appsDir: String? = nil) {
+    /// Docker backend for Linux containers. Nil when Docker is not available.
+    private let dockerBackend: DockerContainerBackend?
+
+    /// Tracks which apps were created via the Docker backend.
+    private var dockerApps: Set<String> = []
+
+    /// Docker image names, keyed by app name. Stored during createContainer so
+    /// startContainer uses the exact image that was pulled.
+    private var dockerImageNames: [String: String] = [:]
+
+    /// Parsed app configs, keyed by app name. Stored during createContainer for
+    /// use by startContainer.
+    private var appConfigs: [String: WendyAppConfig] = [:]
+
+    init(
+        broadcaster: TelemetryBroadcaster,
+        executablePath: String,
+        sandboxProfilePath: String? = nil,
+        appsDir: String? = nil,
+        dockerAvailable: Bool = false
+    ) {
         self.broadcaster = broadcaster
         self.executablePath = executablePath
         self.sandboxProfilePath = sandboxProfilePath
+        self.dockerBackend = dockerAvailable ? DockerContainerBackend() : nil
 
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let baseDir = "\(home)/Library/Application Support/wendy-agent"
@@ -43,6 +64,37 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         let appName = request.message.appName
         let imageName = request.message.imageName
         logger.info("CreateContainer called", metadata: ["app_name": "\(appName)", "image_name": "\(imageName)"])
+
+        // Parse app config to determine the target platform.
+        let appConfig: WendyAppConfig? = {
+            let data = request.message.appConfig
+            guard !data.isEmpty else { return nil }
+            return try? JSONDecoder().decode(WendyAppConfig.self, from: data)
+        }()
+
+        let isLinux = appConfig?.platform?.hasPrefix("linux") == true
+
+        if isLinux {
+            // Docker backend path for Linux containers.
+            guard let dockerBackend else {
+                throw RPCError(
+                    code: .failedPrecondition,
+                    message: "Docker is required for Linux containers but was not found. Install Docker Desktop, Colima, or OrbStack."
+                )
+            }
+
+            // Pull the image from the local registry into Docker.
+            try await dockerBackend.pullImage(imageName)
+            dockerApps.insert(appName)
+            dockerImageNames[appName] = imageName
+            if let appConfig {
+                appConfigs[appName] = appConfig
+            }
+            logger.info("Linux container image pulled via Docker", metadata: ["app_name": "\(appName)"])
+            return ServerResponse(message: Wendy_Agent_Services_V1_CreateContainerResponse())
+        }
+
+        // Native darwin path (existing behavior).
 
         // Stop any existing process before re-deploying.
         if let existing = runningProcesses.removeValue(forKey: appName) {
@@ -105,6 +157,65 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
     ) async throws -> StreamingServerResponse<Wendy_Agent_Services_V1_RunContainerLayersResponse> {
         let appName = request.message.appName
         logger.info("StartContainer called", metadata: ["app_name": "\(appName)"])
+
+        // Docker backend path for Linux containers.
+        if dockerApps.contains(appName), let dockerBackend {
+            let appConfig = appConfigs[appName]
+            guard let deviceImage = dockerImageNames[appName] else {
+                throw RPCError(code: .failedPrecondition, message: "No Docker image found for \(appName). Call CreateContainer first.")
+            }
+
+            let (process, stdoutPipe, stderrPipe) = try await dockerBackend.createAndStart(
+                appName: appName,
+                imageName: deviceImage,
+                appConfig: appConfig
+            )
+            runningProcesses[appName] = process
+            logger.info("Docker container started", metadata: ["app_name": "\(appName)", "pid": "\(process.processIdentifier)"])
+
+            let broadcaster = self.broadcaster
+            return StreamingServerResponse { writer in
+                var started = Wendy_Agent_Services_V1_RunContainerLayersResponse()
+                started.responseType = .started(Wendy_Agent_Services_V1_RunContainerLayersResponse.Started())
+                try await writer.write(started)
+
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    group.addTask {
+                        let handle = stdoutPipe.fileHandleForReading
+                        for try await data in handle.bytes(for: appName) {
+                            var msg = Wendy_Agent_Services_V1_RunContainerLayersResponse()
+                            msg.responseType = .stdoutOutput(.with { $0.data = data })
+                            try await writer.write(msg)
+
+                            await Self.broadcastLog(
+                                broadcaster: broadcaster, appName: appName,
+                                text: String(decoding: data, as: UTF8.self),
+                                stream: "stdout", severity: .info
+                            )
+                        }
+                    }
+                    group.addTask {
+                        let handle = stderrPipe.fileHandleForReading
+                        for try await data in handle.bytes(for: appName) {
+                            var msg = Wendy_Agent_Services_V1_RunContainerLayersResponse()
+                            msg.responseType = .stderrOutput(.with { $0.data = data })
+                            try await writer.write(msg)
+
+                            await Self.broadcastLog(
+                                broadcaster: broadcaster, appName: appName,
+                                text: String(decoding: data, as: UTF8.self),
+                                stream: "stderr", severity: .warn
+                            )
+                        }
+                    }
+                    group.addTask { process.waitUntilExit() }
+                    try await group.waitForAll()
+                }
+                return Metadata()
+            }
+        }
+
+        // Native darwin path.
 
         // Stop any existing process with the same name.
         if let existing = runningProcesses[appName] {
@@ -211,7 +322,12 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         let appName = request.message.appName
         logger.info("StopContainer called", metadata: ["app_name": "\(appName)"])
 
-        if let process = runningProcesses.removeValue(forKey: appName) {
+        if dockerApps.contains(appName), let dockerBackend {
+            // Also remove from runningProcesses (the docker run process).
+            runningProcesses.removeValue(forKey: appName)
+            try await dockerBackend.stop(appName: appName)
+            logger.info("Docker container stopped", metadata: ["app_name": "\(appName)"])
+        } else if let process = runningProcesses.removeValue(forKey: appName) {
             if process.isRunning {
                 process.terminate()
                 process.waitUntilExit()
@@ -231,11 +347,20 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         let appName = request.message.appName
         logger.info("DeleteContainer called", metadata: ["app_name": "\(appName)"])
 
-        // Stop if running, then remove.
-        if let process = runningProcesses.removeValue(forKey: appName) {
-            if process.isRunning {
-                process.terminate()
-                process.waitUntilExit()
+        if dockerApps.contains(appName), let dockerBackend {
+            runningProcesses.removeValue(forKey: appName)
+            try await dockerBackend.remove(appName: appName)
+            dockerApps.remove(appName)
+            dockerImageNames.removeValue(forKey: appName)
+            appConfigs.removeValue(forKey: appName)
+            logger.info("Docker container removed", metadata: ["app_name": "\(appName)"])
+        } else {
+            // Stop if running, then remove.
+            if let process = runningProcesses.removeValue(forKey: appName) {
+                if process.isRunning {
+                    process.terminate()
+                    process.waitUntilExit()
+                }
             }
         }
 
@@ -246,12 +371,37 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         request: ServerRequest<Wendy_Agent_Services_V1_ListContainersRequest>,
         context: ServerContext
     ) async throws -> StreamingServerResponse<Wendy_Agent_Services_V1_ListContainersResponse> {
+        // Collect native processes.
         let processes = runningProcesses
+
+        // Collect Docker containers.
+        let dockerContainers: [DockerCLI.ContainerInfo]
+        if let dockerBackend {
+            dockerContainers = (try? await dockerBackend.listContainers()) ?? []
+        } else {
+            dockerContainers = []
+        }
+
+        let dockerAppNames = dockerApps
         return StreamingServerResponse { writer in
-            for (appName, process) in processes {
+            // Native processes.
+            for (appName, process) in processes where !dockerAppNames.contains(appName) {
                 var container = AppContainer()
                 container.appName = appName
                 container.runningState = process.isRunning ? .running : .stopped
+
+                var response = Wendy_Agent_Services_V1_ListContainersResponse()
+                response.container = container
+                try await writer.write(response)
+            }
+
+            // Docker containers.
+            for info in dockerContainers {
+                var container = AppContainer()
+                // Strip "wendy-" prefix from container name.
+                let name = info.names
+                container.appName = name.hasPrefix("wendy-") ? String(name.dropFirst(6)) : name
+                container.runningState = info.state == "running" ? .running : .stopped
 
                 var response = Wendy_Agent_Services_V1_ListContainersResponse()
                 response.container = container

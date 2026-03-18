@@ -172,7 +172,7 @@ var wendySDKChecksums = map[string]string{
 
 // buildSwiftContainerImage builds a Swift package and pushes the container image
 // directly to the device's registry using swift-container-plugin.
-func buildSwiftContainerImage(ctx context.Context, dir, product, registryHost, architecture string) error {
+func buildSwiftContainerImage(ctx context.Context, dir, product, host, architecture string, regPort int) error {
 	if err := ensureContainerPlugin(dir); err != nil {
 		return err
 	}
@@ -189,7 +189,7 @@ func buildSwiftContainerImage(ctx context.Context, dir, product, registryHost, a
 		"build-container-image",
 		"--from=swift:" + defaultSwiftVersion + "-slim",
 		"--product=" + product,
-		"--repository=" + registryHost + ":5000/" + strings.ToLower(product),
+		"--repository=" + registryHost(host, regPort) + "/" + strings.ToLower(product),
 		"--architecture=" + architecture,
 	}
 

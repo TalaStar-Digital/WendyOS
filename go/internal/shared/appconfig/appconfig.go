@@ -40,7 +40,7 @@ var ValidEntitlementTypes = []string{
 
 // allowedKeys maps each entitlement type to the set of JSON keys that are valid for it.
 var allowedKeys = map[string][]string{
-	EntitlementNetwork:   {"type", "mode"},
+	EntitlementNetwork:   {"type", "mode", "ports"},
 	EntitlementBluetooth: {"type", "mode"},
 	EntitlementVideo:     {"type", "mode", "allowlist"},
 	EntitlementGPU:       {"type"},
@@ -73,14 +73,21 @@ type PythonConfig struct {
 	SourceRoot string `json:"sourceRoot,omitempty"`
 }
 
+// PortMapping maps a host port to a container port for network entitlements.
+type PortMapping struct {
+	Host      uint16 `json:"host"`
+	Container uint16 `json:"container"`
+}
+
 // Entitlement represents a single entitlement entry in wendy.json.
 type Entitlement struct {
-	Type   string `json:"type"`
-	Mode   string `json:"mode,omitempty"`   // Network, Bluetooth, Video
-	Name   string `json:"name,omitempty"`   // Persist
-	Path   string `json:"path,omitempty"`   // Persist
-	Device string `json:"device,omitempty"` // I2C
-	Pins   []int  `json:"pins,omitempty"`   // GPIO
+	Type   string        `json:"type"`
+	Mode   string        `json:"mode,omitempty"`   // Network, Bluetooth, Video
+	Name   string        `json:"name,omitempty"`   // Persist
+	Path   string        `json:"path,omitempty"`   // Persist
+	Device string        `json:"device,omitempty"` // I2C
+	Pins   []int         `json:"pins,omitempty"`   // GPIO
+	Ports  []PortMapping `json:"ports,omitempty"`  // Network
 }
 
 // HasEntitlement reports whether the config contains an entitlement of the given type.

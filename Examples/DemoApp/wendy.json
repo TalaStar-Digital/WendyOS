@@ -1,5 +1,6 @@
 {
   "appId": "sh.wendy.examples.demo",
   "version": "1.0.0",
-  "language": "swift"
+  "language": "swift",
+  "platform": "linux"
 }

@@ -42,12 +42,27 @@ struct WendyAgent: AsyncParsableCommand {
 
         let broadcaster = TelemetryBroadcaster()
 
+        // Check Docker availability for Linux container support.
+        let docker = DockerCLI()
+        let dockerAvailable = await docker.checkAvailable()
+        if dockerAvailable {
+            logger.info("Docker detected, starting local registry on port \(DockerCLI.registryPort) for Linux container support")
+            do {
+                try await docker.ensureRegistry()
+            } catch {
+                logger.warning("Failed to start Docker registry: \(error). Linux container support disabled.")
+            }
+        } else {
+            logger.info("Docker not found, Linux container support disabled")
+        }
+
         let services: [any RegistrableRPCService] = [
             AgentService(),
             ContainerService(
                 broadcaster: broadcaster,
                 executablePath: appPath,
-                sandboxProfilePath: sandboxProfile.isEmpty ? nil : sandboxProfile
+                sandboxProfilePath: sandboxProfile.isEmpty ? nil : sandboxProfile,
+                dockerAvailable: dockerAvailable
             ),
             AudioService(),
             ProvisioningService(),

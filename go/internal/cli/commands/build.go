@@ -73,14 +73,25 @@ func newBuildCmd() *cobra.Command {
 				return err
 			}
 
-			// Query the device architecture when an agent connection is available.
+			// Query the device OS and architecture when an agent connection is
+			// available and determine the target platform.
+			var cfgPlatform string
+			if cfgErr == nil {
+				cfgPlatform = appCfg.Platform
+			}
 			platform := "linux/arm64"
 			if target != nil && target.Agent != nil {
 				versionResp, err := target.Agent.AgentService.GetAgentVersion(cmd.Context(), &agentpb.GetAgentVersionRequest{})
 				if err == nil {
-					if arch := versionResp.GetCpuArchitecture(); arch != "" {
-						platform = "linux/" + arch
+					agentOS := versionResp.GetOs()
+					if agentOS == "" {
+						agentOS = "linux"
 					}
+					arch := versionResp.GetCpuArchitecture()
+					if arch == "" {
+						arch = "arm64"
+					}
+					platform = resolveAgentPlatform(cfgPlatform, agentOS, arch)
 				}
 			}
 

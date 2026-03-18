@@ -25,9 +25,34 @@ struct OCIContainerConfig: Codable {
     let Cmd: [String]?
     let WorkingDir: String?
     let Env: [String]?
+    let ExposedPorts: [String: EmptyCodable]?
 }
+
+/// Placeholder for JSON objects like `{"5432/tcp": {}}`.
+struct EmptyCodable: Codable {}
 
 struct OCIRootFS: Codable {
     let type: String
     let diff_ids: [String]
+}
+
+// MARK: - Wendy AppConfig (minimal parsing for platform/entitlement routing)
+
+struct WendyAppConfig: Codable {
+    let appId: String
+    let platform: String?
+    let entitlements: [WendyEntitlement]?
+}
+
+struct WendyEntitlement: Codable {
+    let type: String
+    let mode: String?
+    let name: String?
+    let path: String?
+    let ports: [WendyPortMapping]?
+}
+
+struct WendyPortMapping: Codable {
+    let host: UInt16
+    let container: UInt16
 }

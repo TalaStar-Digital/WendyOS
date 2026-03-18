@@ -152,7 +152,7 @@ func resolveRunWorkingDir(opts runOptions) (string, error) {
 // runSwiftWithAgent builds a Swift package using swift-container-plugin, which
 // pushes the image directly to the device's registry. Then it creates and
 // starts the container on the agent.
-func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd string, appCfg *appconfig.AppConfig, opts runOptions) error {
+func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd string, appCfg *appconfig.AppConfig, opts runOptions, agentOS string) error {
 	// Verify auth certs are available if the device's registry requires mTLS.
 	if err := requireRegistryAuth(ctx, conn); err != nil {
 		return err
@@ -168,17 +168,18 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 		architecture = "arm64"
 	}
 
+	regPort := registryPort(agentOS)
 	product := findSwiftProduct(cwd)
 
 	cliLogln("Building Swift container image for %s (%s)...", product, architecture)
-	if err := buildSwiftContainerImage(ctx, cwd, product, conn.Host, architecture); err != nil {
+	if err := buildSwiftContainerImage(ctx, cwd, product, conn.Host, architecture, regPort); err != nil {
 		return fmt.Errorf("building Swift container image: %w", err)
 	}
 	cliLogln("Build and push completed.")
 
 	// The image is now in the device's registry. The agent will pull it
-	// from localhost:5000 when creating the container.
-	deviceImage := fmt.Sprintf("localhost:5000/%s:latest", strings.ToLower(product))
+	// from localhost:<regPort> when creating the container.
+	deviceImage := fmt.Sprintf("localhost:%d/%s:latest", regPort, strings.ToLower(product))
 
 	appConfigData, err := json.Marshal(appCfg)
 	if err != nil {
@@ -487,18 +488,28 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	// Detect project type and ensure a Dockerfile exists.
 	projectType := detectProjectType(cwd)
 
-	// Swift projects without a Dockerfile: check if the device is macOS
-	// (binary upload) or Linux (swift-container-plugin).
+	// Resolve the target platform. Query the agent for its OS and architecture,
+	// then determine the effective platform from wendy.json or defaults.
+	versionResp, err := conn.AgentService.GetAgentVersion(ctx, &agentpb.GetAgentVersionRequest{})
+	if err != nil {
+		return fmt.Errorf("querying device version: %w", err)
+	}
+	agentOS := versionResp.GetOs()
+	architecture := versionResp.GetCpuArchitecture()
+	if architecture == "" {
+		architecture = "arm64"
+	}
+
+	platform := resolveAgentPlatform(appCfg.Platform, agentOS, architecture)
+
+	// Swift projects without a Dockerfile: check if the target platform is
+	// darwin (binary upload) or Linux (swift-container-plugin).
 	if projectType == "swift" {
 		if _, err := os.Stat(filepath.Join(cwd, "Dockerfile")); os.IsNotExist(err) {
-			versionResp, err := conn.AgentService.GetAgentVersion(ctx, &agentpb.GetAgentVersionRequest{})
-			if err != nil {
-				return fmt.Errorf("querying device version: %w", err)
-			}
-			if versionResp.GetOs() == "darwin" {
+			if platformOS(platform) == "darwin" {
 				return runMacOSWithAgent(ctx, conn, cwd, appCfg, opts)
 			}
-			return runSwiftWithAgent(ctx, conn, cwd, appCfg, opts)
+			return runSwiftWithAgent(ctx, conn, cwd, appCfg, opts, agentOS)
 		}
 	}
 
@@ -519,24 +530,14 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 		return fmt.Errorf("unable to detect project type; ensure a Dockerfile, requirements.txt, or Package.swift is present")
 	}
 
-	// Query the device architecture.
-	versionResp, err := conn.AgentService.GetAgentVersion(ctx, &agentpb.GetAgentVersionRequest{})
-	if err != nil {
-		return fmt.Errorf("querying device version: %w", err)
-	}
-	architecture := versionResp.GetCpuArchitecture()
-	if architecture == "" {
-		architecture = "arm64"
-	}
-	platform := "linux/" + architecture
-
 	// Verify auth certs are available if the device's registry requires mTLS.
 	if err := requireRegistryAuth(ctx, conn); err != nil {
 		return err
 	}
 
 	// Build and push the Docker image directly to the device's registry.
-	registryAddr := registryHost(conn.Host, 5000)
+	regPort := registryPort(agentOS)
+	registryAddr := registryHost(conn.Host, regPort)
 	repo := strings.ToLower(appCfg.AppID)
 	registryImage := fmt.Sprintf("%s/%s:latest", registryAddr, repo)
 
@@ -554,8 +555,8 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 		}
 	}
 
-	// The agent pulls from localhost:5000.
-	deviceImage := fmt.Sprintf("localhost:5000/%s:latest", repo)
+	// The agent pulls from localhost:<regPort>.
+	deviceImage := fmt.Sprintf("localhost:%d/%s:latest", regPort, repo)
 
 	appConfigData, err := json.Marshal(appCfg)
 	if err != nil {
