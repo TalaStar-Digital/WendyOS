@@ -67,7 +67,10 @@ func main() {
 	// Ensure NVIDIA CDI spec exists for GPU container support.
 	cdi.EnsureNVIDIACDISpec(logger)
 
-	networkMgr := agentnet.NewNMCLINetworkManager(logger)
+	var networkMgr services.NetworkManager
+	if nm := agentnet.NewNMCLINetworkManager(logger); nm != nil {
+		networkMgr = nm
+	}
 	hwDiscoverer := hardware.NewSystemHardwareDiscoverer(logger)
 	btManager := bluetooth.NewManager(logger)
 
