@@ -45,7 +45,12 @@ func listDrivesText() ([]drive, error) {
 
 	// Also check internal physical disks for removable media
 	// (e.g., built-in SD card readers show as "internal" on macOS).
-	if internalOut, err := exec.Command("diskutil", "list", "internal", "physical").Output(); err == nil {
+	internalOut, err := exec.Command("diskutil", "list", "internal", "physical").CombinedOutput()
+	if err != nil {
+		// Surface a warning instead of silently ignoring the failure so that
+		// users can diagnose missing drives (e.g., SD cards in built-in readers).
+		fmt.Fprintf(os.Stderr, "warning: failed to list internal physical disks with diskutil: %v\n", err)
+	} else {
 		for _, d := range parseDiskutilOutput(internalOut, seen, false) {
 			if d.IsRemovable {
 				drives = append(drives, d)
