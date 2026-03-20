@@ -1100,7 +1100,9 @@ func newDeviceUpdateCmd() *cobra.Command {
 				}
 			} else {
 				// Auto-download: detect arch, fetch release, download binary.
-				fmt.Println("Detecting device architecture...")
+				if !jsonOutput {
+					fmt.Println("Detecting device architecture...")
+				}
 				versionResp, err := conn.AgentService.GetAgentVersion(ctx, &agentpb.GetAgentVersionRequest{})
 				if err != nil {
 					return fmt.Errorf("getting device info: %w", err)
@@ -1110,19 +1112,25 @@ func newDeviceUpdateCmd() *cobra.Command {
 				if arch == "" {
 					return fmt.Errorf("device did not report CPU architecture; use --binary to provide the binary manually")
 				}
-				fmt.Printf("Device architecture: %s\n", arch)
+				if !jsonOutput {
+					fmt.Printf("Device architecture: %s\n", arch)
+				}
 
 				releaseType := "stable"
 				if nightly {
 					releaseType = "nightly"
 				}
-				fmt.Printf("Fetching latest %s release...\n", releaseType)
+				if !jsonOutput {
+					fmt.Printf("Fetching latest %s release...\n", releaseType)
+				}
 
 				release, err := fetchAgentRelease(nightly)
 				if err != nil {
 					return fmt.Errorf("fetching release: %w", err)
 				}
-				fmt.Printf("Found release: %s\n", release.TagName)
+				if !jsonOutput {
+					fmt.Printf("Found release: %s\n", release.TagName)
+				}
 
 				// Find matching asset: wendy-agent-linux-{arch}-*.tar.gz
 				assetPrefix := fmt.Sprintf("wendy-agent-linux-%s-", arch)
@@ -1137,7 +1145,9 @@ func newDeviceUpdateCmd() *cobra.Command {
 					return fmt.Errorf("no asset found for linux/%s in release %s", arch, release.TagName)
 				}
 
-				fmt.Printf("Downloading %s...\n", matchedAsset.Name)
+				if !jsonOutput {
+					fmt.Printf("Downloading %s...\n", matchedAsset.Name)
+				}
 				binaryData, err = downloadAgentBinary(*matchedAsset)
 				if err != nil {
 					return fmt.Errorf("downloading binary: %w", err)
@@ -1167,14 +1177,22 @@ func newDeviceUpdateCmd() *cobra.Command {
 				if updateErr != nil {
 					return updateErr
 				}
-			} else {
+			} else if !jsonOutput {
 				fmt.Println("Uploading agent binary...")
+				if err := deviceUpdateUpload(ctx, conn.AgentService, binaryData, sha256Hash); err != nil {
+					return err
+				}
+			} else {
 				if err := deviceUpdateUpload(ctx, conn.AgentService, binaryData, sha256Hash); err != nil {
 					return err
 				}
 			}
 
-			fmt.Println("Agent updated successfully.")
+			if jsonOutput {
+				fmt.Println(`{"status":"success","message":"Agent updated successfully."}`)
+			} else {
+				fmt.Println("Agent updated successfully.")
+			}
 			return nil
 		},
 	}
