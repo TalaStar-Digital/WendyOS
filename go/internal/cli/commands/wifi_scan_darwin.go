@@ -84,6 +84,8 @@ func scanLocalWifiNetworks() ([]localWifiNetwork, error) {
 	return networks, nil
 }
 
+const supportsKeychainLookup = true
+
 // lookupKeychainPassword attempts to retrieve a saved WiFi password from the
 // macOS System Keychain using the `security` command. Returns ("", nil) if the
 // SSID is not found or the user denies the authorization prompt.

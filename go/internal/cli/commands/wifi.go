@@ -118,19 +118,23 @@ func newWifiConnectCmd() *cobra.Command {
 			}
 
 			// If no password provided and terminal is interactive, offer keychain
-			// lookup or fall back to manual entry.
+			// lookup (macOS only) or fall back to manual entry.
 			if password == "" && term.IsTerminal(int(os.Stdin.Fd())) {
-				fmt.Printf("Look up password for '%s' from keychain? (macOS will ask for permission) [Y/n] ", ssid)
-				var answer string
-				fmt.Scanln(&answer)
-				answer = strings.TrimSpace(strings.ToLower(answer))
+				if supportsKeychainLookup {
+					fmt.Printf("Look up password for '%s' from keychain? (macOS will ask for permission) [Y/n] ", ssid)
+					var answer string
+					if _, err := fmt.Scanln(&answer); err != nil {
+						answer = "n"
+					}
+					answer = strings.TrimSpace(strings.ToLower(answer))
 
-				if answer == "" || answer == "y" || answer == "yes" {
-					if kp, err := lookupKeychainPassword(ssid); err == nil && kp != "" {
-						fmt.Println("Using saved password from keychain.")
-						password = kp
-					} else {
-						fmt.Println("No saved password found in keychain.")
+					if answer == "" || answer == "y" || answer == "yes" {
+						if kp, err := lookupKeychainPassword(ssid); err == nil && kp != "" {
+							fmt.Println("Using saved password from keychain.")
+							password = kp
+						} else {
+							fmt.Println("Password not available from keychain.")
+						}
 					}
 				}
 
