@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -75,10 +76,16 @@ func parseAvahiMDNSService(line string) (MDNSService, bool) {
 		return MDNSService{}, false
 	}
 
+	ifaceName := fields[1]
 	instanceName := avahiUnescape(fields[3])
 	hostname := strings.TrimSuffix(fields[6], ".")
 	ipAddr := fields[7]
 	port, _ := strconv.Atoi(fields[8])
+
+	// IPv6 link-local addresses need a zone ID (%iface) to be routable.
+	if addr, err := netip.ParseAddr(ipAddr); err == nil && addr.Is6() && addr.IsLinkLocalUnicast() {
+		ipAddr = ipAddr + "%" + ifaceName
+	}
 
 	txtRecords := parseAvahiTXT(fields[9])
 
@@ -146,6 +153,10 @@ func queryInterfaceMDNS(_ context.Context, iface *net.Interface, serviceType str
 				ipAddr = entry.AddrV4.String()
 			} else if entry.AddrV6 != nil {
 				ipAddr = entry.AddrV6.String()
+				// IPv6 link-local addresses need a zone ID (%iface) to be routable.
+				if entry.AddrV6.IsLinkLocalUnicast() {
+					ipAddr = ipAddr + "%" + iface.Name
+				}
 			}
 
 			txtRecords := make(map[string]string)

@@ -80,11 +80,27 @@ func TestParseAvahiResolveLine(t *testing.T) {
 		wantPort int
 	}{
 		{
-			name:     "valid resolved line",
+			name:     "valid resolved line with link-local IPv6",
 			line:     `=;enp0s20f0u9;IPv6;WendyOS\032on\032wendyos-calm-zinnia;_wendyos._udp;local;wendyos-calm-zinnia.local;fe80::ffab:7cf6:ef:21c5;50051;"displayname=Calm Zinnia" "name=calm-zinnia" "wendyosdevice=769dc651-4eb2-49f3-b9f6-3e473f15694a" "id=WendyOS Device calm-zinnia"`,
 			wantOK:   true,
 			wantID:   "769dc651-4eb2-49f3-b9f6-3e473f15694a",
-			wantIP:   "fe80::ffab:7cf6:ef:21c5",
+			wantIP:   "fe80::ffab:7cf6:ef:21c5%enp0s20f0u9",
+			wantPort: 50051,
+		},
+		{
+			name:     "global IPv6 does not get zone ID",
+			line:     `=;eth0;IPv6;WendyOS\032device;_wendyos._udp;local;wendyos.local;2001:db8::1;50051;"wendyosdevice=abc123"`,
+			wantOK:   true,
+			wantID:   "abc123",
+			wantIP:   "2001:db8::1",
+			wantPort: 50051,
+		},
+		{
+			name:     "IPv4 does not get zone ID",
+			line:     `=;eth0;IPv4;WendyOS\032device;_wendyos._udp;local;wendyos.local;192.168.1.10;50051;"wendyosdevice=abc123"`,
+			wantOK:   true,
+			wantID:   "abc123",
+			wantIP:   "192.168.1.10",
 			wantPort: 50051,
 		},
 		{
@@ -143,6 +159,9 @@ func TestParseAvahiMDNSService(t *testing.T) {
 	}
 	if svc.Hostname != "wendyos-calm-zinnia.local" {
 		t.Fatalf("Hostname = %q, want %q", svc.Hostname, "wendyos-calm-zinnia.local")
+	}
+	if svc.IPAddress != "fe80::ffab:7cf6:ef:21c5%enp0s20f0u9" {
+		t.Fatalf("IPAddress = %q, want %q", svc.IPAddress, "fe80::ffab:7cf6:ef:21c5%enp0s20f0u9")
 	}
 	if svc.Port != 50051 {
 		t.Fatalf("Port = %d, want %d", svc.Port, 50051)

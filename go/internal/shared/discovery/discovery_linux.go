@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -89,11 +90,17 @@ func parseAvahiResolveLine(line string) (models.LANDevice, bool) {
 		return models.LANDevice{}, false
 	}
 
-	// Unescape avahi's \NNN octal sequences (e.g. \032 for space).
+	// Unescape avahi's \NNN decimal sequences (e.g. \032 for space).
+	ifaceName := fields[1]
 	instanceName := avahiUnescape(fields[3])
 	hostname := strings.TrimSuffix(fields[6], ".")
 	ipAddr := fields[7]
 	port, _ := strconv.Atoi(fields[8])
+
+	// IPv6 link-local addresses need a zone ID (%iface) to be routable.
+	if addr, err := netip.ParseAddr(ipAddr); err == nil && addr.Is6() && addr.IsLinkLocalUnicast() {
+		ipAddr = ipAddr + "%" + ifaceName
+	}
 
 	// Parse TXT records from the remaining field.
 	txtRecords := parseAvahiTXT(fields[9])
@@ -214,6 +221,10 @@ func queryInterface(ctx context.Context, iface *net.Interface, timeout time.Dura
 				ipAddr = entry.AddrV4.String()
 			} else if entry.AddrV6 != nil {
 				ipAddr = entry.AddrV6.String()
+				// IPv6 link-local addresses need a zone ID (%iface) to be routable.
+				if entry.AddrV6.IsLinkLocalUnicast() {
+					ipAddr = ipAddr + "%" + iface.Name
+				}
 			}
 
 			id := ""
