@@ -76,6 +76,13 @@ func (m *mockContainerdClient) StartContainer(_ context.Context, _ string) (<-ch
 	return m.startOutputCh, nil
 }
 
+func (m *mockContainerdClient) StartContainerWithStdin(_ context.Context, _ string, _ io.Reader) (<-chan ContainerOutput, error) {
+	if m.startErr != nil {
+		return nil, m.startErr
+	}
+	return m.startOutputCh, nil
+}
+
 // ---------- bufconn helper ----------
 
 func startContainerServer(t *testing.T, client ContainerdClient) (agentpb.WendyContainerServiceClient, func()) {

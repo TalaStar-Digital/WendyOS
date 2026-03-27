@@ -24,5 +24,6 @@ const (
 	ColorBorder     = Emerald600            // table borders
 	ColorSelectedBg = Emerald900            // table selection background
 	ColorSelectedFg = Emerald100            // table selection foreground
-	ColorDim        = lipgloss.Color("240") // muted/hint text (neutral gray)
+	ColorDim        = lipgloss.Color("240")    // muted/hint text (neutral gray)
+	ColorNotice     = lipgloss.Color("#f59e0b") // amber — informational notices
 )

@@ -12,6 +12,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
@@ -186,28 +188,80 @@ func newAppsStartCmd() *cobra.Command {
 			}
 
 			if target.Agent != nil {
-				stream, err := target.Agent.ContainerService.StartContainer(ctx, &agentpb.StartContainerRequest{
-					AppName: appName,
-				})
-				if err != nil {
-					return fmt.Errorf("starting container: %w", err)
+				type containerOutputStream interface {
+					Recv() (*agentpb.RunContainerLayersResponse, error)
 				}
+
+				var outStream containerOutputStream
+
+				attachStream, attachErr := target.Agent.ContainerService.AttachContainer(ctx)
+				if attachErr == nil {
+					attachErr = attachStream.Send(&agentpb.AttachContainerRequest{
+						RequestType: &agentpb.AttachContainerRequest_AppName{AppName: appName},
+					})
+				}
+				if attachErr != nil {
+					cliNotice("Notice: stdin not attached (%v)", attachErr)
+					startStream, startErr := target.Agent.ContainerService.StartContainer(ctx, &agentpb.StartContainerRequest{
+						AppName: appName,
+					})
+					if startErr != nil {
+						return fmt.Errorf("starting container: %w", startErr)
+					}
+					outStream = startStream
+				} else {
+					go func() {
+						buf := make([]byte, 4096)
+						for {
+							n, readErr := os.Stdin.Read(buf)
+							if n > 0 {
+								if sendErr := attachStream.Send(&agentpb.AttachContainerRequest{
+									RequestType: &agentpb.AttachContainerRequest_StdinData{StdinData: buf[:n]},
+								}); sendErr != nil {
+									cliNotice("Notice: stdin detached (%v)", sendErr)
+									return
+								}
+							}
+							if readErr != nil {
+								_ = attachStream.CloseSend()
+								return
+							}
+						}
+					}()
+					outStream = attachStream
+				}
+
+				stdinAttempted := attachErr == nil
+				gotFirstResponse := false
 				for {
-					resp, err := stream.Recv()
+					resp, err := outStream.Recv()
 					if err == io.EOF {
 						break
 					}
 					if err != nil {
+						if stdinAttempted && !gotFirstResponse && status.Code(err) == codes.Unimplemented {
+							cliNotice("Notice: stdin not attached (not supported by agent)")
+							startStream, startErr := target.Agent.ContainerService.StartContainer(ctx, &agentpb.StartContainerRequest{
+								AppName: appName,
+							})
+							if startErr != nil {
+								return fmt.Errorf("starting container: %w", startErr)
+							}
+							outStream = startStream
+							stdinAttempted = false
+							continue
+						}
 						return fmt.Errorf("receiving start response: %w", err)
 					}
+					gotFirstResponse = true
 					if out := resp.GetStdoutOutput(); out != nil {
-						fmt.Print(string(out.GetData()))
+						os.Stdout.Write(out.GetData())
 					}
 					if out := resp.GetStderrOutput(); out != nil {
-						fmt.Print(string(out.GetData()))
+						os.Stderr.Write(out.GetData())
 					}
 				}
-				fmt.Printf("Application %s started.\n", appName)
+				fmt.Printf("Application %s stopped.\n", appName)
 				return nil
 			}
 
