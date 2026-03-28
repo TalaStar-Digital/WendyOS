@@ -188,54 +188,10 @@ func newAppsStartCmd() *cobra.Command {
 			}
 
 			if target.Agent != nil {
-				type containerOutputStream interface {
-					Recv() (*agentpb.RunContainerLayersResponse, error)
+				outStream, stdinAttempted, err := openContainerStream(ctx, target.Agent.ContainerService, appName)
+				if err != nil {
+					return err
 				}
-
-				var outStream containerOutputStream
-
-				attachStream, attachErr := target.Agent.ContainerService.AttachContainer(ctx)
-				if attachErr == nil {
-					attachErr = attachStream.Send(&agentpb.AttachContainerRequest{
-						RequestType: &agentpb.AttachContainerRequest_AppName{AppName: appName},
-					})
-					if attachErr != nil {
-						_ = attachStream.CloseSend()
-					}
-				}
-				if attachErr != nil {
-					cliNotice("Notice: stdin not attached (%v)", attachErr)
-					startStream, startErr := target.Agent.ContainerService.StartContainer(ctx, &agentpb.StartContainerRequest{
-						AppName: appName,
-					})
-					if startErr != nil {
-						return fmt.Errorf("starting container: %w", startErr)
-					}
-					outStream = startStream
-				} else {
-					go func() {
-						buf := make([]byte, 4096)
-						for {
-							n, readErr := os.Stdin.Read(buf)
-							if n > 0 {
-								if sendErr := attachStream.Send(&agentpb.AttachContainerRequest{
-									RequestType: &agentpb.AttachContainerRequest_StdinData{StdinData: buf[:n]},
-								}); sendErr != nil {
-									cliNotice("Notice: stdin detached (%v)", sendErr)
-									_ = attachStream.CloseSend()
-									return
-								}
-							}
-							if readErr != nil {
-								_ = attachStream.CloseSend()
-								return
-							}
-						}
-					}()
-					outStream = attachStream
-				}
-
-				stdinAttempted := attachErr == nil
 				gotFirstResponse := false
 				for {
 					resp, err := outStream.Recv()
