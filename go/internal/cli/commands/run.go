@@ -316,7 +316,7 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 		return err
 	}
 
-	registryAddr, proxyCleanup, err := resolveRegistry(ctx, conn.Host, 5000)
+	registryAddr, proxyCleanup, err := resolveRegistryForSwift(ctx, conn.Host, 5000)
 	if err != nil {
 		return err
 	}
@@ -368,8 +368,6 @@ func runWithProvider(ctx context.Context, p providers.DeviceProvider, device mod
 		// Dockerfile exists — try to use Swift product name if Package.swift is also present.
 		if swiftProduct, err := findSwiftProduct(projectPath); err == nil {
 			product = swiftProduct
-		} else {
-			cliLogln("Warning: could not determine Swift product: %v", err)
 		}
 	}
 
