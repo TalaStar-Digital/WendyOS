@@ -16,15 +16,16 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
 	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
 	"github.com/wendylabsinc/wendy/internal/shared/models"
 	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
-	"golang.org/x/term"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 var cliStyle = lipgloss.NewStyle().Foreground(tui.ColorDim)
@@ -547,6 +548,9 @@ func startAndStreamContainer(ctx context.Context, conn *grpcclient.AgentConnecti
 		attachErr = attachStream.Send(&agentpb.AttachContainerRequest{
 			RequestType: &agentpb.AttachContainerRequest_AppName{AppName: appCfg.AppID},
 		})
+		if attachErr != nil {
+			_ = attachStream.CloseSend()
+		}
 	}
 	if attachErr != nil {
 		cliNotice("Notice: stdin not attached (%v)", attachErr)

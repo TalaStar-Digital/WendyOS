@@ -295,6 +295,7 @@ func (s *ContainerService) AttachContainer(stream grpc.BidiStreamingServer[agent
 
 	// Pipe client stdin messages into the container's stdin.
 	stdinR, stdinW := io.Pipe()
+	defer stdinR.Close()
 
 	// Goroutine: forward stdin_data messages from the gRPC stream to stdinW.
 	go func() {

@@ -199,6 +199,9 @@ func newAppsStartCmd() *cobra.Command {
 					attachErr = attachStream.Send(&agentpb.AttachContainerRequest{
 						RequestType: &agentpb.AttachContainerRequest_AppName{AppName: appName},
 					})
+					if attachErr != nil {
+						_ = attachStream.CloseSend()
+					}
 				}
 				if attachErr != nil {
 					cliNotice("Notice: stdin not attached (%v)", attachErr)
