@@ -100,6 +100,47 @@ func TestApplyEntitlements_Network_Host(t *testing.T) {
 	}
 }
 
+func TestApplyEntitlements_Network_Host_ResolvConf(t *testing.T) {
+	const resolvedConf = "/run/systemd/resolve/resolv.conf"
+	_, errSystemd := os.Stat(resolvedConf)
+	_, errHost := os.Stat("/etc/resolv.conf")
+	if errSystemd != nil && errHost != nil {
+		t.Skip("no resolv.conf on host; skipping DNS mount assertion")
+	}
+
+	spec := DefaultSpec("/rootfs", []string{"/bin/sh"})
+	cfg := &appconfig.AppConfig{
+		AppID: "test-app",
+		Entitlements: []appconfig.Entitlement{
+			{Type: appconfig.EntitlementNetwork, Mode: "host"},
+		},
+	}
+
+	if err := ApplyEntitlements(spec, cfg, ApplyOptions{}); err != nil {
+		t.Fatalf("ApplyEntitlements() error = %v", err)
+	}
+
+	// A container with host networking but its own mount namespace needs
+	// /etc/resolv.conf bind-mounted from the host; otherwise the container
+	// rootfs may have an empty file and all DNS lookups fail.
+	if !hasMountDest(spec, "/etc/resolv.conf") {
+		t.Fatal("host network entitlement did not mount /etc/resolv.conf")
+	}
+
+	for _, m := range spec.Mounts {
+		if m.Destination == "/etc/resolv.conf" {
+			if m.Source != resolvedConf && m.Source != "/etc/resolv.conf" {
+				t.Errorf("/etc/resolv.conf source = %q, want %q or %q",
+					m.Source, resolvedConf, "/etc/resolv.conf")
+			}
+			if m.Type != "bind" {
+				t.Errorf("/etc/resolv.conf mount type = %q, want \"bind\"", m.Type)
+			}
+			break
+		}
+	}
+}
+
 func TestApplyEntitlements_Network_Default(t *testing.T) {
 	spec := DefaultSpec("/rootfs", []string{"/bin/sh"})
 	cfg := &appconfig.AppConfig{

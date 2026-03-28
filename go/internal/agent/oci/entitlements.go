@@ -204,10 +204,13 @@ func applyNetwork(spec *Spec, ent appconfig.Entitlement) {
 		spec.Process.Capabilities.Effective = appendUnique(spec.Process.Capabilities.Effective, "CAP_NET_ADMIN")
 		spec.Process.Capabilities.Permitted = appendUnique(spec.Process.Capabilities.Permitted, "CAP_NET_ADMIN")
 
-		// Mount systemd-resolved's actual resolv.conf for DNS resolution.
-		// /etc/resolv.conf often points to 127.0.0.53 (systemd-resolved stub)
-		// which does not work in containers. The /run path contains real upstream DNS servers.
-		// Only mount if systemd-resolved is running (the file exists).
+		// Mount a resolv.conf from the host so DNS works inside the container.
+		// The container has its own mount namespace, so its rootfs resolv.conf
+		// may be empty. Prefer systemd-resolved's upstream file, since on
+		// systemd hosts /etc/resolv.conf often points to the 127.0.0.53 stub
+		// listener; using the upstream file avoids depending on that stub in
+		// environments where the container has its own network namespace. When
+		// systemd-resolved is not in use, fall back to the host's /etc/resolv.conf.
 		const resolvedConf = "/run/systemd/resolve/resolv.conf"
 		alreadyMounted := false
 		for _, m := range spec.Mounts {
@@ -217,11 +220,17 @@ func applyNetwork(spec *Spec, ent appconfig.Entitlement) {
 			}
 		}
 		if !alreadyMounted {
+			source := ""
 			if _, err := os.Stat(resolvedConf); err == nil {
+				source = resolvedConf
+			} else if _, err := os.Stat("/etc/resolv.conf"); err == nil {
+				source = "/etc/resolv.conf"
+			}
+			if source != "" {
 				spec.Mounts = append(spec.Mounts, Mount{
 					Destination: "/etc/resolv.conf",
 					Type:        "bind",
-					Source:      resolvedConf,
+					Source:      source,
 					Options:     []string{"rbind", "ro"},
 				})
 			}
