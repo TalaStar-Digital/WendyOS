@@ -570,11 +570,37 @@ jobs:
           git tag -fa latest "$TARGET_SHA" -m "Latest prerelease: $TAG"
           git push -f origin refs/tags/latest
 
+      # Discord notification for nightly prereleases
+      - name: Notify Discord (nightly)
+        if: needs.determine-version.outputs.is_prerelease == 'true'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_NIGHTLY_WEBHOOK_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.determine-version.outputs.tag_name }}"
+          REPO="${{ github.repository }}"
+          URL="https://github.com/${REPO}/releases/tag/${VERSION}"
+
+          if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+            PAYLOAD=$(jq -n \
+              --arg content "🌙 **New nightly build**: **${VERSION}**" \
+              --arg title "Nightly ${VERSION}" \
+              --arg url "$URL" \
+              --arg desc "## Update the agent on your device\n\`\`\`\nwendy device update --nightly\n\`\`\`" \
+              --arg footer "${REPO} • ${VERSION}" \
+              '{content: $content, embeds: [{title: $title, url: $url, description: $desc, color: 8421504, footer: {text: $footer}}]}')
+            curl -sS -X POST -H "Content-Type: application/json" \
+              -d "$PAYLOAD" \
+              "$DISCORD_WEBHOOK_URL" && echo "Discord nightly notification sent" || echo "Discord nightly notification failed"
+          else
+            echo "DISCORD_NIGHTLY_WEBHOOK_URL not configured, skipping notification"
+          fi
+
       # Discord notification for stable releases
       - name: Notify Discord
         if: needs.determine-version.outputs.is_prerelease == 'false'
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ needs.determine-version.outputs.tag_name }}"
