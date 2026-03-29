@@ -46,6 +46,23 @@ cd go
 go build -o wendy-agent ./cmd/wendy-agent
 ```
 
+### Local Developer Tip
+
+Add a `wendy-dev` alias to your shell profile (`~/.zshrc` or `~/.bashrc`) so you can quickly iterate on CLI changes without overwriting your installed `wendy`:
+
+```sh
+wendy-dev() {
+  (cd /path/to/wendy-agent/go && go run ./cmd/wendy "$@")
+}
+```
+
+Then use `wendy-dev` anywhere you'd normally use `wendy`:
+
+```sh
+wendy-dev run
+wendy-dev discover --json
+```
+
 ## Setting Up the Device
 
 The device needs to run the `wendy-agent`. We provide pre-built [WendyOS](https://wendy.sh) images for the Raspberry Pi and the NVIDIA Jetson Orin Nano. These are preconfigured for remote debugging and have the wendy-agent preinstalled.
