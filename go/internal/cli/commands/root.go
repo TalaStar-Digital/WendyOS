@@ -108,8 +108,6 @@ func NewRootCmd() *cobra.Command {
 	// Misc Commands
 	cacheCmd := newCacheCmd()
 	cacheCmd.GroupID = "misc"
-	updateCmd := newUpdateCmd()
-	updateCmd.GroupID = "misc"
 	infoCmd := newInfoCmd()
 	infoCmd.GroupID = "misc"
 	analyticsCmd := newAnalyticsCmd()
@@ -141,7 +139,6 @@ func NewRootCmd() *cobra.Command {
 		bluetoothCmd,
 		hardwareCmd,
 		cacheCmd,
-		updateCmd,
 		infoCmd,
 		analyticsCmd,
 	)

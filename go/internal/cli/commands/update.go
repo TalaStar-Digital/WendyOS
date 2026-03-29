@@ -19,15 +19,21 @@ const cliUpdateCheckInterval = 24 * time.Hour
 // check finds a newer release. Buffered so the goroutine never blocks.
 var cliUpdateNoticeCh = make(chan string, 1)
 
-// scheduleCLIUpdateCheck records the check timestamp and launches a goroutine
-// that fetches the latest release. If a newer version is found it sends it to
-// cliUpdateNoticeCh for PersistentPostRunE to display.
+// scheduleCLIUpdateCheck launches a goroutine that fetches the latest release.
+// The timestamp is written only after the network call completes so that a
+// fast process exit (goroutine killed before it finishes) doesn't burn the 24 h
+// window. If a newer version is found it sends it to cliUpdateNoticeCh for
+// PersistentPostRunE to display.
 func scheduleCLIUpdateCheck(cfg *config.Config) {
-	cfg.LastCLIUpdateCheck = time.Now().UTC().Format(time.RFC3339)
-	_ = config.Save(cfg)
-
 	go func() {
 		latest, err := checkLatestRelease()
+		// Persist the timestamp regardless of outcome so we don't hammer the
+		// API on repeated fast invocations when the network is unavailable.
+		cfg.LastCLIUpdateCheck = time.Now().UTC().Format(time.RFC3339)
+		if saveErr := config.Save(cfg); saveErr != nil {
+			// If we can't persist the timestamp, bail out so we retry next time.
+			return
+		}
 		if err != nil {
 			return
 		}
@@ -53,7 +59,12 @@ func dueCLIUpdateCheck(cfg *config.Config) bool {
 	if err != nil {
 		return true
 	}
-	return time.Since(t) >= cliUpdateCheckInterval
+	now := time.Now().UTC()
+	if t.After(now) {
+		// Stored timestamp is in the future (clock skew or manual edit); treat as due.
+		return true
+	}
+	return now.Sub(t) >= cliUpdateCheckInterval
 }
 
 func newUpdateCmd() *cobra.Command {
