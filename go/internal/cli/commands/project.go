@@ -264,9 +264,10 @@ func promptEntitlementFields(ent *appconfig.Entitlement) error {
 		}
 		ent.Name = name
 
-		path, err := tui.PromptText(
+		path, err := tui.PromptTextWithDefault(
 			"Mount path",
-			"inside your container, e.g. /data",
+			"inside your container",
+			"/data",
 			notEmpty("mount path"),
 		)
 		if err != nil {
@@ -275,9 +276,10 @@ func promptEntitlementFields(ent *appconfig.Entitlement) error {
 		ent.Path = path
 
 	case appconfig.EntitlementI2C:
-		device, err := tui.PromptText(
+		device, err := tui.PromptTextWithDefault(
 			"I2C device",
-			"e.g. /dev/i2c-1",
+			"",
+			"/dev/i2c-1",
 			notEmpty("I2C device"),
 		)
 		if err != nil {

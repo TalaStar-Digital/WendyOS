@@ -28,13 +28,18 @@ type TextPromptModel struct {
 }
 
 // NewTextPrompt creates a new text prompt with an optional validation function.
-func NewTextPrompt(prompt, hint string, validate ValidateFunc) TextPromptModel {
+// If defaultValue is non-empty, the input is pre-filled with it.
+func NewTextPrompt(prompt, hint, defaultValue string, validate ValidateFunc) TextPromptModel {
 	ti := textinput.New()
 	ti.Focus()
 	ti.CharLimit = 256
 	ti.Width = 50
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(ColorPrimary)
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
+	if defaultValue != "" {
+		ti.SetValue(defaultValue)
+		ti.CursorEnd()
+	}
 
 	return TextPromptModel{
 		Prompt:   prompt,
@@ -118,7 +123,13 @@ func (m TextPromptModel) Cancelled() bool {
 // PromptText runs an interactive text prompt with validation. Returns the
 // validated value or an error on cancellation / Bubble Tea failure.
 func PromptText(prompt, hint string, validate ValidateFunc, programOpts ...tea.ProgramOption) (string, error) {
-	m := NewTextPrompt(prompt, hint, validate)
+	return PromptTextWithDefault(prompt, hint, "", validate, programOpts...)
+}
+
+// PromptTextWithDefault is like PromptText but pre-fills the input with a
+// default value that the user can accept (enter) or edit.
+func PromptTextWithDefault(prompt, hint, defaultValue string, validate ValidateFunc, programOpts ...tea.ProgramOption) (string, error) {
+	m := NewTextPrompt(prompt, hint, defaultValue, validate)
 	p := tea.NewProgram(m, programOpts...)
 	result, err := p.Run()
 	if err != nil {
