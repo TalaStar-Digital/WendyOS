@@ -169,7 +169,7 @@ for example in "${EXAMPLES[@]}"; do
         fi
 
         # Pre-cleanup: remove leftover container and image from previous runs
-        "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --delete-image &>/dev/null || true
+        "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --cleanup &>/dev/null || true
 
         # Run the example
         if is_server "$example"; then
@@ -185,7 +185,7 @@ for example in "${EXAMPLES[@]}"; do
 
         # Post-cleanup: stop and remove container + image
         "$WENDY" apps stop "$app_id" --device "$HOSTNAME" &>/dev/null || true
-        "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --delete-image &>/dev/null || true
+        "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --cleanup &>/dev/null || true
 
         # Clean up generated wendy.json
         cleanup_generated_wendy_json "$dir"
@@ -240,7 +240,7 @@ else
         ((GPU_FOUND++))
 
         # Pre-cleanup: remove leftover container and image from previous runs
-        "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --delete-image &>/dev/null || true
+        "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --cleanup &>/dev/null || true
 
         # All GPU samples run detached (they're long-running)
         run_test "$test_name" \
@@ -248,7 +248,7 @@ else
 
         # Post-cleanup: stop and remove container + image
         "$WENDY" apps stop "$app_id" --device "$HOSTNAME" &>/dev/null || true
-        "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --delete-image &>/dev/null || true
+        "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --cleanup &>/dev/null || true
 
     done < <(find "$SAMPLES_DIR" -name wendy.json -type f 2>/dev/null)
 
