@@ -1,4 +1,4 @@
-//go:build darwin || linux
+//go:build darwin || linux || windows
 
 package commands
 
@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -87,7 +86,7 @@ func runOSInstallDirect(imagePath string, driveID string, force bool) error {
 	}
 
 	fmt.Printf("Writing image to %s...\n", targetDrive.DevicePath)
-	fmt.Println("You may be prompted for your password (sudo is required).")
+	fmt.Println(elevationHint())
 	if err := writeImageToDisk(imagePath, *targetDrive, nil); err != nil {
 		return fmt.Errorf("writing image: %w", err)
 	}
@@ -289,11 +288,10 @@ func installLinuxImage(ctx context.Context, deviceKey string, device pickerDevic
 	}
 	totalSize := imgStat.Size()
 
-	// Pre-authenticate sudo so the password prompt works on the raw terminal
-	// before we start the Bubble Tea TUI.
-	fmt.Println("You may be prompted for your password (sudo is required).")
-	if err := exec.Command("sudo", "-v").Run(); err != nil {
-		return fmt.Errorf("sudo authentication failed: %w", err)
+	// Pre-authenticate elevated privileges (sudo on Unix, admin check on
+	// Windows) so the prompt works on the raw terminal before the TUI starts.
+	if err := preAuthElevation(); err != nil {
+		return err
 	}
 
 	// Write image to drive with progress bar.
