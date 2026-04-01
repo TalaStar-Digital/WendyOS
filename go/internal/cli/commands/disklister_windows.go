@@ -234,6 +234,12 @@ func clearDiskPartitions(diskNum int) error {
 	)
 	out, err := exec.Command("powershell", "-NoProfile", "-Command", script).CombinedOutput()
 	if err != nil {
+		// "not been initialized" means the disk already has no partition
+		// table (e.g. from a previous Clear-Disk). That's the state we
+		// want, so treat it as success.
+		if strings.Contains(string(out), "not been initialized") {
+			return nil
+		}
 		return fmt.Errorf("clearing disk %d: %s: %w", diskNum, strings.TrimSpace(string(out)), err)
 	}
 	return nil
