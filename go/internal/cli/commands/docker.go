@@ -618,7 +618,18 @@ func ensurePlaintextBuilder(ctx context.Context, configDir, registryAddr string)
 	}
 
 	// Inject the real config into the builder container and restart only when needed.
-	if configChanged {
+	// Also re-inject if the container was destroyed (e.g. after colima restart) or
+	// was bootstrapped without config injection (default buildkitd.toml lacks http=true).
+	containerName := "buildx_buildkit_" + builderName + "0"
+
+	// Read the config currently applied inside the running container (if any).
+	var liveContainerConfig string
+	if out, err := exec.CommandContext(ctx, "docker", "exec", containerName,
+		"cat", "/etc/buildkit/buildkitd.toml").Output(); err == nil {
+		liveContainerConfig = string(out)
+	}
+
+	if configChanged || liveContainerConfig != fullConfig {
 		if err := updateBuilderConfig(ctx, builderName, fullConfig); err != nil {
 			return "", fmt.Errorf("updating builder config: %w", err)
 		}
