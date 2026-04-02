@@ -417,6 +417,11 @@ func (s *ContainerService) deleteVolumes(appName string) {
 	base := "/var/lib/wendy/volumes"
 	entries, err := os.ReadDir(base)
 	if err != nil {
+		s.logger.Warn("Failed to read volumes directory",
+			zap.String("base", base),
+			zap.String("app_name", appName),
+			zap.Error(err),
+		)
 		return
 	}
 	for _, e := range entries {

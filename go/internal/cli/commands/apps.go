@@ -346,7 +346,10 @@ func newAppsRemoveCmd() *cobra.Command {
 					{Label: "Delete persistent volumes", Description: "Removes data in /var/lib/wendy/volumes", Value: "volumes"},
 				}
 				selected, err := tui.RunChecklist("Also clean up?", items)
-				if err != nil && !errors.Is(err, tui.ErrCancelled) {
+				if err != nil {
+					if errors.Is(err, tui.ErrCancelled) {
+						return ErrUserCancelled
+					}
 					return err
 				}
 				for _, item := range selected {
@@ -370,10 +373,10 @@ func newAppsRemoveCmd() *cobra.Command {
 				}
 				fmt.Printf("Application %s removed.\n", appName)
 				if cleanup {
-					fmt.Println("  Container image deleted.")
+					fmt.Println("  Container image cleanup requested.")
 				}
 				if deleteVolumes {
-					fmt.Println("  Persistent volumes deleted.")
+					fmt.Println("  Persistent volume deletion requested.")
 				}
 				return nil
 			}
@@ -395,8 +398,8 @@ func newAppsRemoveCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
-	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "Also delete the container image (frees disk space)")
-	cmd.Flags().BoolVar(&deleteVolumes, "delete-volumes", false, "Also delete persistent volumes (/var/lib/wendy/volumes)")
+	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "Also delete the container image (frees disk space; agent-connected devices only)")
+	cmd.Flags().BoolVar(&deleteVolumes, "delete-volumes", false, "Also delete persistent volumes (/var/lib/wendy/volumes; agent-connected devices only)")
 	return cmd
 }
 
