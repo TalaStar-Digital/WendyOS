@@ -412,7 +412,9 @@ func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.Del
 	return &agentpb.DeleteContainerResponse{}, nil
 }
 
-const volumesDir = "/var/lib/wendy/volumes"
+// volumesDir is the base directory for persistent volumes. It's a variable
+// (not const) so tests can override it with a temp directory.
+var volumesDir = "/var/lib/wendy/volumes"
 
 // deleteVolumes removes persistent volume directories for an app.
 func (s *ContainerService) deleteVolumes(appName string) {
