@@ -123,17 +123,25 @@ jobs:
             IFS=',' read -ra TEST_ARRAY <<< "$INPUT_TESTS"
             for t in "${TEST_ARRAY[@]}"; do
               t="$(echo "$t" | xargs)"
-              if [[ "$t" != "python-gpu" ]]; then
-                TEST_ARGS="$TEST_ARGS -t $t"
-                HAS_TESTS=true
+              if [[ "$t" == "python-gpu" ]]; then
+                continue
               fi
+              if [[ "$RUNNER_OS" == "Linux" && "$t" == swift-* ]]; then
+                echo "Skipping swift test on Linux: $t"
+                continue
+              fi
+              TEST_ARGS="$TEST_ARGS -t $t"
+              HAS_TESTS=true
             done
             if [[ "$HAS_TESTS" == false ]]; then
-              echo "No non-GPU tests requested, skipping."
+              echo "No applicable tests requested, skipping."
               exit 0
             fi
           else
             for t in swift-hello swift-network swift-bluetooth python-hello python-network python-bluetooth python-no-network python-no-bluetooth; do
+              if [[ "$RUNNER_OS" == "Linux" && "$t" == swift-* ]]; then
+                continue
+              fi
               TEST_ARGS="$TEST_ARGS -t $t"
             done
           fi
