@@ -166,6 +166,7 @@ message VolumeInfo {
     string name = 1;
     string path = 2;
     int64 size_bytes = 3;
+    // RFC 3339 UTC (directory mtime — may update when files are added/removed)
     string created_at = 4;
     repeated string used_by = 5;
 }
