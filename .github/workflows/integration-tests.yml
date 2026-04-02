@@ -112,6 +112,15 @@ jobs:
           colima start
           until docker info >/dev/null 2>&1; do sleep 2; done
 
+      - name: Diagnose device connectivity
+        run: |
+          echo "==> wendy device version for each discovered device:"
+          DISCOVER_JSON=$(./bin/wendy discover --json --timeout 10s 2>/dev/null)
+          echo "$DISCOVER_JSON" | jq -r '.lanDevices[].hostname // empty' | while read -r host; do
+            echo "--- $host ---"
+            ./bin/wendy device version --device "$host" 2>&1 || true
+          done
+
       - name: Run integration tests
         run: |
           TEST_ARGS="-w ./bin/wendy"
