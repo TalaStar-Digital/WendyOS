@@ -36,6 +36,284 @@ the container image.
 - **Temp-file + atomic rename**: the live file is never in a partially-written
   state. A corrupt or interrupted transfer leaves no debris.
 
+---
+
+## Interface Overview
+
+This section defines the complete surface area of the feature — what users
+see, what the config looks like, and what code is added or changed.
+
+### CLI
+
+No new commands or flags. The change is invisible to users who don't declare
+`files`. For darwin targets, `wendy run` now:
+
+1. Builds the Swift binary (unchanged).
+2. Syncs files to the device via `SyncFiles` gRPC (binary always included,
+   plus any entries from `wendy.json`'s `files` field).
+3. Calls `CreateContainer` with the binary name as `cmd` — no OCI blobs.
+
+**Example output during a first deploy:**
+
+```
+Syncing files...
+  app/MyApp          2.3 MB / 2.3 MB  100%   [1/3]
+  models/weights.bin 4.1 GB / 4.1 GB  100%   [2/3]
+  config/app.json      512 B / 512 B  100%   [3/3]
+Total: 4.1 GB in 3 files
+```
+
+**Example output on a second deploy (binary unchanged):**
+
+```
+Files up to date.
+```
+
+**Example output on a second deploy (binary rebuilt):**
+
+```
+Syncing files...
+  app/MyApp  2.3 MB / 2.3 MB  100%   [1/1]
+Total: 2.3 MB in 1 file
+```
+
+### `wendy.json`
+
+New top-level `files` array. The binary itself is always synced implicitly;
+`files` declares supplementary assets.
+
+```json
+{
+  "appId": "sh.wendy.examples.MyApp",
+  "version": "1.0.0",
+  "language": "swift",
+  "files": [
+    { "localPath": "models/gemma-3-27b" },
+    { "localPath": "config/prod.json", "remotePath": "config/app.json" }
+  ]
+}
+```
+
+- `localPath` — required. Path relative to `wendy.json`. Must not be absolute
+  or contain `..` components.
+- `remotePath` — optional. Destination path relative to the app's working
+  directory on the device. Defaults to `localPath` (with any leading `./`
+  stripped). Must not be absolute or contain `..` components when provided.
+
+Files with no `files` key continue to work exactly as before.
+
+### gRPC Protocol
+
+**New file:** `Proto/wendy/agent/services/v1/wendy_agent_v1_file_sync_service.proto`
+
+```protobuf
+syntax = "proto3";
+
+package wendy.agent.services.v1;
+
+service WendyFileSyncService {
+  // SyncFiles is a bidirectional stream. The CLI sends SyncStart, then
+  // FileChunk/FileCommit pairs for each file to transfer, then closes the
+  // send side. The agent responds with SyncManifest, FileAck per committed
+  // file, then SyncComplete after pruning stale files.
+  rpc SyncFiles(stream SyncFilesRequest) returns (stream SyncFilesResponse);
+}
+
+// FileEntry describes a single file in a manifest.
+message FileEntry {
+  string path   = 1; // relative to app working directory
+  int64  size   = 2;
+  string sha256 = 3;
+  uint32 mode   = 4; // unix file permissions (e.g. 0755)
+}
+
+message SyncFilesRequest {
+  oneof request_type {
+    SyncStart  start  = 1;
+    FileChunk  chunk  = 2;
+    FileCommit commit = 3;
+  }
+}
+
+// SyncStart opens a sync session for the given app. The CLI sends its local
+// manifest so the agent can reply with what it already has.
+message SyncStart {
+  string             app_id   = 1;
+  repeated FileEntry manifest = 2;
+}
+
+// FileChunk carries a slice of a file being transferred.
+message FileChunk {
+  string path = 1; // relative to app working directory
+  bytes  data = 2;
+}
+
+// FileCommit signals the end of a single file transfer.
+message FileCommit {
+  string path   = 1;
+  string sha256 = 2;
+  int64  size   = 3;
+}
+
+message SyncFilesResponse {
+  oneof response_type {
+    SyncManifest manifest = 1;
+    FileAck      ack      = 2;
+    SyncComplete complete = 3;
+  }
+}
+
+// SyncManifest is the agent's reply to SyncStart: what it already has.
+message SyncManifest {
+  repeated FileEntry files = 1;
+}
+
+// FileAck confirms a file was written successfully.
+message FileAck {
+  string path = 1;
+}
+
+// SyncComplete signals that the agent has pruned stale files and the session
+// is done.
+message SyncComplete {}
+```
+
+**Session protocol (happy path):**
+
+```
+CLI                                     Agent
+ │── SyncStart{appId, localManifest} ──▶│
+ │◀── SyncManifest{agentFiles} ─────────│
+ │                                      │  (diff computed on CLI side)
+ │── FileChunk{path, data[0..N]} ──────▶│  (repeated for each chunk)
+ │── FileCommit{path, sha256, size} ───▶│
+ │◀── FileAck{path} ────────────────────│  (per file)
+ │       ...                            │
+ │── (stream EOF / CloseSend) ─────────▶│
+ │◀── SyncComplete{} ───────────────────│  (after stale-file pruning)
+```
+
+### Go — `appconfig` package
+
+**File:** `go/internal/shared/appconfig/appconfig.go`
+
+```go
+// FileSync describes a file or directory to sync to the device's app working
+// directory before the app starts. LocalPath is relative to wendy.json.
+// RemotePath is the destination path relative to the app working directory;
+// it defaults to LocalPath when omitted.
+type FileSync struct {
+    LocalPath  string `json:"localPath"`
+    RemotePath string `json:"remotePath,omitempty"`
+}
+```
+
+`AppConfig` gains:
+
+```go
+Files []FileSync `json:"files,omitempty"`
+```
+
+`Validate()` enforces: `localPath` non-empty, not absolute, no `..`;
+`remotePath` (when set) not absolute, no `..`.
+
+### Go — `grpcclient` package
+
+**File:** `go/internal/cli/grpcclient/client.go`
+
+`AgentConnection` gains:
+
+```go
+FileSyncService agentpb.WendyFileSyncServiceClient
+```
+
+Initialised in `newAgentConnection` alongside the existing service clients.
+
+### Go — `filesync` (new file)
+
+**File:** `go/internal/cli/commands/filesync.go`
+
+```go
+// fileSyncEntry pairs a resolved absolute local root with the effective
+// remote path prefix under the app working directory.
+type fileSyncEntry struct {
+    localRoot  string // absolute path on the developer's machine
+    remotePath string // relative path prefix on the device
+}
+
+// buildLocalManifest walks root and returns a FileEntry for every regular
+// file: path relative to root, size, SHA256 hex, and Unix mode.
+func buildLocalManifest(root string) ([]agentpb.FileEntry, error)
+
+// diffManifests returns the remote-relative paths of files that are missing
+// from the agent's manifest or whose SHA256 differs. Agent-only files are
+// not included — the agent handles deletions itself.
+func diffManifests(local, remote []agentpb.FileEntry) []string
+
+// syncFiles drives a complete SyncFiles session for the given entries.
+// It builds the combined local manifest, exchanges it with the agent,
+// transfers only what changed, and reports progress.
+func syncFiles(
+    ctx     context.Context,
+    conn    *grpcclient.AgentConnection,
+    appID   string,
+    entries []fileSyncEntry,
+) error
+```
+
+### Go — `run.go` changes
+
+**File:** `go/internal/cli/commands/run.go`
+
+`runMacOSWithAgent` is updated to:
+1. Build the binary (unchanged).
+2. Assemble `[]fileSyncEntry` — binary entry always present, `appCfg.Files`
+   entries appended.
+3. Call `syncFiles`.
+4. Call `CreateContainer` with `Cmd = productName`, `AppName = appID`. No OCI
+   blobs, no manifest digest.
+
+**`go/internal/cli/commands/oci.go` is deleted** — it existed solely for the
+OCI packaging path that `filesync.go` replaces.
+
+### Swift — `FileSyncService` (new file)
+
+**File:** `swift/Sources/WendyAgent/Services/FileSyncService.swift`
+
+```swift
+/// FileSyncService implements the WendyFileSyncService gRPC protocol.
+/// Each app gets an isolated working directory under `appsBase/<appId>`.
+actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncServiceServiceProtocol {
+
+    /// Default storage root: ~/Library/Application Support/wendy-agent/apps
+    init(appsBase: URL = /* default */)
+
+    /// gRPC handler — single entry point for the SyncFiles bidi stream.
+    func syncFiles(
+        requestStream: GRPCAsyncRequestStream<Wendy_Agent_Services_V1_SyncFilesRequest>,
+        responseStream: GRPCAsyncResponseStreamWriter<Wendy_Agent_Services_V1_SyncFilesResponse>,
+        context: GRPCAsyncServerCallContext
+    ) async throws
+
+    // Internal helper exposed for unit testing:
+    /// Walks workDir and returns a FileEntry for every non-.tmp regular file.
+    func buildManifest(at workDir: URL) throws -> [Wendy_Agent_Services_V1_FileEntry]
+}
+```
+
+Working directory root: `<appsBase>/<appId>/`
+
+Handler sequence:
+- **`SyncStart`** → walk working directory, return `SyncManifest`.
+- **`FileChunk`** → append to `<workDir>/<path>.tmp` (creating parents as needed).
+- **`FileCommit`** → verify SHA256 + size; set mode; atomic rename to
+  `<workDir>/<path>`; send `FileAck`. On mismatch, delete `.tmp` and return
+  an error.
+- **Stream EOF** → delete files in agent's opening manifest but absent from
+  CLI's declared set; send `SyncComplete`.
+
+---
+
 ## Development Approach
 
 Each iteration starts with failing tests that pin down a specific behaviour,
@@ -242,73 +520,8 @@ handler. No CLI integration yet.
 **File:** `Proto/wendy/agent/services/v1/wendy_agent_v1_file_sync_service.proto` (new)
 
 File sync is its own domain — file transfer and reconciliation, independent of
-container lifecycle — so it gets a dedicated service.
-
-```protobuf
-syntax = "proto3";
-
-package wendy.agent.services.v1;
-
-service WendyFileSyncService {
-  rpc SyncFiles(stream SyncFilesRequest) returns (stream SyncFilesResponse);
-}
-
-// FileEntry describes a single file in a manifest.
-message FileEntry {
-  string path   = 1; // relative to app working directory
-  int64  size   = 2;
-  string sha256 = 3;
-  uint32 mode   = 4; // unix file permissions (e.g. 0755)
-}
-
-message SyncFilesRequest {
-  oneof request_type {
-    SyncStart  start  = 1;
-    FileChunk  chunk  = 2;
-    FileCommit commit = 3;
-  }
-}
-
-// SyncStart opens a sync session for the given app. The CLI sends its
-// local manifest so the agent can respond with what it already has.
-message SyncStart {
-  string             app_id   = 1;
-  repeated FileEntry manifest = 2;
-}
-
-// FileChunk carries a slice of a file being transferred.
-message FileChunk {
-  string path = 1; // relative to app working directory
-  bytes  data = 2;
-}
-
-// FileCommit signals the end of a single file transfer.
-message FileCommit {
-  string path   = 1;
-  string sha256 = 2;
-  int64  size   = 3;
-}
-
-message SyncFilesResponse {
-  oneof response_type {
-    SyncManifest manifest  = 1;
-    FileAck      ack       = 2;
-    SyncComplete complete  = 3;
-  }
-}
-
-// SyncManifest is the agent's reply to SyncStart.
-message SyncManifest {
-  repeated FileEntry files = 1;
-}
-
-// FileAck confirms a file was written successfully.
-message FileAck {
-  string path = 1;
-}
-
-message SyncComplete {}
-```
+container lifecycle — so it gets a dedicated service. See the proto definition
+in the Interface Overview above.
 
 Regenerate Go and Swift bindings after adding the file.
 
@@ -327,17 +540,13 @@ FileSyncService: agentpb.NewWendyFileSyncServiceClient(conn),
 
 **File:** `swift/Sources/WendyAgent/Services/FileSyncService.swift` (new)
 
-The server-side implementation lives entirely in the Swift macOS agent.
-`FileSyncService` is an `actor` conforming to
-`Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProtocol`, constructed
-with a `filesBase` path (default:
-`~/Library/Application Support/wendy-agent/files`).
+See the Swift interface defined in the Interface Overview above.
 
-Working directory root: `<filesBase>/<appId>`
+Working directory root: `<appsBase>/<appId>`
 
 **`SyncFiles`** handler:
 
-**`SyncStart`** — resolve `workDir = <filesBase>/<appId>`. Walk it (if it
+**`SyncStart`** — resolve `workDir = <appsBase>/<appId>`. Walk it (if it
 exists) with `FileManager`, skipping `*.tmp` files, and produce a
 `SyncManifest`. Compute SHA256 by streaming each file in 64 KiB reads — no
 full-file buffering. Send the `SyncManifest` response.
@@ -460,7 +669,7 @@ packaging path that this part replaces.
 
 On the agent side (Swift macOS agent, implemented in `kb.wendy-for-mac`),
 `CreateContainer` for darwin verifies the binary exists in
-`<filesBase>/<appId>/` and registers the app. No OCI parsing, no tar
+`<appsBase>/<appId>/` and registers the app. No OCI parsing, no tar
 extraction, no blob store.
 
 ### Acceptance criteria
