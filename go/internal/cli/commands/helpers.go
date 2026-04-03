@@ -934,28 +934,49 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 	// Continuous LAN discovery — devices appear as they're found.
 	lanCh := make(chan models.LANDevice, 16)
 	go discovery.DiscoverLANContinuous(discoverCtx, lanCh)
+	sendLANItem := func(dev models.LANDevice) {
+		name := dev.DisplayName
+		if dev.AgentVersion != "" {
+			name += " v" + dev.AgentVersion
+		}
+		devCopy := dev
+		p.Send(tui.PickerAddMsg{Items: []tui.PickerItem{{
+			Name:     name,
+			Type:     "LAN",
+			Address:  preferredLANAddress(dev),
+			DedupKey: dev.DisplayName,
+			Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
+				DisplayName:     dev.DisplayName,
+				AgentVersion:    dev.AgentVersion,
+				OS:              dev.OS,
+				OSVersion:       dev.OSVersion,
+				CPUArchitecture: dev.CPUArchitecture,
+				LAN:             &devCopy,
+			}},
+		}}})
+	}
 	go func() {
-		for dev := range lanCh {
-			dev, _ = resolveLANVersion(discoverCtx, dev)
-			name := dev.DisplayName
-			if dev.AgentVersion != "" {
-				name += " v" + dev.AgentVersion
+		for rawDev := range lanCh {
+			resolved, err := resolveLANVersion(discoverCtx, rawDev)
+			sendLANItem(resolved)
+			if err != nil {
+				// Version probe failed on first attempt. Retry in background so
+				// the version appears once the device becomes responsive, without
+				// requiring it to be rediscovered via mDNS.
+				go func(d models.LANDevice) {
+					for attempt := 0; attempt < 5; attempt++ {
+						select {
+						case <-discoverCtx.Done():
+							return
+						case <-time.After(2 * time.Second):
+						}
+						if updated, retryErr := resolveLANVersion(discoverCtx, d); retryErr == nil {
+							sendLANItem(updated)
+							return
+						}
+					}
+				}(rawDev)
 			}
-			lanDev := dev // copy for stable pointer
-			p.Send(tui.PickerAddMsg{Items: []tui.PickerItem{{
-				Name:     name,
-				Type:     "LAN",
-				Address:  preferredLANAddress(dev),
-				DedupKey: dev.DisplayName,
-				Value: &pickerEntry{mergedDevice: &models.DiscoveredDevice{
-					DisplayName:     dev.DisplayName,
-					AgentVersion:    dev.AgentVersion,
-					OS:              dev.OS,
-					OSVersion:       dev.OSVersion,
-					CPUArchitecture: dev.CPUArchitecture,
-					LAN:             &lanDev,
-				}},
-			}}})
 		}
 	}()
 

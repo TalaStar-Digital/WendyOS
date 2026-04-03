@@ -420,6 +420,22 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTable()
 		return m, delayThen(env.DiscoverEthernetInterval(), m.scanEthernet())
 	case lanScanMsg:
+		// Preserve last known AgentVersion when the version probe failed for a
+		// device. The gRPC probe uses a 1500 ms timeout, so transient latency or
+		// a momentarily-busy agent can cause the probe to return an error even
+		// though the device is still up. Without this, the Version column blinks
+		// blank for one scan cycle and then reappears on the next successful probe.
+		for i := range msg.devices {
+			if msg.devices[i].AgentVersion != "" {
+				continue
+			}
+			for _, prev := range m.collection.LANDevices {
+				if strings.EqualFold(prev.DisplayName, msg.devices[i].DisplayName) && prev.AgentVersion != "" {
+					msg.devices[i].AgentVersion = prev.AgentVersion
+					break
+				}
+			}
+		}
 		m.collection.LANDevices = msg.devices
 		m.hasResults = true
 		m.refreshTable()
