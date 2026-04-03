@@ -208,10 +208,16 @@ type discoverUpdateDoneMsg struct {
 	err        error
 }
 
+// bleRetentionPeriod is how long a BLE device stays visible after it was last
+// seen in a scan. BLE scans are lossy (devices may miss a scan cycle even when
+// in range), so we keep results around longer than a single scan window.
+const bleRetentionPeriod = 30 * time.Second
+
 type discoverModel struct {
 	ctx                context.Context
 	opts               discovery.DiscoveryOptions
 	collection         *models.DevicesCollection
+	bleSeen            map[string]time.Time // device ID -> time last seen in a BLE scan
 	table              bubbleTable.Model
 	quitting           bool
 	hasResults         bool
@@ -229,6 +235,7 @@ func newDiscoverModel(ctx context.Context, opts discovery.DiscoveryOptions) disc
 		ctx:             ctx,
 		opts:            opts,
 		collection:      &models.DevicesCollection{},
+		bleSeen:         make(map[string]time.Time),
 		table:           newDiscoverTable(true),
 		includeExternal: shouldIncludeExternal(opts),
 	}
@@ -390,7 +397,42 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTable()
 		return m, m.scanLAN()
 	case btScanMsg:
-		m.collection.BluetoothDevices = msg.devices
+		now := time.Now()
+
+		// Update last-seen timestamps for everything in this scan.
+		for _, dev := range msg.devices {
+			key := dev.ID
+			if key == "" {
+				key = dev.DisplayName
+			}
+			m.bleSeen[key] = now
+		}
+
+		// Build a merged list: fresh scan results (authoritative) plus any
+		// previously-seen devices that are still within the retention window.
+		inNewScan := make(map[string]bool, len(msg.devices))
+		merged := make([]models.BluetoothDevice, 0, len(msg.devices))
+		for _, dev := range msg.devices {
+			merged = append(merged, dev)
+			key := dev.ID
+			if key == "" {
+				key = dev.DisplayName
+			}
+			inNewScan[key] = true
+		}
+		for _, existing := range m.collection.BluetoothDevices {
+			key := existing.ID
+			if key == "" {
+				key = existing.DisplayName
+			}
+			if !inNewScan[key] {
+				if lastSeen, ok := m.bleSeen[key]; ok && now.Sub(lastSeen) < bleRetentionPeriod {
+					merged = append(merged, existing)
+				}
+			}
+		}
+
+		m.collection.BluetoothDevices = merged
 		m.hasResults = true
 		m.refreshTable()
 		if msg.err != nil {

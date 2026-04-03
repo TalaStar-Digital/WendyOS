@@ -30,8 +30,9 @@ type repoMeta struct {
 }
 
 type repoMetaTemplate struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Targets     []string `json:"targets"` // optional; empty means all targets
 }
 
 type repoMetaLanguage struct {

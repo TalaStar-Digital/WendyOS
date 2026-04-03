@@ -21,6 +21,11 @@ func NewConfirm(question string) ConfirmModel {
 	return ConfirmModel{Question: question}
 }
 
+// NewConfirmDefaultYes creates a new confirm model defaulting to Yes.
+func NewConfirmDefaultYes(question string) ConfirmModel {
+	return ConfirmModel{Question: question, choice: true}
+}
+
 func (m ConfirmModel) Init() tea.Cmd { return nil }
 
 func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -93,11 +98,7 @@ func (m ConfirmModel) Cancelled() bool {
 	return m.quitting
 }
 
-// Confirm runs a styled yes/no prompt and returns the user's choice.
-// Optional programOpts are passed to tea.NewProgram (useful for testing with
-// tea.WithInput / tea.WithOutput).
-func Confirm(question string, programOpts ...tea.ProgramOption) (bool, error) {
-	m := NewConfirm(question)
+func runConfirm(m ConfirmModel, programOpts []tea.ProgramOption) (bool, error) {
 	p := tea.NewProgram(m, programOpts...)
 	result, err := p.Run()
 	if err != nil {
@@ -111,6 +112,18 @@ func Confirm(question string, programOpts ...tea.ProgramOption) (bool, error) {
 		return false, ErrCancelled
 	}
 	return model.Confirmed(), nil
+}
+
+// Confirm runs a styled yes/no prompt defaulting to No.
+// Optional programOpts are passed to tea.NewProgram (useful for testing with
+// tea.WithInput / tea.WithOutput).
+func Confirm(question string, programOpts ...tea.ProgramOption) (bool, error) {
+	return runConfirm(NewConfirm(question), programOpts)
+}
+
+// ConfirmDefaultYes runs a styled yes/no prompt defaulting to Yes.
+func ConfirmDefaultYes(question string, programOpts ...tea.ProgramOption) (bool, error) {
+	return runConfirm(NewConfirmDefaultYes(question), programOpts)
 }
 
 // ConfirmWithIO runs a styled yes/no prompt reading from r and discarding
