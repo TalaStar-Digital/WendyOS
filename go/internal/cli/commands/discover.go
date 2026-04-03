@@ -350,32 +350,32 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			row := rows[cursor]
-			if !strings.Contains(row[1], "LAN") {
+			if !strings.Contains(row[2], "LAN") {
 				m.flashMessage = "Update is only supported for LAN devices."
 				m.flashIsError = true
 				return m, clearFlashAfter(3 * time.Second)
 			}
-			rowVer := strings.TrimPrefix(row[3], "* ")
+			rowVer := strings.TrimPrefix(row[4], "* ")
 			if rowVer == "" || version.CompareVersions(version.Version, rowVer) <= 0 {
 				m.flashMessage = "Device is already up to date."
 				m.flashIsError = false
 				return m, clearFlashAfter(3 * time.Second)
 			}
-			addr := lanDeviceAddr(m.collection, row[0])
+			addr := lanDeviceAddr(m.collection, row[1])
 			if addr == "" {
 				m.flashMessage = "Could not determine device address."
 				m.flashIsError = true
 				return m, clearFlashAfter(3 * time.Second)
 			}
-			m.updatingDeviceName = row[0]
-			m.flashMessage = "Updating " + row[0] + "..."
+			m.updatingDeviceName = row[1]
+			m.flashMessage = "Updating " + row[1] + "..."
 			m.flashIsError = false
-			return m, m.startDeviceUpdateCmd(addr, row[0])
+			return m, m.startDeviceUpdateCmd(addr, row[1])
 		case "d":
 			rows := discoverTableRows(m.collection)
 			cursor := m.table.Cursor()
 			if len(rows) > 0 && cursor >= 0 && cursor < len(rows) {
-				deviceName := rows[cursor][0]
+				deviceName := rows[cursor][1]
 				if cfg, err := config.Load(); err == nil {
 					cfg.DefaultDevice = deviceName
 					_ = config.Save(cfg)
@@ -617,9 +617,9 @@ func renderDeviceTable(collection *models.DevicesCollection) string {
 }
 
 var (
-	discoverTableHeaders   = []string{"Name", "Type", "Address", "Version"}
-	discoverTableMinWidths = []int{12, 12, 14, 10}
-	discoverTableMaxWidths = []int{28, 18, 28, 16}
+	discoverTableHeaders   = []string{"", "Name", "Type", "Address", "Version"}
+	discoverTableMinWidths = []int{3, 12, 12, 14, 10}
+	discoverTableMaxWidths = []int{3, 28, 18, 28, 16}
 )
 
 func newDiscoverTable(interactive bool) bubbleTable.Model {
@@ -635,21 +635,21 @@ func discoverTableRows(collection *models.DevicesCollection) []bubbleTable.Row {
 		defaultDevice = strings.ToLower(cfg.DefaultDevice)
 	}
 
-	markDefault := func(name string) string {
+	defaultMark := func(name string) string {
 		if defaultDevice != "" && strings.ToLower(name) == defaultDevice {
-			return "★ " + name
+			return "★"
 		}
-		return name
+		return ""
 	}
 
 	for _, d := range collection.USBDevices {
-		rows = append(rows, bubbleTable.Row{markDefault(d.DisplayName), "USB", d.Hostname, markOutdated(d.AgentVersion)})
+		rows = append(rows, bubbleTable.Row{defaultMark(d.DisplayName), d.DisplayName, "USB", d.Hostname, markOutdated(d.AgentVersion)})
 	}
 	for _, d := range collection.MergedDevices() {
-		rows = append(rows, bubbleTable.Row{markDefault(d.DisplayName), d.ConnectionTypes(), d.Address(), markOutdated(d.AgentVersion)})
+		rows = append(rows, bubbleTable.Row{defaultMark(d.DisplayName), d.DisplayName, d.ConnectionTypes(), d.Address(), markOutdated(d.AgentVersion)})
 	}
 	for _, d := range collection.EthernetInterfaces {
-		rows = append(rows, bubbleTable.Row{markDefault(d.DisplayName), "Ethernet", d.IPAddress, markOutdated(d.AgentVersion)})
+		rows = append(rows, bubbleTable.Row{defaultMark(d.DisplayName), d.DisplayName, "Ethernet", d.IPAddress, markOutdated(d.AgentVersion)})
 	}
 	for _, d := range collection.ExternalDevices {
 		// Wendy Lite devices are merged with BLE Lite in MergedDevices().
@@ -661,14 +661,14 @@ func discoverTableRows(collection *models.DevicesCollection) []bubbleTable.Row {
 		if p := providers.ProviderForKey(d.ProviderKey); p != nil {
 			typeName = p.DisplayName()
 		}
-		rows = append(rows, bubbleTable.Row{markDefault(d.DisplayName), typeName, addr, markOutdated(d.AgentVersion)})
+		rows = append(rows, bubbleTable.Row{defaultMark(d.DisplayName), d.DisplayName, typeName, addr, markOutdated(d.AgentVersion)})
 	}
 
 	sort.Slice(rows, func(i, j int) bool {
-		if rows[i][1] != rows[j][1] {
-			return rows[i][1] < rows[j][1]
+		if rows[i][2] != rows[j][2] { // Type column
+			return rows[i][2] < rows[j][2]
 		}
-		return strings.ToLower(rows[i][0]) < strings.ToLower(rows[j][0])
+		return strings.ToLower(rows[i][1]) < strings.ToLower(rows[j][1]) // Name column
 	})
 
 	return rows
@@ -716,10 +716,10 @@ func discoverTableHeight(rowCount, windowHeight int, interactive bool) int {
 // deviceInfoFromRow converts a table row to a discoverDeviceInfo.
 func deviceInfoFromRow(row bubbleTable.Row) discoverDeviceInfo {
 	return discoverDeviceInfo{
-		Name:    row[0],
-		Type:    row[1],
-		Address: row[2],
-		Version: strings.TrimPrefix(row[3], "* "),
+		Name:    row[1],
+		Type:    row[2],
+		Address: row[3],
+		Version: strings.TrimPrefix(row[4], "* "),
 	}
 }
 
