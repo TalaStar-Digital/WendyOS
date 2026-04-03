@@ -52,8 +52,9 @@ type PickerModel struct {
 	// If nil, 'x' is ignored.
 	OnUnsetDefault func()
 
-	// DefaultKey is the DedupKey (or Name if DedupKey is empty) of the item
-	// that is currently the default. Shown with a ★ indicator.
+	// DefaultKey is compared case-insensitively against each item's DedupKey
+	// (or Name if DedupKey is empty). Should be stored lowercase for consistency.
+	// Shown with a ★ indicator in the table.
 	DefaultKey string
 
 	items    []PickerItem
@@ -180,8 +181,15 @@ func (m PickerModel) View() string {
 	var sb strings.Builder
 
 	hint := " (↑/↓ navigate, enter select, q quit)"
-	if m.OnSetDefault != nil {
-		hint = " (↑/↓ navigate, enter select, d set default, x unset default, q quit)"
+	if m.OnSetDefault != nil || m.OnUnsetDefault != nil {
+		extras := ""
+		if m.OnSetDefault != nil {
+			extras += ", d set default"
+		}
+		if m.OnUnsetDefault != nil {
+			extras += ", x unset default"
+		}
+		hint = " (↑/↓ navigate, enter select" + extras + ", q quit)"
 	}
 	sb.WriteString(pickerTitle.Render(m.Title) + pickerHint.Render(hint) + "\n\n")
 

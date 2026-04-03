@@ -815,20 +815,25 @@ func ensureAppConfig(cfgPath string, autoAccept bool) (*appconfig.AppConfig, err
 }
 
 // pickerItemDeviceID extracts a hostname or provider key from a picker item,
-// suitable for storing as the default device.
+// suitable for storing as the default device (must be resolvable by resolveDeviceAddress).
 func pickerItemDeviceID(item tui.PickerItem) string {
 	entry, ok := item.Value.(*pickerEntry)
 	if !ok {
 		return ""
 	}
+	// For LAN devices, use the mDNS hostname (matches what pickDeviceForDefault returns).
 	if entry.mergedDevice != nil && entry.mergedDevice.LAN != nil {
-		return entry.mergedDevice.LAN.DisplayName
+		addr := entry.mergedDevice.LAN.Hostname
+		if addr == "" {
+			addr = entry.mergedDevice.LAN.IPAddress
+		}
+		return addr
 	}
 	if entry.externalDevice != nil {
 		return entry.externalDevice.ProviderKey
 	}
-	if entry.mergedDevice != nil {
-		return entry.mergedDevice.DisplayName
+	if entry.mergedDevice != nil && entry.mergedDevice.External != nil {
+		return entry.mergedDevice.External.ProviderKey
 	}
 	return ""
 }

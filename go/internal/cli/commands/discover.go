@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -375,12 +376,21 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rows := discoverTableRows(m.collection)
 			cursor := m.table.Cursor()
 			if len(rows) > 0 && cursor >= 0 && cursor < len(rows) {
-				deviceName := rows[cursor][1]
+				// Use the display name as the device identifier — for LAN devices
+				// this is the mDNS hostname which resolveDeviceAddress can resolve.
+				deviceID := rows[cursor][1]
+				// For LAN devices, prefer the address column (hostname.local).
+				addr := rows[cursor][3]
+				if addr != "" && !strings.Contains(addr, ":") {
+					deviceID = addr
+				} else if host, _, err := net.SplitHostPort(addr); err == nil && host != "" {
+					deviceID = host
+				}
 				if cfg, err := config.Load(); err == nil {
-					cfg.DefaultDevice = deviceName
+					cfg.DefaultDevice = deviceID
 					_ = config.Save(cfg)
 				}
-				m.flashMessage = "Default device set to: " + deviceName
+				m.flashMessage = "Default device set to: " + deviceID
 				m.flashIsError = false
 				m.refreshTable()
 				return m, clearFlashAfter(3 * time.Second)
