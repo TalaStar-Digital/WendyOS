@@ -412,13 +412,16 @@ func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.Del
 	return &agentpb.DeleteContainerResponse{}, nil
 }
 
+// volumesDir is the base directory for persistent volumes. It's a variable
+// (not const) so tests can override it with a temp directory.
+var volumesDir = "/var/lib/wendy/volumes"
+
 // deleteVolumes removes persistent volume directories for an app.
 func (s *ContainerService) deleteVolumes(appName string) {
-	base := "/var/lib/wendy/volumes"
-	entries, err := os.ReadDir(base)
+	entries, err := os.ReadDir(volumesDir)
 	if err != nil {
 		s.logger.Warn("Failed to read volumes directory",
-			zap.String("base", base),
+			zap.String("base", volumesDir),
 			zap.String("app_name", appName),
 			zap.Error(err),
 		)
@@ -430,7 +433,7 @@ func (s *ContainerService) deleteVolumes(appName string) {
 		}
 		name := e.Name()
 		if name == appName || strings.HasPrefix(name, appName+"-") {
-			path := filepath.Join(base, name)
+			path := filepath.Join(volumesDir, name)
 			if err := os.RemoveAll(path); err != nil {
 				s.logger.Warn("Failed to remove volume", zap.String("path", path), zap.Error(err))
 			} else {
@@ -438,6 +441,106 @@ func (s *ContainerService) deleteVolumes(appName string) {
 			}
 		}
 	}
+}
+
+// ListVolumes lists persistent volumes and which apps use them.
+func (s *ContainerService) ListVolumes(ctx context.Context, _ *agentpb.ListVolumesRequest) (*agentpb.ListVolumesResponse, error) {
+	entries, err := os.ReadDir(volumesDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &agentpb.ListVolumesResponse{}, nil
+		}
+		return nil, status.Errorf(codes.Internal, "reading volumes dir: %v", err)
+	}
+
+	usedBy := s.buildVolumeUsageMap(ctx)
+
+	var volumes []*agentpb.VolumeInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		path := filepath.Join(volumesDir, name)
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+
+		volumes = append(volumes, &agentpb.VolumeInfo{
+			Name:      name,
+			Path:      path,
+			SizeBytes: dirSize(path),
+			CreatedAt: info.ModTime().UTC().Format("2006-01-02T15:04:05Z"),
+			UsedBy:    usedBy[name],
+		})
+	}
+
+	return &agentpb.ListVolumesResponse{Volumes: volumes}, nil
+}
+
+// RemoveVolume deletes a persistent volume directory.
+func (s *ContainerService) RemoveVolume(_ context.Context, req *agentpb.RemoveVolumeRequest) (*agentpb.RemoveVolumeResponse, error) {
+	name := filepath.Base(req.GetName())
+	if name == "" || name == "." || name == ".." || name == "/" {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid volume name")
+	}
+
+	path := filepath.Join(volumesDir, name)
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, status.Errorf(codes.NotFound, "volume %q not found", name)
+		}
+		return nil, status.Errorf(codes.Internal, "checking volume %q: %v", name, err)
+	}
+
+	if err := os.RemoveAll(path); err != nil {
+		return nil, status.Errorf(codes.Internal, "removing volume: %v", err)
+	}
+
+	s.logger.Info("Volume removed", zap.String("name", name), zap.String("path", path))
+	return &agentpb.RemoveVolumeResponse{}, nil
+}
+
+// buildVolumeUsageMap heuristically maps volumes to apps by matching
+// container names. A volume "foo-data" is likely used by app "foo".
+func (s *ContainerService) buildVolumeUsageMap(ctx context.Context) map[string][]string {
+	usage := make(map[string][]string)
+	containers, err := s.containerd.ListContainers(ctx)
+	if err != nil {
+		return usage
+	}
+	var appNames []string
+	for _, c := range containers {
+		appNames = append(appNames, c.AppName)
+	}
+
+	entries, _ := os.ReadDir(volumesDir)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		volName := e.Name()
+		for _, app := range appNames {
+			if volName == app || strings.HasPrefix(volName, app+"-") {
+				usage[volName] = append(usage[volName], app)
+			}
+		}
+	}
+	return usage
+}
+
+// dirSize computes the total size of all files in a directory tree.
+func dirSize(path string) int64 {
+	var size int64
+	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		size += info.Size()
+		return nil
+	})
+	return size
 }
 
 // ListContainers lists running containers.
