@@ -14,17 +14,19 @@ type ChecklistItem struct {
 	Description string // shown dimmed after the label
 	Value       string // opaque payload returned for selected items
 	Selected    bool   // default selection state
+	Locked      bool   // when true, item cannot be toggled or selected
 }
 
 // ChecklistModel is a Bubble Tea model that presents a list of items with
 // yes/no toggles. Navigate with up/down, toggle with left/right or space,
 // and confirm with enter. Row 0 is a "Select all" toggle.
 type ChecklistModel struct {
-	Title    string
-	items    []ChecklistItem
-	cursor   int // 0 = select-all row, 1..len(items) = item rows
-	done     bool
-	quitting bool
+	Title          string
+	SelectAllLabel string // defaults to "Select all"
+	items          []ChecklistItem
+	cursor         int // 0 = select-all row, 1..len(items) = item rows
+	done           bool
+	quitting       bool
 }
 
 // NewChecklist creates a new checklist model. The cursor starts on the
@@ -33,14 +35,15 @@ func NewChecklist(title string, items []ChecklistItem) ChecklistModel {
 	cp := make([]ChecklistItem, len(items))
 	copy(cp, items)
 	return ChecklistModel{
-		Title: title,
-		items: cp,
+		Title:          title,
+		SelectAllLabel: "Select all",
+		items:          cp,
 	}
 }
 
 func (m ChecklistModel) allSelected() bool {
 	for _, item := range m.items {
-		if !item.Selected {
+		if !item.Locked && !item.Selected {
 			return false
 		}
 	}
@@ -49,7 +52,9 @@ func (m ChecklistModel) allSelected() bool {
 
 func (m *ChecklistModel) setAll(v bool) {
 	for i := range m.items {
-		m.items[i].Selected = v
+		if !m.items[i].Locked {
+			m.items[i].Selected = v
+		}
 	}
 }
 
@@ -63,9 +68,9 @@ func (m *ChecklistModel) toggle() {
 		return
 	}
 	if m.cursor == 0 {
-		// Select-all row: toggle all items to the opposite of current state.
+		// Select-all row: toggle all non-locked items to the opposite of current state.
 		m.setAll(!m.allSelected())
-	} else {
+	} else if !m.items[m.cursor-1].Locked {
 		m.items[m.cursor-1].Selected = !m.items[m.cursor-1].Selected
 	}
 }
@@ -76,7 +81,7 @@ func (m *ChecklistModel) set(v bool) {
 	}
 	if m.cursor == 0 {
 		m.setAll(v)
-	} else {
+	} else if !m.items[m.cursor-1].Locked {
 		m.items[m.cursor-1].Selected = v
 	}
 }
@@ -122,6 +127,8 @@ var (
 	clLabelActive = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary)
 	clDesc        = lipgloss.NewStyle().Foreground(ColorDim)
 	clSeparator   = lipgloss.NewStyle().Foreground(ColorDim)
+	clLocked      = lipgloss.NewStyle().Foreground(ColorDim).Padding(0, 1)
+	clLockedLabel = lipgloss.NewStyle().Foreground(ColorDim)
 )
 
 func (m ChecklistModel) View() string {
@@ -138,10 +145,10 @@ func (m ChecklistModel) View() string {
 	// Select-all row.
 	{
 		pointer := "  "
-		label := clLabel.Render("Enable all")
+		label := clLabel.Render(m.SelectAllLabel)
 		if m.cursor == 0 {
 			pointer = clCursor.Render("▸ ")
-			label = clLabelActive.Render("Enable all")
+			label = clLabelActive.Render(m.SelectAllLabel)
 		}
 		yes, no := clOff.Render("Yes"), clOn.Render("No")
 		if m.allSelected() {
@@ -156,6 +163,18 @@ func (m ChecklistModel) View() string {
 	for i, item := range m.items {
 		row := i + 1 // account for select-all row
 		pointer := "  "
+
+		if item.Locked {
+			label := clLockedLabel.Render(item.Label)
+			protected := clLocked.Render("[protected]")
+			sb.WriteString(fmt.Sprintf("%s%s  %s", pointer, protected, label))
+			if item.Description != "" {
+				sb.WriteString("  " + clDesc.Render(item.Description))
+			}
+			sb.WriteString("\n")
+			continue
+		}
+
 		label := clLabel.Render(item.Label)
 		if row == m.cursor {
 			pointer = clCursor.Render("▸ ")
@@ -195,7 +214,12 @@ func (m ChecklistModel) SelectedItems() []ChecklistItem {
 
 // RunChecklist runs an interactive checklist and returns the selected items.
 func RunChecklist(title string, items []ChecklistItem, programOpts ...tea.ProgramOption) ([]ChecklistItem, error) {
-	m := NewChecklist(title, items)
+	return RunChecklistModel(NewChecklist(title, items), programOpts...)
+}
+
+// RunChecklistModel runs an interactive checklist from an already-configured
+// ChecklistModel and returns the selected items.
+func RunChecklistModel(m ChecklistModel, programOpts ...tea.ProgramOption) ([]ChecklistItem, error) {
 	p := tea.NewProgram(m, programOpts...)
 	result, err := p.Run()
 	if err != nil {
