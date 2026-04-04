@@ -19,6 +19,7 @@ import (
 	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/internal/shared/config"
 	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
 )
 
@@ -72,6 +73,12 @@ func newAppsListCmd() *cobra.Command {
 }
 
 func appsListAgent(ctx context.Context, conn *grpcclient.AgentConnection) error {
+	// Interactive dashboard when stdout is a TTY and --json is not set.
+	if !jsonOutput && term.IsTerminal(int(os.Stdout.Fd())) {
+		return runAppsDashboard(ctx, conn)
+	}
+
+	// Static / JSON path (unchanged).
 	stream, err := conn.ContainerService.ListContainers(ctx, &agentpb.ListContainersRequest{})
 	if err != nil {
 		return fmt.Errorf("listing containers: %w", err)
@@ -98,7 +105,6 @@ func appsListAgent(ctx context.Context, conn *grpcclient.AgentConnection) error 
 			RunningState string `json:"runningState,omitempty"`
 			FailureCount uint32 `json:"failureCount,omitempty"`
 		}
-
 		apps := make([]jsonApp, len(containers))
 		for i, c := range containers {
 			apps[i] = jsonApp{
@@ -108,7 +114,6 @@ func appsListAgent(ctx context.Context, conn *grpcclient.AgentConnection) error 
 				FailureCount: c.GetFailureCount(),
 			}
 		}
-
 		data, err := json.MarshalIndent(apps, "", "  ")
 		if err != nil {
 			return err
@@ -121,7 +126,6 @@ func appsListAgent(ctx context.Context, conn *grpcclient.AgentConnection) error 
 		fmt.Println("No applications running.")
 		return nil
 	}
-
 	headers := []string{"", "Name", "Version", "Failures"}
 	var rows [][]string
 	for _, c := range containers {
@@ -133,6 +137,69 @@ func appsListAgent(ctx context.Context, conn *grpcclient.AgentConnection) error 
 		})
 	}
 	fmt.Print(tui.RenderTable(headers, rows))
+	return nil
+}
+
+// streamAppLogs streams logs for a single app to stdout after the dashboard exits.
+func streamAppLogs(ctx context.Context, conn *grpcclient.AgentConnection, appName string) error {
+	fmt.Printf("Streaming logs for %s (Ctrl+C to stop)…\n", appName)
+	req := &agentpb.StreamLogsRequest{AppName: &appName}
+	stream, err := conn.TelemetryService.StreamLogs(ctx, req)
+	if err != nil {
+		return fmt.Errorf("starting log stream: %w", err)
+	}
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("receiving logs: %w", err)
+		}
+		logs := resp.GetLogs()
+		if logs == nil {
+			continue
+		}
+		for _, rl := range logs.GetResourceLogs() {
+			svc := resourceServiceName(rl.GetResource())
+			for _, sl := range rl.GetScopeLogs() {
+				for _, lr := range sl.GetLogRecords() {
+					printLogRecord(svc, lr)
+				}
+			}
+		}
+	}
+}
+
+func runAppsDashboard(ctx context.Context, conn *grpcclient.AgentConnection) error {
+	// Use a cancellable context so background goroutines stop when the program exits.
+	dashCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	m := newAppsDashboardModel(conn, dashCtx)
+
+	// Wire up the 'd' key to set the current device as default (same pattern as picker).
+	m.OnSetDefault = func() {
+		if cfg, err := config.Load(); err == nil {
+			cfg.DefaultDevice = conn.Host
+			_ = config.Save(cfg)
+		}
+	}
+
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	result, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("apps dashboard: %w", err)
+	}
+
+	final, ok := result.(appsDashboardModel)
+	if !ok {
+		return nil
+	}
+
+	if final.action == appsDashActionLogs && final.selectedApp != "" {
+		return streamAppLogs(ctx, conn, final.selectedApp)
+	}
 	return nil
 }
 

@@ -543,6 +543,15 @@ func dirSize(path string) int64 {
 	return size
 }
 
+// ListContainerStats returns memory and storage stats for all Wendy-managed containers.
+func (s *ContainerService) ListContainerStats(ctx context.Context, _ *agentpb.ListContainerStatsRequest) (*agentpb.ListContainerStatsResponse, error) {
+	stats, err := s.containerd.GetContainerStats(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "getting container stats: %v", err)
+	}
+	return &agentpb.ListContainerStatsResponse{Stats: stats}, nil
+}
+
 // ListContainers lists running containers.
 func (s *ContainerService) ListContainers(_ *agentpb.ListContainersRequest, stream grpc.ServerStreamingServer[agentpb.ListContainersResponse]) error {
 	containers, err := s.containerd.ListContainers(stream.Context())
