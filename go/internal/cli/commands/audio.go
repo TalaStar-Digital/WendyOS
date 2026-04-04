@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -239,14 +238,9 @@ func newAudioListenCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&deviceID, "id", 0, "Audio device ID")
 	cmd.Flags().Uint32Var(&sampleRate, "sample-rate", 16000, "Sample rate in Hz")
 	cmd.Flags().Uint32Var(&channels, "channels", 1, "Number of audio channels")
-	cmd.Flags().BoolVar(&play, "play", false, "Play audio through local speakers (requires sox or ffplay)")
+	cmd.Flags().BoolVar(&play, "play", false, "Play audio through local speakers")
 
 	return cmd
-}
-
-func executableExists(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
 }
 
 // playRealtimeAudio plays the gRPC audio stream through the local speakers

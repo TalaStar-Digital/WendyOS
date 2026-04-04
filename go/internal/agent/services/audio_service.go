@@ -31,9 +31,11 @@ func NewAudioService(logger *zap.Logger) *AudioService {
 }
 
 // ListAudioDevices enumerates audio devices via ALSA (arecord/aplay).
-// ALSA card numbers are used because all streaming (StreamAudio, StreamAudioLevels)
-// uses arecord with hw:N device arguments — PipeWire/PulseAudio node IDs are a
-// different numbering system and would not map correctly to streaming device IDs.
+// Devices are selected with ALSA card-based arguments in plughw:%d,0 form. We use
+// plughw rather than hw so ALSA's plug layer can handle format conversion when
+// needed, while still mapping directly to ALSA card/device IDs. PipeWire/PulseAudio
+// node IDs are a different numbering system and would not map correctly to these
+// streaming device arguments.
 func (s *AudioService) ListAudioDevices(ctx context.Context, _ *agentpb.ListAudioDevicesRequest) (*agentpb.ListAudioDevicesResponse, error) {
 	devices, err := s.listALSADevices(ctx)
 	if err != nil {
