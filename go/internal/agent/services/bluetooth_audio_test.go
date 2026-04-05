@@ -7,9 +7,11 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
@@ -268,14 +270,16 @@ func TestListAudioDevices_ServiceAvailable(t *testing.T) {
 	cl, cleanup := startAudioServer(t)
 	defer cleanup()
 
-	resp, err := cl.ListAudioDevices(context.Background(), &agentpb.ListAudioDevicesRequest{})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := cl.ListAudioDevices(ctx, &agentpb.ListAudioDevicesRequest{})
 	if err != nil {
 		st, ok := status.FromError(err)
 		if !ok {
 			t.Fatalf("unexpected non-gRPC error: %v", err)
 		}
 		// Internal is the expected code when no audio tools are installed.
-		if st.Code().String() != "Internal" {
+		if st.Code() != codes.Internal {
 			t.Fatalf("unexpected gRPC status %v: %v", st.Code(), err)
 		}
 		t.Logf("ListAudioDevices returned Internal (no audio hardware in CI): %v", st.Message())
@@ -286,7 +290,7 @@ func TestListAudioDevices_ServiceAvailable(t *testing.T) {
 }
 
 func TestParseALSAOutput_InputDevices(t *testing.T) {
-	// Sample output from `arecord --list-devices` on a system with one sound card.
+	// Sample output from `arecord -l` on a system with one sound card.
 	output := `**** List of CAPTURE Hardware Devices ****
 card 0: PCH [HDA Intel PCH], device 0: ALC3246 Analog [ALC3246 Analog]
   Subdevices: 1/1

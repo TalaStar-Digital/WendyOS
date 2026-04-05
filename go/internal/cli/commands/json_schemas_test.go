@@ -8,9 +8,9 @@ import (
 	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
 )
 
-// ---------- apps list --json ----------
+// ---------- device apps list --json ----------
 
-// TestAppsListJSON verifies the JSON schema produced by `wendy apps list --json`.
+// TestAppsListJSON verifies the JSON schema produced by `wendy device apps list --json`.
 // The command transforms proto AppContainer messages into a custom struct with
 // camelCase field names and omitempty semantics.
 func TestAppsListJSON_Schema(t *testing.T) {
@@ -92,9 +92,9 @@ func TestAppsListJSON_EmptyArray(t *testing.T) {
 	}
 }
 
-// ---------- volumes list --json ----------
+// ---------- device volumes list --json ----------
 
-// TestVolumesListJSON verifies the JSON schema produced by `wendy volumes list --json`.
+// TestVolumesListJSON verifies the JSON schema produced by `wendy device volumes list --json`.
 func TestVolumesListJSON_Schema(t *testing.T) {
 	// Replicate the inline jsonVolume struct from newVolumesListCmd.
 	type jsonVolume struct {
@@ -166,9 +166,9 @@ func TestVolumesListJSON_Schema(t *testing.T) {
 	}
 }
 
-// ---------- wifi status --json ----------
+// ---------- device wifi status --json ----------
 
-// TestWifiStatusJSON verifies the JSON schema produced by `wendy wifi status --json`.
+// TestWifiStatusJSON verifies the JSON schema produced by `wendy device wifi status --json`.
 func TestWifiStatusJSON_Connected(t *testing.T) {
 	output := map[string]interface{}{
 		"connected": true,
@@ -218,9 +218,9 @@ func TestWifiStatusJSON_Disconnected(t *testing.T) {
 	}
 }
 
-// ---------- wifi list --json ----------
+// ---------- device wifi list --json ----------
 
-// TestWifiNetworksJSON verifies the JSON schema produced by `wendy wifi list --json`.
+// TestWifiNetworksJSON verifies the JSON schema produced by `wendy device wifi list --json`.
 // The command marshals []*agentpb.ListWiFiNetworksResponse_WiFiNetwork directly.
 // Proto-generated JSON tags use snake_case (signal_strength, not signalStrength).
 func TestWifiNetworksJSON_Schema(t *testing.T) {
@@ -500,7 +500,7 @@ func TestDiscoverCollectionJSON_EmptyCollection(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// Even empty collections should encode their keys (no omitempty on DevicesCollection fields).
+	// Even empty collections should encode their keys (no omitempty on the core arrays; externalDevices may be omitted).
 	for _, key := range []string{"usbDevices", "lanDevices", "bluetoothDevices", "ethernetDevices"} {
 		if _, ok := parsed[key]; !ok {
 			t.Errorf("empty collection missing field %q", key)
