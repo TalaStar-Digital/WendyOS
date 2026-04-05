@@ -278,17 +278,59 @@ func applyAudio(spec *Spec) {
 		Access: "rwm",
 	})
 
-	// Mount PipeWire socket if available.
-	spec.Mounts = append(spec.Mounts, Mount{
-		Destination: "/run/pipewire",
-		Source:      "/run/pipewire",
-		Type:        "bind",
-		Options:     []string{"rbind", "nosuid", "noexec"},
-	})
+	// isSocket reports whether path is a Unix domain socket. Uses Lstat
+	// so symlinks are not followed — runc can't resolve symlink targets
+	// through bind mounts.
+	isSocket := func(path string) bool {
+		fi, err := os.Lstat(path)
+		return err == nil && fi.Mode()&os.ModeSocket != 0 && fi.Mode()&os.ModeSymlink == 0
+	}
 
-	spec.Process.Env = append(spec.Process.Env,
-		"PIPEWIRE_RUNTIME_DIR=/run/pipewire",
-	)
+	// Find the PipeWire socket. Check the system path first, then probe
+	// for a user session socket (e.g. /run/user/1000/pipewire-0 on RPi OS
+	// where PipeWire runs as a user service).
+	var pipewireSocketSource string
+	if isSocket("/run/pipewire/pipewire-0") {
+		pipewireSocketSource = "/run/pipewire/pipewire-0"
+	} else {
+		userSockets, _ := filepath.Glob("/run/user/*/pipewire-0")
+		for _, s := range userSockets {
+			if isSocket(s) {
+				pipewireSocketSource = s
+				break
+			}
+		}
+	}
+
+	if pipewireSocketSource != "" {
+		// Mount the individual socket file into the container.
+		spec.Mounts = append(spec.Mounts, Mount{
+			Destination: "/run/pipewire/pipewire-0",
+			Source:      pipewireSocketSource,
+			Type:        "bind",
+			Options:     []string{"rbind", "nosuid", "noexec"},
+		})
+		spec.Process.Env = append(spec.Process.Env,
+			"PIPEWIRE_RUNTIME_DIR=/run/pipewire",
+		)
+
+		// Check for PulseAudio compat socket in the same source directory.
+		// PipeWire provides a PulseAudio emulation socket that GStreamer's
+		// autoaudiosink needs (pulsesink has the highest rank).
+		sourceDir := filepath.Dir(pipewireSocketSource)
+		pulseNative := filepath.Join(sourceDir, "pulse", "native")
+		if isSocket(pulseNative) {
+			spec.Mounts = append(spec.Mounts, Mount{
+				Destination: "/run/pipewire/pulse-native",
+				Source:      pulseNative,
+				Type:        "bind",
+				Options:     []string{"rbind", "nosuid", "noexec"},
+			})
+			spec.Process.Env = append(spec.Process.Env,
+				"PULSE_SERVER=unix:/run/pipewire/pulse-native",
+			)
+		}
+	}
 }
 
 // applyVideo adds video device access.
