@@ -377,24 +377,17 @@ func (r *OTELTraceReceiver) Export(_ context.Context, req *otelpb.ExportTraceSer
 }
 
 // matchResourceAttributes checks whether a resource's attributes match the given
-// service name and app name filters. Returns true if all specified filters match.
-func matchResourceAttributes(resource *otelpb.Resource, serviceName, appName *string) bool {
-	if serviceName == nil && appName == nil {
+// service name filter. Returns true if all specified filters match.
+func matchResourceAttributes(resource *otelpb.Resource, serviceName *string) bool {
+	if serviceName == nil {
 		return true
 	}
 	for _, attr := range resource.GetAttributes() {
-		if serviceName != nil && attr.GetKey() == "service.name" {
-			if attr.GetValue().GetStringValue() != *serviceName {
-				return false
-			}
-		}
-		if appName != nil && attr.GetKey() == "wendy.app.name" {
-			if attr.GetValue().GetStringValue() != *appName {
-				return false
-			}
+		if attr.GetKey() == "service.name" {
+			return attr.GetValue().GetStringValue() == *serviceName
 		}
 	}
-	return true
+	return false
 }
 
 // resourceServiceName extracts the service.name attribute from a resource, if present.
@@ -415,21 +408,20 @@ func filterLogs(req *otelpb.ExportLogsServiceRequest, filter *agentpb.StreamLogs
 	}
 
 	serviceName := filter.ServiceName
-	appName := filter.AppName
 	var minSeverity int32
 	if filter.MinSeverity != nil {
 		minSeverity = *filter.MinSeverity
 	}
 
 	// If no filters, pass through.
-	if serviceName == nil && appName == nil && minSeverity == 0 {
+	if serviceName == nil && minSeverity == 0 {
 		return req
 	}
 
 	var filteredResourceLogs []*otelpb.ResourceLogs
 	for _, rl := range req.GetResourceLogs() {
-		// Check resource attributes for service.name and wendy.app.name.
-		if !matchResourceAttributes(rl.GetResource(), serviceName, appName) {
+		// Check resource attributes for service.name.
+		if !matchResourceAttributes(rl.GetResource(), serviceName) {
 			continue
 		}
 
@@ -478,16 +470,15 @@ func filterMetrics(req *otelpb.ExportMetricsServiceRequest, filter *agentpb.Stre
 	}
 
 	serviceName := filter.ServiceName
-	appName := filter.AppName
 	metricNamePrefix := filter.MetricNamePrefix
 
-	if serviceName == nil && appName == nil && metricNamePrefix == nil {
+	if serviceName == nil && metricNamePrefix == nil {
 		return req
 	}
 
 	var filteredResourceMetrics []*otelpb.ResourceMetrics
 	for _, rm := range req.GetResourceMetrics() {
-		if !matchResourceAttributes(rm.GetResource(), serviceName, appName) {
+		if !matchResourceAttributes(rm.GetResource(), serviceName) {
 			continue
 		}
 
