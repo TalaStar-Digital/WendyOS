@@ -107,7 +107,14 @@ func TestTemplateRunCommand(t *testing.T) {
 			cwd:     "/tmp/workspace",
 			destDir: "/tmp/workspace/demo-app",
 			appID:   "demo-app",
-			want:    "cd demo-app && wendy run",
+			want:    "cd 'demo-app' && wendy run",
+		},
+		{
+			name:    "new subdirectory with spaces",
+			cwd:     "/tmp/workspace",
+			destDir: "/tmp/workspace/demo app",
+			appID:   "demo app",
+			want:    "cd 'demo app' && wendy run",
 		},
 	}
 

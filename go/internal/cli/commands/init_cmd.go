@@ -255,7 +255,7 @@ func runInitWizard(args []string, opts initOptions) error {
 		if err != nil {
 			return err
 		}
-		return runTemplateFlow(destDir, appID, tmpl, target, meta, opts)
+		return runTemplateFlow(cwd, destDir, appID, tmpl, target, meta, opts)
 	}
 
 	// Standard wizard flow (no template) — check wendy.json doesn't already exist.
@@ -473,12 +473,7 @@ func metaTemplateNames(meta *repoMeta) string {
 
 // runTemplateFlow handles init when a template is selected.
 // destDir is the resolved project directory (either cwd or a new subdir).
-func runTemplateFlow(destDir, appID, tmpl, target string, meta *repoMeta, opts initOptions) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
-	}
-
+func runTemplateFlow(cwd, destDir, appID, tmpl, target string, meta *repoMeta, opts initOptions) error {
 	language, err := resolveTemplateLanguage(target, meta, opts)
 	if err != nil {
 		return err
@@ -530,16 +525,16 @@ func runTemplateFlow(destDir, appID, tmpl, target string, meta *repoMeta, opts i
 	return nil
 }
 
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
 func templateRunCommand(cwd, destDir, appID string) string {
 	if filepath.Clean(destDir) == filepath.Clean(cwd) {
 		return "wendy run"
 	}
 
-	if filepath.Base(filepath.Clean(destDir)) == appID {
-		return "cd " + appID + " && wendy run"
-	}
-
-	return "cd " + destDir + " && wendy run"
+	return "cd " + shellQuote(appID) + " && wendy run"
 }
 
 // resolveInitDestAndID determines the destination directory and app ID for template flow.
