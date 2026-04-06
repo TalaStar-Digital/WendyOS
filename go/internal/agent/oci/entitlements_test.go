@@ -51,6 +51,15 @@ func hasEnv(spec *Spec, envPrefix string) bool {
 	return false
 }
 
+func hasAllowAllDeviceRule(spec *Spec) bool {
+	for _, d := range spec.Linux.Resources.Devices {
+		if d.Allow && d.Type == "" && d.Major == nil && d.Minor == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func TestApplyEntitlements_GPU(t *testing.T) {
 	spec := DefaultSpec("/rootfs", []string{"/bin/sh"})
 	cfg := &appconfig.AppConfig{
@@ -377,6 +386,9 @@ func TestApplyEntitlements_Video(t *testing.T) {
 	}
 	if !foundV4L2Rule {
 		t.Error("video entitlement did not add V4L2 cgroup device rule (major 81)")
+	}
+	if hasAllowAllDeviceRule(spec) {
+		t.Error("video entitlement should not add a generic allow-all device cgroup rule")
 	}
 
 	devMount, ok := mountForDest(spec, "/dev")

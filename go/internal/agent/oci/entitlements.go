@@ -77,8 +77,8 @@ func ApplyEntitlements(spec *Spec, cfg *appconfig.AppConfig, opts ApplyOptions) 
 	return nil
 }
 
-// SetDeviceCapabilities adds standard device capabilities, cgroup mount,
-// cgroup namespace, and a default device allowance to the spec.
+// SetDeviceCapabilities adds standard device capabilities plus the cgroup
+// mount/namespace wiring needed for device-aware workloads.
 func SetDeviceCapabilities(spec *Spec, appName string) {
 	caps := []string{
 		"CAP_CHOWN",
@@ -127,12 +127,6 @@ func SetDeviceCapabilities(spec *Spec, appName string) {
 
 	// Add cgroup namespace.
 	spec.Linux.Namespaces = append(spec.Linux.Namespaces, LinuxNamespace{Type: "cgroup"})
-
-	// Default allow-all device rule.
-	spec.Linux.Resources.Devices = append(spec.Linux.Resources.Devices, LinuxDeviceCgroup{
-		Allow:  true,
-		Access: "rwm",
-	})
 }
 
 // applyGPU adds NVIDIA GPU device access. This provides a minimal fallback
