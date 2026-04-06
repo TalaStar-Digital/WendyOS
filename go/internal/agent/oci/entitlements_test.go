@@ -24,6 +24,15 @@ func hasMountDest(spec *Spec, dest string) bool {
 	return false
 }
 
+func mountForDest(spec *Spec, dest string) (Mount, bool) {
+	for _, m := range spec.Mounts {
+		if m.Destination == dest {
+			return m, true
+		}
+	}
+	return Mount{}, false
+}
+
 func hasNamespace(spec *Spec, nsType string) bool {
 	for _, ns := range spec.Linux.Namespaces {
 		if ns.Type == nsType {
@@ -370,15 +379,18 @@ func TestApplyEntitlements_Video(t *testing.T) {
 		t.Error("video entitlement did not add V4L2 cgroup device rule (major 81)")
 	}
 
-	// Should mount /dev/video0 when it exists on the host.
-	if _, err := os.Stat("/dev/video0"); err == nil {
-		if !hasMountDest(spec, "/dev/video0") {
-			t.Error("video entitlement did not add /dev/video0 mount")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("stat /dev/video0: %v", err)
-	} else {
-		t.Skip("/dev/video0 not present on this host")
+	devMount, ok := mountForDest(spec, "/dev")
+	if !ok {
+		t.Fatal("video entitlement did not define /dev mount")
+	}
+	if devMount.Source != "/dev" || devMount.Type != "bind" {
+		t.Fatalf("/dev mount = %+v, want bind mount from host /dev", devMount)
+	}
+	if !slices.Contains(devMount.Options, "rbind") {
+		t.Error("video entitlement /dev mount missing rbind option")
+	}
+	if !slices.Contains(devMount.Options, "rw") {
+		t.Error("video entitlement /dev mount missing rw option")
 	}
 }
 

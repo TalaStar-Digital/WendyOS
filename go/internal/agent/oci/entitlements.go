@@ -21,6 +21,8 @@ const (
 	videoGroupGID uint32 = 44
 	// inputGroupGID is the standard input group GID (for /dev/input devices).
 	inputGroupGID uint32 = 105
+	// v4l2Major is the standard Video4Linux character device major.
+	v4l2Major int64 = 81
 )
 
 // ApplyOptions configures optional behavior for entitlement application.
@@ -300,7 +302,7 @@ func applyVideo(spec *Spec) {
 	spec.Process.User.AdditionalGids = appendUnique(spec.Process.User.AdditionalGids, videoGroupGID)
 
 	// Allow video4linux devices (major 81).
-	major := int64(81)
+	major := v4l2Major
 	spec.Linux.Resources.Devices = append(spec.Linux.Resources.Devices, LinuxDeviceCgroup{
 		Allow:  true,
 		Type:   "c",
@@ -308,18 +310,17 @@ func applyVideo(spec *Spec) {
 		Access: "rwm",
 	})
 
-	// Mount /dev/video* devices that exist on the host.
-	for i := 0; i < 16; i++ {
-		devPath := fmt.Sprintf("/dev/video%d", i)
-		if _, err := os.Stat(devPath); err == nil {
-			spec.Mounts = append(spec.Mounts, Mount{
-				Destination: devPath,
-				Source:      devPath,
-				Type:        "bind",
-				Options:     []string{"rbind", "nosuid", "noexec"},
-			})
-		}
-	}
+	// Replace the isolated /dev tmpfs with a live bind mount of the host /dev
+	// tree. USB webcam hotplug can recreate /dev/videoN with a different node
+	// name after unplug/replug, and an OCI device snapshot cannot update inside
+	// a running container. Binding host /dev keeps /dev/video* and /dev/v4l
+	// current without requiring container restart.
+	replaceMount(spec, Mount{
+		Destination: "/dev",
+		Source:      "/dev",
+		Type:        "bind",
+		Options:     []string{"rbind", "rw", "nosuid"},
+	})
 }
 
 // applyPersist adds a persistent volume bind mount, creating the host
@@ -510,4 +511,14 @@ func appendUnique[T comparable](slice []T, val T) []T {
 		}
 	}
 	return append(slice, val)
+}
+
+func replaceMount(spec *Spec, mount Mount) {
+	for i, existing := range spec.Mounts {
+		if existing.Destination == mount.Destination {
+			spec.Mounts[i] = mount
+			return
+		}
+	}
+	spec.Mounts = append(spec.Mounts, mount)
 }
