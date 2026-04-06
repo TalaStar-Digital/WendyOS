@@ -474,6 +474,11 @@ func metaTemplateNames(meta *repoMeta) string {
 // runTemplateFlow handles init when a template is selected.
 // destDir is the resolved project directory (either cwd or a new subdir).
 func runTemplateFlow(destDir, appID, tmpl, target string, meta *repoMeta, opts initOptions) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+
 	language, err := resolveTemplateLanguage(target, meta, opts)
 	if err != nil {
 		return err
@@ -520,9 +525,21 @@ func runTemplateFlow(destDir, appID, tmpl, target string, meta *repoMeta, opts i
 		return err
 	}
 
-	fmt.Println("\nYour project is ready! Run `cd " + appID + " && wendy run` to build and deploy.")
+	fmt.Println("\nYour project is ready! Run `" + templateRunCommand(cwd, destDir, appID) + "` to build and deploy.")
 
 	return nil
+}
+
+func templateRunCommand(cwd, destDir, appID string) string {
+	if filepath.Clean(destDir) == filepath.Clean(cwd) {
+		return "wendy run"
+	}
+
+	if filepath.Base(filepath.Clean(destDir)) == appID {
+		return "cd " + appID + " && wendy run"
+	}
+
+	return "cd " + destDir + " && wendy run"
 }
 
 // resolveInitDestAndID determines the destination directory and app ID for template flow.
