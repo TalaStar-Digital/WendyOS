@@ -116,6 +116,13 @@ func TestTemplateRunCommand(t *testing.T) {
 			appID:   "demo app",
 			want:    "cd 'demo app' && wendy run",
 		},
+		{
+			name:    "new subdirectory with apostrophe",
+			cwd:     "/tmp/workspace",
+			destDir: "/tmp/workspace/demo'app",
+			appID:   "demo'app",
+			want:    "cd 'demo'\"'\"'app' && wendy run",
+		},
 	}
 
 	for _, tt := range tests {
