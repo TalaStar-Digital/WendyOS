@@ -26,8 +26,9 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// Skip heavy init for internal subprocess commands.
-			if cmd.Name() == "__ble-check" {
+			// Skip heavy init for commands that don't need device/cloud setup.
+			switch cmd.Name() {
+			case "__ble-check", "open-browser":
 				return nil
 			}
 			providers.Initialize(cmd.Context())
@@ -114,6 +115,8 @@ func NewRootCmd() *cobra.Command {
 	infoCmd.GroupID = "misc"
 	analyticsCmd := newAnalyticsCmd()
 	analyticsCmd.GroupID = "misc"
+	utilsCmd := newUtilsCmd()
+	utilsCmd.GroupID = "misc"
 
 	// Hidden command used by a subprocess to test CoreBluetooth access.
 	// The main process spawns a child process that runs this command so
@@ -144,6 +147,7 @@ func NewRootCmd() *cobra.Command {
 		cacheCmd,
 		infoCmd,
 		analyticsCmd,
+		utilsCmd,
 	)
 
 	root.SetHelpCommandGroupID("misc")

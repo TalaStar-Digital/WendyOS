@@ -21,6 +21,9 @@ const (
 
 	langSwift  = "swift"
 	langPython = "python"
+	langRust   = "rust"
+	langNode   = "node"
+	langCpp    = "cpp"
 
 	assistantClaude = "claude"
 	assistantCodex  = "codex"
@@ -57,6 +60,9 @@ type initOptions struct {
 	appID               string
 	target              string
 	language            string
+	template            string
+	vars                []string
+	gitInit             string
 	entitlements        []string
 	allEntitlements     bool
 	noExtraEntitlements bool
@@ -70,6 +76,8 @@ type initOptions struct {
 	appIDSet        bool
 	targetSet       bool
 	languageSet     bool
+	templateSet     bool
+	gitInitSet      bool
 	entitlementsSet bool
 	gpioPinsSet     bool
 	i2cDeviceSet    bool
@@ -84,6 +92,7 @@ var wendyOSEntitlementQuestions = []entitlementQuestion{
 	{"Does your app need Bluetooth peripheral access?", appconfig.EntitlementBluetooth, "Bluetooth Low Energy peripherals"},
 	{"Does your app need USB peripheral access?", appconfig.EntitlementUSB, "USB device access"},
 	{"Does your app need GPIO pin access?", appconfig.EntitlementGPIO, "General-purpose I/O pins"},
+	{"Does your app need SPI bus access (displays, sensors, flash)?", appconfig.EntitlementSPI, "SPI bus access (may require GPIO access)"},
 	{"Does your app need I2C bus access?", appconfig.EntitlementI2C, "I2C bus devices"},
 	{"Does your app need audio input/output?", appconfig.EntitlementAudio, "Microphone and speaker access"},
 	{"Does your app need camera access?", appconfig.EntitlementCamera, "Camera device access"},
@@ -100,6 +109,12 @@ func newInitCmd() *cobra.Command {
 		Long:  "Interactively create a new Wendy project with scaffolding, entitlements, and optional AI assistant setup.",
 		Example: `  # Interactive wizard
   wendy init
+
+  # Scaffold from a template (interactive language picker)
+  wendy init --template simple-api
+
+  # Non-interactive template scaffold with variable overrides
+  wendy init --app-id my-api --template simple-api --language rust --var PORT=8080
 
   # Fully non-interactive WendyOS Python app with persist storage
   wendy init \
@@ -153,6 +168,8 @@ func newInitCmd() *cobra.Command {
 			opts.appIDSet = cmd.Flags().Changed("app-id")
 			opts.targetSet = cmd.Flags().Changed("target")
 			opts.languageSet = cmd.Flags().Changed("language")
+			opts.templateSet = cmd.Flags().Changed("template")
+			opts.gitInitSet = cmd.Flags().Changed("git-init")
 			opts.entitlementsSet = cmd.Flags().Changed("entitlement")
 			opts.gpioPinsSet = cmd.Flags().Changed("gpio-pins")
 			opts.i2cDeviceSet = cmd.Flags().Changed("i2c-device")
@@ -170,7 +187,10 @@ func newInitCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&opts.appID, "app-id", "", "Application ID to write into wendy.json")
 	cmd.Flags().StringVar(&opts.target, "target", "", "Target platform: wendyos or wendy-lite")
-	cmd.Flags().StringVar(&opts.language, "language", "", "Project language: swift or python")
+	cmd.Flags().StringVar(&opts.language, "language", "", "Project language: python, swift, rust, node, or cpp")
+	cmd.Flags().StringVar(&opts.template, "template", "", "Project template (e.g. simple-api, fullstack)")
+	cmd.Flags().StringSliceVar(&opts.vars, "var", nil, "Template variable override (repeatable, KEY=VALUE)")
+	cmd.Flags().StringVar(&opts.gitInit, "git-init", "", "Initialize a git repo in the project directory (yes or no)")
 	cmd.Flags().StringSliceVar(&opts.entitlements, "entitlement", nil, "App entitlement to enable (repeatable or comma-separated)")
 	cmd.Flags().BoolVar(&opts.allEntitlements, "all-entitlements", false, "Enable all entitlements (requires field flags for gpio, i2c, persist)")
 	cmd.Flags().BoolVar(&opts.noExtraEntitlements, "no-extra-entitlements", false, "Skip entitlement prompts and use only the default network entitlement")
@@ -181,7 +201,31 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.assistant, "assistant", "", "AI assistant to launch after init: claude, codex, or skip")
 	cmd.Flags().BoolVar(&opts.installClaudeSkills, "install-claude-skills", false, "Install Wendy Claude skills before launching Claude")
 
+	// Allow bare `--template` (no value) by rewriting os.Args before cobra
+	// parses flags. When --template appears as the last arg or is followed by
+	// another flag (--*), inject a sentinel value so cobra doesn't error with
+	// "flag needs an argument".
+	rewriteBareTemplateFlag()
+
 	return cmd
+}
+
+// rewriteBareTemplateFlag patches os.Args in-place so that a bare --template
+// (with no value) becomes --template=_pick. This lets cobra parse it as a
+// normal string flag while the init wizard treats "_pick" as "show picker".
+func rewriteBareTemplateFlag() {
+	for i, arg := range os.Args {
+		if arg == "--template" {
+			next := ""
+			if i+1 < len(os.Args) {
+				next = os.Args[i+1]
+			}
+			// If --template is last arg or next arg is another flag, inject sentinel.
+			if next == "" || strings.HasPrefix(next, "-") {
+				os.Args[i] = "--template=_pick"
+			}
+		}
+	}
 }
 
 func runInitWizard(args []string, opts initOptions) error {
@@ -190,7 +234,31 @@ func runInitWizard(args []string, opts initOptions) error {
 		return fmt.Errorf("getting working directory: %w", err)
 	}
 
-	// Determine app ID.
+	if err := validateInitAssistantOptions(opts); err != nil {
+		return err
+	}
+
+	// Step 1: Pick target device first so template filtering works.
+	target, err := resolveInitTarget(opts)
+	if err != nil {
+		return err
+	}
+
+	// Template flow: offer templates filtered by target, or use --template flag.
+	tmpl, meta, err := resolveInitTemplateForTarget(target, opts)
+	if err != nil {
+		return err
+	}
+
+	if tmpl != "" {
+		destDir, appID, err := resolveInitDestAndID(cwd, args, opts)
+		if err != nil {
+			return err
+		}
+		return runTemplateFlow(cwd, destDir, appID, tmpl, target, meta, opts)
+	}
+
+	// Standard wizard flow (no template) — check wendy.json doesn't already exist.
 	appID, err := resolveInitAppID(cwd, args, opts)
 	if err != nil {
 		return err
@@ -201,17 +269,7 @@ func runInitWizard(args []string, opts initOptions) error {
 		return fmt.Errorf("wendy.json already exists in %s", cwd)
 	}
 
-	if err := validateInitAssistantOptions(opts); err != nil {
-		return err
-	}
-
-	// Step 1: Pick target device.
-	target, err := resolveInitTarget(opts)
-	if err != nil {
-		return err
-	}
-
-	// Step 2: Pick language (constrained by target).
+	// Step 2: Pick language (constrained by already-resolved target).
 	language, err := resolveInitLanguage(target, opts)
 	if err != nil {
 		return err
@@ -266,10 +324,305 @@ func runInitWizard(args []string, opts initOptions) error {
 	return nil
 }
 
+// resolveInitTemplateForTarget determines which template to use, filtering by target.
+// Returns (template name, meta, error). Empty template name means skip templates.
+// Fetches meta.json from the templates repo when needed.
+func resolveInitTemplateForTarget(target string, opts initOptions) (string, *repoMeta, error) {
+	if opts.templateSet {
+		tmpl := normalizeInitChoice(opts.template)
+
+		// Fetch meta.json to validate or show picker.
+		meta, err := fetchRepoMeta()
+		if err != nil {
+			return "", nil, err
+		}
+
+		if tmpl == "_pick" {
+			// Bare --template (no value): show interactive picker filtered by target.
+			name, err := pickTemplateNameForTarget(target, meta)
+			return name, meta, err
+		}
+
+		// Explicit template name: validate it.
+		for _, t := range meta.Templates {
+			if t.Name == tmpl {
+				return tmpl, meta, nil
+			}
+		}
+		return "", nil, fmt.Errorf("unknown template %q (available: %s)", opts.template, metaTemplateNames(meta))
+	}
+
+	// --target set without --template means manual flow (user is not using templates).
+	if opts.targetSet {
+		return "", nil, nil
+	}
+
+	// Other manual-flow flags skip the template picker.
+	if opts.entitlementsSet || opts.allEntitlements || opts.noExtraEntitlements {
+		return "", nil, nil
+	}
+
+	// In interactive mode, fetch meta and offer templates for this target.
+	meta, err := fetchRepoMeta()
+	if err != nil {
+		return "", nil, err
+	}
+	name, err := pickTemplateOrSkipForTarget(target, meta)
+	if err != nil {
+		return "", nil, err
+	}
+	return name, meta, nil
+}
+
+// templateTargetMatch returns true if the template supports the given target.
+// Templates without a Targets list default to WendyOS only; Wendy Lite templates
+// must explicitly include "wendy-lite" in their Targets list.
+func templateTargetMatch(t repoMetaTemplate, target string) bool {
+	if len(t.Targets) == 0 {
+		return target == targetWendyOS
+	}
+	for _, tgt := range t.Targets {
+		if tgt == target {
+			return true
+		}
+	}
+	return false
+}
+
+// pickTemplateNameForTarget shows a picker with templates available for the given target.
+func pickTemplateNameForTarget(target string, meta *repoMeta) (string, error) {
+	fmt.Println()
+	var items []tui.PickerItem
+	for _, t := range meta.Templates {
+		if templateTargetMatch(t, target) {
+			items = append(items, tui.PickerItem{
+				Name:        t.Name,
+				Description: t.Description,
+				Value:       t.Name,
+			})
+		}
+	}
+	if len(items) == 0 {
+		return "", fmt.Errorf("no templates available for %s", target)
+	}
+	return pickFromItems("Choose a template", items)
+}
+
+// pickTemplateOrSkipForTarget shows templates for the given target plus a "No template" option.
+func pickTemplateOrSkipForTarget(target string, meta *repoMeta) (string, error) {
+	fmt.Println()
+	var items []tui.PickerItem
+	for _, t := range meta.Templates {
+		if templateTargetMatch(t, target) {
+			items = append(items, tui.PickerItem{
+				Name:        t.Name,
+				Description: t.Description,
+				Value:       t.Name,
+			})
+		}
+	}
+	items = append(items, tui.PickerItem{
+		Name:        "No template",
+		Description: "Configure target, language, and entitlements manually",
+		Value:       "",
+		SortKey:     "~",
+	})
+	return pickFromItems("Start from a template?", items)
+}
+
+// resolveTemplateLanguage picks the language for the template flow.
+// Wendy Lite always uses Swift; WendyOS offers the full language picker.
+func resolveTemplateLanguage(target string, meta *repoMeta, opts initOptions) (string, error) {
+	if target == targetWendyLite {
+		if opts.languageSet && normalizeInitChoice(opts.language) != langSwift {
+			return "", fmt.Errorf("%s templates require %s", targetWendyLite, langSwift)
+		}
+		return langSwift, nil
+	}
+
+	if opts.languageSet {
+		lang := normalizeInitChoice(opts.language)
+		if !isTemplateLanguage(lang, meta) {
+			names := make([]string, len(meta.Languages))
+			for i, l := range meta.Languages {
+				names[i] = l.Key
+			}
+			return "", fmt.Errorf("invalid language %q for templates (available: %s)", opts.language, strings.Join(names, ", "))
+		}
+		return lang, nil
+	}
+
+	fmt.Println()
+	var items []tui.PickerItem
+	for _, l := range meta.Languages {
+		items = append(items, tui.PickerItem{
+			Name:  l.Name,
+			Value: l.Key,
+		})
+	}
+	return pickFromItems("What language will you use?", items)
+}
+
+func metaTemplateNames(meta *repoMeta) string {
+	names := make([]string, len(meta.Templates))
+	for i, t := range meta.Templates {
+		names[i] = t.Name
+	}
+	return strings.Join(names, ", ")
+}
+
+// runTemplateFlow handles init when a template is selected.
+// destDir is the resolved project directory (either cwd or a new subdir).
+func runTemplateFlow(cwd, destDir, appID, tmpl, target string, meta *repoMeta, opts initOptions) error {
+	language, err := resolveTemplateLanguage(target, meta, opts)
+	if err != nil {
+		return err
+	}
+
+	// Parse --var overrides.
+	varOverrides, err := parseVarFlags(opts.vars)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nDownloading template %q for %s...\n", tmpl, language)
+
+	files, manifest, err := downloadTemplateArchive(language, tmpl)
+	if err != nil {
+		return err
+	}
+
+	// Collect variable values from flags or interactive prompts.
+	vals, err := collectTemplateValues(manifest, appID, varOverrides)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return fmt.Errorf("creating project directory: %w", err)
+	}
+
+	// Render and write all template files.
+	if err := renderAndWriteTemplate(files, destDir, appID, tmpl, vals); err != nil {
+		return err
+	}
+
+	fmt.Printf("\nScaffolded %s project from template %q\n", language, tmpl)
+	fmt.Printf("  Directory: %s/\n", destDir)
+	for _, v := range manifest.Variables {
+		if val, ok := vals[v.Name]; ok {
+			fmt.Printf("  %s: %v\n", v.Name, val)
+		}
+	}
+
+	// Offer git init.
+	if err := maybeGitInit(destDir, opts); err != nil {
+		return err
+	}
+
+	fmt.Println("\nYour project is ready! Run `" + templateRunCommand(cwd, destDir, appID) + "` to build and deploy.")
+
+	return nil
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+func templateRunCommand(cwd, destDir, appID string) string {
+	if filepath.Clean(destDir) == filepath.Clean(cwd) {
+		return "wendy run"
+	}
+
+	return "cd " + shellQuote(appID) + " && wendy run"
+}
+
+// resolveInitDestAndID determines the destination directory and app ID for template flow.
+// In fully interactive mode it asks whether to initialize in the current directory
+// or create a new project subdirectory.
+func resolveInitDestAndID(cwd string, args []string, opts initOptions) (string, string, error) {
+	// Explicit app ID provided: always create a new subdirectory.
+	if len(args) > 0 || opts.appIDSet {
+		appID, err := resolveInitAppID(cwd, args, opts)
+		if err != nil {
+			return "", "", err
+		}
+		return filepath.Join(cwd, appID), appID, nil
+	}
+
+	// Fully interactive (no directive flags): ask where to set up the project.
+	if !opts.targetSet && !opts.entitlementsSet && !opts.allEntitlements && !opts.noExtraEntitlements {
+		fmt.Println()
+		useCurrentDir, err := tui.ConfirmDefaultYes("Initialize in the current directory?")
+		if err != nil {
+			return "", "", err
+		}
+		if useCurrentDir {
+			return cwd, strings.TrimSpace(filepath.Base(cwd)), nil
+		}
+
+		fmt.Println()
+		appID, err := tui.PromptText("Project name", "directory name and app identifier", func(v string) error {
+			if strings.TrimSpace(v) == "" {
+				return fmt.Errorf("project name cannot be empty")
+			}
+			return nil
+		})
+		if err != nil {
+			return "", "", err
+		}
+		appID = strings.TrimSpace(appID)
+		return filepath.Join(cwd, appID), appID, nil
+	}
+
+	// Semi-interactive or non-interactive without explicit app ID: infer from cwd.
+	return cwd, strings.TrimSpace(filepath.Base(cwd)), nil
+}
+
+// maybeGitInit optionally runs git init in the project directory.
+func maybeGitInit(dir string, opts initOptions) error {
+	doInit := true
+
+	if opts.gitInitSet {
+		switch normalizeInitChoice(opts.gitInit) {
+		case "yes", "y", "true":
+			doInit = true
+		case "no", "n", "false":
+			doInit = false
+		default:
+			return fmt.Errorf("invalid --git-init value %q (expected yes or no)", opts.gitInit)
+		}
+	} else {
+		// Interactive yes/no prompt.
+		fmt.Println()
+		var err error
+		doInit, err = tui.ConfirmDefaultYes("Initialize a git repository?")
+		if err != nil {
+			return err
+		}
+	}
+
+	if !doInit {
+		return nil
+	}
+
+	cmd := exec.Command("git", "init", "-b", "main", dir)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("  Warning: git init failed: %v\n", err)
+	}
+
+	return nil
+}
+
 func resolveInitAppID(cwd string, args []string, opts initOptions) (string, error) {
-	rawAppID := filepath.Base(cwd)
 	if len(args) > 0 {
-		rawAppID = args[0]
+		appID := strings.TrimSpace(args[0])
+		if appID == "" {
+			return "", fmt.Errorf("app ID cannot be empty or whitespace")
+		}
+		return appID, nil
 	}
 
 	if opts.appIDSet {
@@ -277,26 +630,22 @@ func resolveInitAppID(cwd string, args []string, opts initOptions) (string, erro
 		if flagAppID == "" {
 			return "", fmt.Errorf("app ID cannot be empty or whitespace")
 		}
-
-		if len(args) > 0 {
-			positionalAppID := strings.TrimSpace(args[0])
-			if positionalAppID == "" {
-				return "", fmt.Errorf("app ID positional argument cannot be empty or whitespace")
-			}
-			if positionalAppID != flagAppID {
-				return "", fmt.Errorf("app ID mismatch: positional argument %q does not match --app-id %q", args[0], opts.appID)
-			}
-		}
-
 		return flagAppID, nil
 	}
 
-	appID := strings.TrimSpace(rawAppID)
-	if appID == "" {
-		return "", fmt.Errorf("could not infer a valid app ID; please provide a non-empty value via --app-id or as a positional argument")
+	// Non-template flow can infer from the current directory name.
+	if !opts.templateSet {
+		appID := strings.TrimSpace(filepath.Base(cwd))
+		if appID == "" {
+			return "", fmt.Errorf("could not infer a valid app ID; please provide a non-empty value via --app-id or as a positional argument")
+		}
+		return appID, nil
 	}
 
-	return appID, nil
+	// Template flow (both --template and interactive) needs an explicit
+	// app ID since it becomes the project directory name. Return empty
+	// here — runTemplateFlow will prompt if needed.
+	return "", nil
 }
 
 func resolveInitTarget(opts initOptions) (string, error) {
@@ -310,8 +659,8 @@ func resolveInitTarget(opts initOptions) (string, error) {
 
 	fmt.Println()
 	return pickFromItems("What is your target device?", []tui.PickerItem{
-		{Name: "WendyOS", Description: "Full Linux-based edge device (Jetson, Raspberry Pi, ...)", Value: targetWendyOS},
-		{Name: "Wendy Lite", Description: "Microcontroller running WASM (ESP32)", Value: targetWendyLite},
+		{Name: "WendyOS", Description: "Full Linux-based edge device (Jetson, Raspberry Pi, ...)", Value: targetWendyOS, SortKey: "0"},
+		{Name: "Wendy Lite", Description: "Microcontroller running WASM (ESP32)", Value: targetWendyLite, SortKey: "1"},
 	})
 }
 
