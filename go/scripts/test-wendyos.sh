@@ -22,7 +22,7 @@ Options:
   -w, --wendy PATH            Path to wendy binary (default: wendy on PATH)
   --device-type jetson|pi     Device type (auto-detected if omitted)
   --skip-gpu                  Force skip GPU samples even on Jetson
-  --samples-dir PATH          Use local samples dir instead of cloning
+  --samples-dir PATH          Run all wendy apps found in PATH (recursive)
   --samples-branch BRANCH     Git branch (default: main)
   --help                      Show this help message
 
@@ -30,7 +30,7 @@ Examples:
   $(basename "$0")                                        # auto-discover everything
   $(basename "$0") -h wendyos-merry-aurora                # explicit host
   $(basename "$0") -h jetson-01 --device-type jetson      # explicit Jetson
-  $(basename "$0") --samples-dir ../WendySamples          # local samples
+  $(basename "$0") --samples-dir ../WendySamples          # run all apps in dir
 EOF
     exit 0
 }
@@ -43,6 +43,7 @@ WENDY="wendy"
 DEVICE_TYPE=""
 SKIP_GPU=false
 SAMPLES_DIR=""
+SAMPLES_DIR_PROVIDED=false
 SAMPLES_BRANCH="main"
 
 while [[ $# -gt 0 ]]; do
@@ -51,7 +52,7 @@ while [[ $# -gt 0 ]]; do
         -w|--wendy)         WENDY="$2"; shift 2 ;;
         --device-type)      DEVICE_TYPE="$2"; shift 2 ;;
         --skip-gpu)         SKIP_GPU=true; shift ;;
-        --samples-dir)      SAMPLES_DIR="$2"; shift 2 ;;
+        --samples-dir)      SAMPLES_DIR="$2"; SAMPLES_DIR_PROVIDED=true; shift 2 ;;
         --samples-branch)   SAMPLES_BRANCH="$2"; shift 2 ;;
         --help)             usage ;;
         *)                  echo "Unknown option: $1"; usage ;;
@@ -124,61 +125,42 @@ if [[ "$DEVICE_TYPE" == "jetson" ]] && [[ "$SKIP_GPU" == true ]]; then
 fi
 echo ""
 
-# ── Phase 5: Foundational samples ──────────────────────────────────
-
-echo -e "${BOLD}==> Phase 5: Foundational samples${RESET}"
-
-EXAMPLES=(hello-world simple-server web-app persistent-volume sqlite-persistence)
-LANGUAGES=(python swift rust node-typescript cpp)
-
-is_server() {
-    [[ "$1" == "simple-server" || "$1" == "web-app" ]]
-}
+# ── Phase 5: Run samples ───────────────────────────────────────────
 
 TESTED_APPS=()
 
-for example in "${EXAMPLES[@]}"; do
-    echo -e "${BOLD}--- $example ---${RESET}"
+if [[ "$SAMPLES_DIR_PROVIDED" == true ]]; then
+    echo -e "${BOLD}==> Phase 5: Run all apps in ${SAMPLES_DIR}${RESET}"
 
-    for lang in "${LANGUAGES[@]}"; do
-        test_name="$lang/$example"
-        dir="$SAMPLES_DIR/$lang/$example"
+    while IFS= read -r wendy_json; do
+        dir="$(dirname "$wendy_json")"
+        test_name="${dir#"$SAMPLES_DIR/"}"
 
-        # Check directory exists
-        if [[ ! -d "$dir" ]]; then
-            skip_test "$test_name (no directory)"
-            continue
-        fi
-
-        # Generate wendy.json via wendy init if missing (swift/python only)
-        case "$lang" in
-            swift|python) ensure_wendy_json "$dir" "$lang" "wendyos" "$WENDY" ;;
-        esac
-
-        # Check wendy.json exists
-        if [[ ! -f "$dir/wendy.json" ]]; then
-            skip_test "$test_name (no wendy.json)"
+        # Validate JSON
+        if ! jq . "$wendy_json" >/dev/null 2>&1; then
+            skip_test "$test_name (invalid wendy.json)"
             continue
         fi
 
         # Extract appId
-        app_id=$(jq -r '.appId' "$dir/wendy.json" 2>/dev/null)
+        app_id=$(jq -r '.appId' "$wendy_json" 2>/dev/null)
         if [[ -z "$app_id" || "$app_id" == "null" ]]; then
             skip_test "$test_name (no appId)"
             continue
         fi
 
+        # Determine run mode: detach if readiness config exists
+        detach_flag=""
+        if jq -e '.readiness' "$wendy_json" >/dev/null 2>&1; then
+            detach_flag="--detach"
+        fi
+
         # Pre-cleanup: remove leftover container and image from previous runs
         "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --cleanup &>/dev/null || true
 
-        # Run the example
-        if is_server "$example"; then
-            run_test "$test_name" \
-                bash -c "cd '$dir' && '$WENDY' run --device '$HOSTNAME' --detach"
-        else
-            run_test "$test_name" \
-                bash -c "cd '$dir' && '$WENDY' run --device '$HOSTNAME'"
-        fi
+        # Run the app
+        run_test "$test_name" \
+            bash -c "cd '$dir' && '$WENDY' run --device '$HOSTNAME' $detach_flag"
 
         # Track tested apps for GPU dedup
         TESTED_APPS+=("$dir")
@@ -187,12 +169,75 @@ for example in "${EXAMPLES[@]}"; do
         "$WENDY" apps stop "$app_id" --device "$HOSTNAME" &>/dev/null || true
         "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --cleanup &>/dev/null || true
 
-        # Clean up generated wendy.json
-        cleanup_generated_wendy_json "$dir"
-    done
-
+    done < <(find "$SAMPLES_DIR" -name wendy.json -type f 2>/dev/null | sort)
     echo ""
-done
+else
+    echo -e "${BOLD}==> Phase 5: Foundational samples${RESET}"
+
+    EXAMPLES=(hello-world simple-server web-app persistent-volume sqlite-persistence)
+    LANGUAGES=(python swift rust node-typescript cpp)
+
+    is_server() {
+        [[ "$1" == "simple-server" || "$1" == "web-app" ]]
+    }
+
+    for example in "${EXAMPLES[@]}"; do
+        echo -e "${BOLD}--- $example ---${RESET}"
+
+        for lang in "${LANGUAGES[@]}"; do
+            test_name="$lang/$example"
+            dir="$SAMPLES_DIR/$lang/$example"
+
+            # Check directory exists
+            if [[ ! -d "$dir" ]]; then
+                skip_test "$test_name (no directory)"
+                continue
+            fi
+
+            # Generate wendy.json via wendy init if missing (swift/python only)
+            case "$lang" in
+                swift|python) ensure_wendy_json "$dir" "$lang" "wendyos" "$WENDY" ;;
+            esac
+
+            # Check wendy.json exists
+            if [[ ! -f "$dir/wendy.json" ]]; then
+                skip_test "$test_name (no wendy.json)"
+                continue
+            fi
+
+            # Extract appId
+            app_id=$(jq -r '.appId' "$dir/wendy.json" 2>/dev/null)
+            if [[ -z "$app_id" || "$app_id" == "null" ]]; then
+                skip_test "$test_name (no appId)"
+                continue
+            fi
+
+            # Pre-cleanup: remove leftover container and image from previous runs
+            "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --cleanup &>/dev/null || true
+
+            # Run the example
+            if is_server "$example"; then
+                run_test "$test_name" \
+                    bash -c "cd '$dir' && '$WENDY' run --device '$HOSTNAME' --detach"
+            else
+                run_test "$test_name" \
+                    bash -c "cd '$dir' && '$WENDY' run --device '$HOSTNAME'"
+            fi
+
+            # Track tested apps for GPU dedup
+            TESTED_APPS+=("$dir")
+
+            # Post-cleanup: stop and remove container + image
+            "$WENDY" apps stop "$app_id" --device "$HOSTNAME" &>/dev/null || true
+            "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force --cleanup &>/dev/null || true
+
+            # Clean up generated wendy.json
+            cleanup_generated_wendy_json "$dir"
+        done
+
+        echo ""
+    done
+fi
 
 # ── Phase 6: GPU samples (Jetson only) ─────────────────────────────
 

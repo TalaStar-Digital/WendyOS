@@ -886,7 +886,7 @@ jobs:
             "
 
       - name: Publish to AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
         with:
           pkgname: ${{ matrix.pkgname }}
           pkgbuild: ${{ matrix.pkgbuild_path }}

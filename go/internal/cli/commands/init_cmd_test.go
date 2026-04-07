@@ -87,6 +87,54 @@ func TestResolveInitAppID_TrimsExplicitFlag(t *testing.T) {
 	}
 }
 
+func TestTemplateRunCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		cwd     string
+		destDir string
+		appID   string
+		want    string
+	}{
+		{
+			name:    "current directory",
+			cwd:     "/tmp/demo-app",
+			destDir: "/tmp/demo-app",
+			appID:   "demo-app",
+			want:    "wendy run",
+		},
+		{
+			name:    "new subdirectory",
+			cwd:     "/tmp/workspace",
+			destDir: "/tmp/workspace/demo-app",
+			appID:   "demo-app",
+			want:    "cd 'demo-app' && wendy run",
+		},
+		{
+			name:    "new subdirectory with spaces",
+			cwd:     "/tmp/workspace",
+			destDir: "/tmp/workspace/demo app",
+			appID:   "demo app",
+			want:    "cd 'demo app' && wendy run",
+		},
+		{
+			name:    "new subdirectory with apostrophe",
+			cwd:     "/tmp/workspace",
+			destDir: "/tmp/workspace/demo'app",
+			appID:   "demo'app",
+			want:    "cd 'demo'\"'\"'app' && wendy run",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := templateRunCommand(tt.cwd, tt.destDir, tt.appID)
+			if got != tt.want {
+				t.Fatalf("templateRunCommand(%q, %q, %q) = %q, want %q", tt.cwd, tt.destDir, tt.appID, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildInitEntitlementsFromFlags_RejectsEmptyEntitlementFlag(t *testing.T) {
 	_, err := buildInitEntitlementsFromFlags(targetWendyOS, initOptions{
 		entitlementsSet: true,
