@@ -184,6 +184,10 @@ func (m *statefulContainerdClient) StartContainerWithStdin(_ context.Context, ap
 	return m.StartContainer(context.Background(), appName)
 }
 
+func (m *statefulContainerdClient) GetContainerStats(_ context.Context) ([]*agentpb.ContainerStats, error) {
+	return nil, nil
+}
+
 // getLayerData returns the data stored for a given digest, for test assertions.
 func (m *statefulContainerdClient) getLayerData(digest string) ([]byte, bool) {
 	m.mu.Lock()

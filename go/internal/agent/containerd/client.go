@@ -10,7 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	cgroupv1 "github.com/containerd/cgroups/v3/cgroup1/stats"
+	cgroupv2 "github.com/containerd/cgroups/v3/cgroup2/stats"
 	tasks "github.com/containerd/containerd/api/services/tasks/v1"
+	"github.com/containerd/containerd/api/types"
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/core/content"
 	"github.com/containerd/containerd/v2/core/images"
@@ -19,6 +22,7 @@ import (
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/containerd/errdefs"
+	"github.com/containerd/typeurl/v2"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"go.uber.org/zap"
@@ -995,6 +999,64 @@ func (c *Client) ListContainers(ctx context.Context) ([]*agentpb.AppContainer, e
 	}
 
 	return result, nil
+}
+
+// GetContainerStats collects memory and image-size stats for all Wendy-managed containers.
+// Memory is read from cgroup metrics (only available for running tasks). Storage is the
+// image size from the content store. Both values are 0 if unavailable.
+func (c *Client) GetContainerStats(ctx context.Context) ([]*agentpb.ContainerStats, error) {
+	ctx = c.withNamespace(ctx)
+
+	containers, err := c.client.Containers(ctx, fmt.Sprintf("labels.%q", labelKeyAppVersion))
+	if err != nil {
+		return nil, fmt.Errorf("listing containers: %w", err)
+	}
+
+	var result []*agentpb.ContainerStats
+	for _, ctr := range containers {
+		appName := ctr.ID()
+		stat := &agentpb.ContainerStats{AppName: appName}
+
+		// Storage: image size from content store.
+		if img, imgErr := ctr.Image(ctx); imgErr == nil {
+			if sz, szErr := img.Size(ctx); szErr == nil {
+				stat.StorageBytes = sz
+			}
+		}
+
+		// Memory: cgroup metrics from running task.
+		if task, taskErr := ctr.Task(ctx, nil); taskErr == nil {
+			if metric, metErr := task.Metrics(ctx); metErr == nil {
+				stat.MemoryBytes = extractMemoryBytes(metric)
+			}
+		}
+
+		result = append(result, stat)
+	}
+	return result, nil
+}
+
+// extractMemoryBytes decodes cgroup v1 or v2 task metrics and returns memory usage in bytes.
+func extractMemoryBytes(metric *types.Metric) int64 {
+	switch {
+	case typeurl.Is(metric.Data, (*cgroupv1.Metrics)(nil)):
+		m := &cgroupv1.Metrics{}
+		if err := typeurl.UnmarshalTo(metric.Data, m); err != nil {
+			return 0
+		}
+		if m.Memory != nil && m.Memory.Usage != nil {
+			return int64(m.Memory.Usage.Usage)
+		}
+	case typeurl.Is(metric.Data, (*cgroupv2.Metrics)(nil)):
+		m := &cgroupv2.Metrics{}
+		if err := typeurl.UnmarshalTo(metric.Data, m); err != nil {
+			return 0
+		}
+		if m.Memory != nil {
+			return int64(m.Memory.Usage)
+		}
+	}
+	return 0
 }
 
 // streamReader is a helper that continuously reads from a reader and sends

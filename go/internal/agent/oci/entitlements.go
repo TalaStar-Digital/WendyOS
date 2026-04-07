@@ -3,7 +3,9 @@ package oci
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
@@ -19,6 +21,8 @@ const (
 	videoGroupGID uint32 = 44
 	// inputGroupGID is the standard input group GID (for /dev/input devices).
 	inputGroupGID uint32 = 105
+	// v4l2Major is the standard Video4Linux character device major.
+	v4l2Major int64 = 81
 )
 
 // ApplyOptions configures optional behavior for entitlement application.
@@ -64,6 +68,8 @@ func ApplyEntitlements(spec *Spec, cfg *appconfig.AppConfig, opts ApplyOptions) 
 			applyI2C(spec, ent)
 		case appconfig.EntitlementGPIO:
 			applyGPIO(spec, ent)
+		case appconfig.EntitlementSPI:
+			applySPI(spec)
 		case appconfig.EntitlementInput:
 			applyInput(spec)
 		}
@@ -71,8 +77,11 @@ func ApplyEntitlements(spec *Spec, cfg *appconfig.AppConfig, opts ApplyOptions) 
 	return nil
 }
 
-// SetDeviceCapabilities adds standard device capabilities, cgroup mount,
-// cgroup namespace, and a default device allowance to the spec.
+// SetDeviceCapabilities adds standard device capabilities plus the cgroup
+// mount/namespace wiring needed for device-aware workloads. Callers are still
+// responsible for adding explicit device cgroup allow rules for each
+// entitlement they enable; this helper intentionally does not add a generic
+// allow-all devices rule.
 func SetDeviceCapabilities(spec *Spec, appName string) {
 	caps := []string{
 		"CAP_CHOWN",
@@ -121,12 +130,6 @@ func SetDeviceCapabilities(spec *Spec, appName string) {
 
 	// Add cgroup namespace.
 	spec.Linux.Namespaces = append(spec.Linux.Namespaces, LinuxNamespace{Type: "cgroup"})
-
-	// Default allow-all device rule.
-	spec.Linux.Resources.Devices = append(spec.Linux.Resources.Devices, LinuxDeviceCgroup{
-		Allow:  true,
-		Access: "rwm",
-	})
 }
 
 // applyGPU adds NVIDIA GPU device access. This provides a minimal fallback
@@ -338,7 +341,7 @@ func applyVideo(spec *Spec) {
 	spec.Process.User.AdditionalGids = appendUnique(spec.Process.User.AdditionalGids, videoGroupGID)
 
 	// Allow video4linux devices (major 81).
-	major := int64(81)
+	major := v4l2Major
 	spec.Linux.Resources.Devices = append(spec.Linux.Resources.Devices, LinuxDeviceCgroup{
 		Allow:  true,
 		Type:   "c",
@@ -346,18 +349,17 @@ func applyVideo(spec *Spec) {
 		Access: "rwm",
 	})
 
-	// Mount /dev/video* devices that exist on the host.
-	for i := 0; i < 16; i++ {
-		devPath := fmt.Sprintf("/dev/video%d", i)
-		if _, err := os.Stat(devPath); err == nil {
-			spec.Mounts = append(spec.Mounts, Mount{
-				Destination: devPath,
-				Source:      devPath,
-				Type:        "bind",
-				Options:     []string{"rbind", "nosuid", "noexec"},
-			})
-		}
-	}
+	// Replace the isolated /dev tmpfs with a live bind mount of the host /dev
+	// tree. USB webcam hotplug can recreate /dev/videoN with a different node
+	// name after unplug/replug, and an OCI device snapshot cannot update inside
+	// a running container. Binding host /dev keeps /dev/video* and /dev/v4l
+	// current without requiring container restart.
+	replaceMount(spec, Mount{
+		Destination: "/dev",
+		Source:      "/dev",
+		Type:        "bind",
+		Options:     []string{"rbind", "rw", "nosuid", "noexec"},
+	})
 }
 
 // applyPersist adds a persistent volume bind mount, creating the host
@@ -483,6 +485,40 @@ func applyGPIO(spec *Spec, ent appconfig.Entitlement) {
 	_ = ent.Pins // Pins are used for documentation/validation; access is chip-level.
 }
 
+// applySPI adds SPI device access.
+func applySPI(spec *Spec) {
+	// Mount SPI devices that exist on the host.
+	for i := 0; i < 4; i++ {
+		for j := 0; j < 4; j++ {
+			devPath := fmt.Sprintf("/dev/spidev%d.%d", i, j)
+			if _, err := os.Stat(devPath); err == nil {
+				spec.Mounts = append(spec.Mounts, Mount{
+					Destination: devPath,
+					Source:      devPath,
+					Type:        "bind",
+					Options:     []string{"rbind", "rw"},
+				})
+			}
+		}
+	}
+
+	// Add SPI group GID for device permissions (group name varies by distro).
+	if grp, err := user.LookupGroup("spi"); err == nil {
+		if gid, err := strconv.ParseUint(grp.Gid, 10, 32); err == nil {
+			spec.Process.User.AdditionalGids = appendUnique(spec.Process.User.AdditionalGids, uint32(gid))
+		}
+	}
+
+	// Allow SPI devices (major 153).
+	spiMajor := int64(153)
+	spec.Linux.Resources.Devices = append(spec.Linux.Resources.Devices, LinuxDeviceCgroup{
+		Allow:  true,
+		Type:   "c",
+		Major:  &spiMajor,
+		Access: "rwm",
+	})
+}
+
 // applyInput adds HID input device access (barcode scanners, keyboards, etc.).
 func applyInput(spec *Spec) {
 	// Add input group for /dev/input device permissions.
@@ -514,4 +550,14 @@ func appendUnique[T comparable](slice []T, val T) []T {
 		}
 	}
 	return append(slice, val)
+}
+
+func replaceMount(spec *Spec, mount Mount) {
+	for i, existing := range spec.Mounts {
+		if existing.Destination == mount.Destination {
+			spec.Mounts[i] = mount
+			return
+		}
+	}
+	spec.Mounts = append(spec.Mounts, mount)
 }

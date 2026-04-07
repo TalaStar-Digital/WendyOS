@@ -17,6 +17,7 @@ service WendyContainerService {
     rpc ListContainers(ListContainersRequest) returns (stream ListContainersResponse);
     rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
     rpc RemoveVolume(RemoveVolumeRequest) returns (RemoveVolumeResponse);
+    rpc ListContainerStats(ListContainerStatsRequest) returns (ListContainerStatsResponse);
 }
 
 message ListContainersRequest {}
@@ -180,3 +181,17 @@ message RemoveVolumeRequest {
 }
 
 message RemoveVolumeResponse {}
+
+// --- Container stats ---
+
+message ContainerStats {
+    string app_name = 1;
+    int64 memory_bytes = 2;   // current cgroup memory usage
+    int64 storage_bytes = 3;  // container image content size only (excludes writable layer/snapshot usage)
+}
+
+message ListContainerStatsRequest {}
+
+message ListContainerStatsResponse {
+    repeated ContainerStats stats = 1;
+}

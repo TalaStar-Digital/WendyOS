@@ -92,6 +92,7 @@ var wendyOSEntitlementQuestions = []entitlementQuestion{
 	{"Does your app need Bluetooth peripheral access?", appconfig.EntitlementBluetooth, "Bluetooth Low Energy peripherals"},
 	{"Does your app need USB peripheral access?", appconfig.EntitlementUSB, "USB device access"},
 	{"Does your app need GPIO pin access?", appconfig.EntitlementGPIO, "General-purpose I/O pins"},
+	{"Does your app need SPI bus access (displays, sensors, flash)?", appconfig.EntitlementSPI, "SPI bus access (may require GPIO access)"},
 	{"Does your app need I2C bus access?", appconfig.EntitlementI2C, "I2C bus devices"},
 	{"Does your app need audio input/output?", appconfig.EntitlementAudio, "Microphone and speaker access"},
 	{"Does your app need camera access?", appconfig.EntitlementCamera, "Camera device access"},
@@ -254,7 +255,7 @@ func runInitWizard(args []string, opts initOptions) error {
 		if err != nil {
 			return err
 		}
-		return runTemplateFlow(destDir, appID, tmpl, target, meta, opts)
+		return runTemplateFlow(cwd, destDir, appID, tmpl, target, meta, opts)
 	}
 
 	// Standard wizard flow (no template) — check wendy.json doesn't already exist.
@@ -424,6 +425,7 @@ func pickTemplateOrSkipForTarget(target string, meta *repoMeta) (string, error) 
 		Name:        "No template",
 		Description: "Configure target, language, and entitlements manually",
 		Value:       "",
+		SortKey:     "~",
 	})
 	return pickFromItems("Start from a template?", items)
 }
@@ -471,7 +473,7 @@ func metaTemplateNames(meta *repoMeta) string {
 
 // runTemplateFlow handles init when a template is selected.
 // destDir is the resolved project directory (either cwd or a new subdir).
-func runTemplateFlow(destDir, appID, tmpl, target string, meta *repoMeta, opts initOptions) error {
+func runTemplateFlow(cwd, destDir, appID, tmpl, target string, meta *repoMeta, opts initOptions) error {
 	language, err := resolveTemplateLanguage(target, meta, opts)
 	if err != nil {
 		return err
@@ -518,9 +520,21 @@ func runTemplateFlow(destDir, appID, tmpl, target string, meta *repoMeta, opts i
 		return err
 	}
 
-	fmt.Println("\nYour project is ready! Run `cd " + appID + " && wendy run` to build and deploy.")
+	fmt.Println("\nYour project is ready! Run `" + templateRunCommand(cwd, destDir, appID) + "` to build and deploy.")
 
 	return nil
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+func templateRunCommand(cwd, destDir, appID string) string {
+	if filepath.Clean(destDir) == filepath.Clean(cwd) {
+		return "wendy run"
+	}
+
+	return "cd " + shellQuote(appID) + " && wendy run"
 }
 
 // resolveInitDestAndID determines the destination directory and app ID for template flow.
@@ -645,8 +659,8 @@ func resolveInitTarget(opts initOptions) (string, error) {
 
 	fmt.Println()
 	return pickFromItems("What is your target device?", []tui.PickerItem{
-		{Name: "WendyOS", Description: "Full Linux-based edge device (Jetson, Raspberry Pi, ...)", Value: targetWendyOS},
-		{Name: "Wendy Lite", Description: "Microcontroller running WASM (ESP32)", Value: targetWendyLite},
+		{Name: "WendyOS", Description: "Full Linux-based edge device (Jetson, Raspberry Pi, ...)", Value: targetWendyOS, SortKey: "0"},
+		{Name: "Wendy Lite", Description: "Microcontroller running WASM (ESP32)", Value: targetWendyLite, SortKey: "1"},
 	})
 }
 
