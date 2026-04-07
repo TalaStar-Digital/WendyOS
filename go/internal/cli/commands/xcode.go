@@ -12,20 +12,20 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
 	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
 	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
-	"golang.org/x/term"
 )
 
 // runXcodebuild invokes xcodebuild with the given arguments, routing all
 // output to .xcode/xcodebuild.log. It prints a single "follow along" line before
-// starting so the user can open a second terminal and tail the log. On a TTY
-// a spinner is shown; on a non-TTY the process runs silently. The log file is
-// truncated at the start of each build so it always reflects the latest run.
+// starting so the user can open a second terminal and tail the log. The log
+// file is truncated at the start of each build so it always reflects the
+// latest run. No spinner is used: Bubble Tea spinners leave residual terminal
+// colour state that corrupts subsequent output in long-running commands like
+// wendy run; the tail hint already gives the user visibility into progress.
 func runXcodebuild(ctx context.Context, dir string, args ...string) error {
 	logDir := filepath.Join(dir, ".xcode")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
@@ -51,30 +51,13 @@ func runXcodebuild(ctx context.Context, dir string, args ...string) error {
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
-	wrapErr := func(err error) error {
+	if err := cmd.Run(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return fmt.Errorf("xcodebuild is required but not found in PATH; install Xcode from the App Store")
 		}
 		return err
 	}
-
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return wrapErr(cmd.Run())
-	}
-
-	s := tui.NewSpinner("Building with xcodebuild...")
-	p := tea.NewProgram(s)
-
-	go func() {
-		p.Send(tui.SpinnerDoneMsg{Err: wrapErr(cmd.Run())})
-	}()
-
-	finalModel, err := p.Run()
-	if err != nil {
-		return fmt.Errorf("TUI error: %w", err)
-	}
-	_, buildErr := finalModel.(tui.SpinnerModel).Result()
-	return buildErr
+	return nil
 }
 
 // findXcodeProj returns the name of the single .xcodeproj directory found in
