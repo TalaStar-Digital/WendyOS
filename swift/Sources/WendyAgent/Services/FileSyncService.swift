@@ -99,7 +99,9 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
                 switch message.requestType {
                 case .chunk(let chunk):
                     let relativePath = chunk.path
-                    let destinationURL = workDir.appendingPathComponent(relativePath)
+                    let destinationURL = try FileSyncService.validatedDestination(
+                        for: relativePath, in: workDir
+                    )
 
                     if temporaryHandles[relativePath] == nil {
                         guard let entry = cliManifest.first(where: { $0.path == relativePath }) else {
@@ -130,7 +132,9 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
 
                 case .commit(let commit):
                     let relativePath = commit.path
-                    let destinationURL = workDir.appendingPathComponent(relativePath)
+                    let destinationURL = try FileSyncService.validatedDestination(
+                        for: relativePath, in: workDir
+                    )
 
                     guard let temporaryURL = temporaryURLs.removeValue(forKey: relativePath) else {
                         throw RPCError(
@@ -240,6 +244,53 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
         var completeResponse = Wendy_Agent_Services_V1_FileSyncResponse()
         completeResponse.responseType = .complete(Wendy_Agent_Services_V1_FileSyncComplete())
         try await writeResponse(completeResponse)
+    }
+
+    // MARK: - Path validation
+
+    /// Returns the destination URL for `relativePath` inside `workDir`, throwing if the
+    /// path is empty, absolute, contains `.` or `..` components, or resolves outside
+    /// `workDir` after symlink expansion.
+    static func validatedDestination(for relativePath: String, in workDir: URL) throws -> URL {
+        guard !relativePath.isEmpty else {
+            throw RPCError(code: .invalidArgument, message: "File path must not be empty")
+        }
+        guard !relativePath.hasPrefix("/") else {
+            throw RPCError(code: .invalidArgument, message: "File path must be relative: \(relativePath)")
+        }
+        let components = relativePath.split(separator: "/").map(String.init)
+        guard !components.contains(".."), !components.contains(".") else {
+            throw RPCError(
+                code: .invalidArgument,
+                message: "File path must not contain . or .. components: \(relativePath)"
+            )
+        }
+
+        let destination = workDir.appendingPathComponent(relativePath)
+        let resolvedWorkDir = workDir.resolvingSymlinksInPath()
+
+        // `resolvingSymlinksInPath()` only resolves components that exist on disk.
+        // Walk up from the destination to the deepest ancestor that exists, resolve
+        // symlinks on that, then verify it is still inside workDir. This catches
+        // symlinks planted inside workDir that point outside (e.g. escape -> /etc).
+        var ancestor = destination
+        while !FileManager.default.fileExists(atPath: ancestor.path) {
+            let parent = ancestor.deletingLastPathComponent()
+            if parent.path == ancestor.path { break }
+            ancestor = parent
+        }
+        let resolvedAncestor = ancestor.resolvingSymlinksInPath()
+
+        guard resolvedAncestor.path == resolvedWorkDir.path
+            || resolvedAncestor.path.hasPrefix(resolvedWorkDir.path + "/")
+        else {
+            throw RPCError(
+                code: .invalidArgument,
+                message: "File path escapes working directory: \(relativePath)"
+            )
+        }
+
+        return destination
     }
 
     // MARK: - Manifest building

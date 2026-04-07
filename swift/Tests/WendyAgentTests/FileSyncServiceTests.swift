@@ -382,6 +382,93 @@ struct RunSessionTests {
     }
 }
 
+// MARK: - validatedDestination tests
+
+@Suite("FileSyncService.validatedDestination")
+struct ValidatedDestinationTests {
+    @Test("simple relative path is accepted")
+    func simpleRelativePath() throws {
+        let temporaryDirectory = try makeTempDir()
+        defer { cleanup(temporaryDirectory) }
+        let workDir = URL(fileURLWithPath: temporaryDirectory)
+        let result = try FileSyncService.validatedDestination(for: "MyApp", in: workDir)
+        #expect(result.path == workDir.appendingPathComponent("MyApp").path)
+    }
+
+    @Test("nested relative path is accepted")
+    func nestedRelativePath() throws {
+        let temporaryDirectory = try makeTempDir()
+        defer { cleanup(temporaryDirectory) }
+        let workDir = URL(fileURLWithPath: temporaryDirectory)
+        let result = try FileSyncService.validatedDestination(for: "config/app.json", in: workDir)
+        #expect(result.path == workDir.appendingPathComponent("config/app.json").path)
+    }
+
+    @Test("hidden file is accepted")
+    func hiddenFile() throws {
+        let temporaryDirectory = try makeTempDir()
+        defer { cleanup(temporaryDirectory) }
+        let workDir = URL(fileURLWithPath: temporaryDirectory)
+        let result = try FileSyncService.validatedDestination(for: ".config", in: workDir)
+        #expect(result.path == workDir.appendingPathComponent(".config").path)
+    }
+
+    @Test("empty path is rejected")
+    func emptyPath() throws {
+        let temporaryDirectory = try makeTempDir()
+        defer { cleanup(temporaryDirectory) }
+        let workDir = URL(fileURLWithPath: temporaryDirectory)
+        #expect(throws: (any Error).self) {
+            try FileSyncService.validatedDestination(for: "", in: workDir)
+        }
+    }
+
+    @Test("absolute path is rejected")
+    func absolutePath() throws {
+        let temporaryDirectory = try makeTempDir()
+        defer { cleanup(temporaryDirectory) }
+        let workDir = URL(fileURLWithPath: temporaryDirectory)
+        #expect(throws: (any Error).self) {
+            try FileSyncService.validatedDestination(for: "/etc/passwd", in: workDir)
+        }
+    }
+
+    @Test(".. component is rejected")
+    func dotDotComponent() throws {
+        let temporaryDirectory = try makeTempDir()
+        defer { cleanup(temporaryDirectory) }
+        let workDir = URL(fileURLWithPath: temporaryDirectory)
+        #expect(throws: (any Error).self) {
+            try FileSyncService.validatedDestination(for: "../../etc/passwd", in: workDir)
+        }
+    }
+
+    @Test(". component is rejected")
+    func dotComponent() throws {
+        let temporaryDirectory = try makeTempDir()
+        defer { cleanup(temporaryDirectory) }
+        let workDir = URL(fileURLWithPath: temporaryDirectory)
+        #expect(throws: (any Error).self) {
+            try FileSyncService.validatedDestination(for: "config/./app.json", in: workDir)
+        }
+    }
+
+    @Test("symlink escaping workDir is rejected")
+    func symlinkEscape() throws {
+        let temporaryDirectory = try makeTempDir()
+        defer { cleanup(temporaryDirectory) }
+
+        let workDir = URL(fileURLWithPath: temporaryDirectory)
+        // Create a symlink inside workDir pointing outside.
+        let symlinkURL = workDir.appendingPathComponent("escape")
+        try FileManager.default.createSymbolicLink(atPath: symlinkURL.path, withDestinationPath: "/tmp")
+
+        #expect(throws: (any Error).self) {
+            try FileSyncService.validatedDestination(for: "escape/passwd", in: workDir)
+        }
+    }
+}
+
 // MARK: - Helpers
 
 private func makeStream(
