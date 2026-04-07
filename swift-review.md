@@ -8,10 +8,10 @@
 **#2 — Loading entire file into memory for verification** ✅ resolved
 The commit handler uses `FileManager.default.contents(atPath:)` to load the whole file into RAM to compute SHA256. For large binaries this is a problem. The streaming hasher is already used correctly in `buildManifest`; keep the `SHA256` context open alongside the `FileHandle` while writing chunks instead.
 
-**#3 — `FileHandle.write` errors silently dropped**
+**#3 — `FileHandle.write` errors silently dropped** ✅ resolved
 The older `FileHandle.write(_:)` doesn't declare throws, but on failure it silently drops data. On macOS 10.15.4+ use `try fh.write(contentsOf:)` and propagate the error.
 
-**#4 — `.tmp` suffix collision**
+**#4 — `.tmp` suffix collision** ✅ resolved
 Using `destURL.path + ".tmp"` is fragile — if the relative path already ends in `.tmp` (e.g. `foo.tmp`), it collides with the exclusion rule in `buildManifest`, and a future upload of that file will be silently excluded from manifests. Use a separate temp directory or a UUID-named scratch file instead.
 
 **#5 — Path traversal not validated**
