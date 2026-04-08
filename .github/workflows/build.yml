@@ -998,3 +998,13 @@ jobs:
             exit $LASTEXITCODE
           }
           Write-Host "Initial Winget manifest submitted successfully."
+
+  test-templates:
+    name: Template Tests
+    needs: [release]
+    if: needs.release.result == 'success'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-templates.yml
+    with:
+      deploy: false

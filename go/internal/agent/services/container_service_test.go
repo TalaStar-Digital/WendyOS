@@ -34,6 +34,8 @@ type mockContainerdClient struct {
 	progressPhases []agentpb.CreateContainerProgress_Phase
 	startOutputCh  chan ContainerOutput
 	startErr       error
+	statsResult    []*agentpb.ContainerStats
+	statsErr       error
 }
 
 func (m *mockContainerdClient) ListContainers(_ context.Context) ([]*agentpb.AppContainer, error) {
@@ -83,6 +85,9 @@ func (m *mockContainerdClient) StartContainerWithStdin(_ context.Context, _ stri
 		return nil, m.startErr
 	}
 	return m.startOutputCh, nil
+}
+func (m *mockContainerdClient) GetContainerStats(_ context.Context) ([]*agentpb.ContainerStats, error) {
+	return m.statsResult, m.statsErr
 }
 
 // attachTestMock embeds mockContainerdClient and overrides StartContainerWithStdin
@@ -571,5 +576,44 @@ func TestDirSize(t *testing.T) {
 	size := dirSize(tmp)
 	if size != 11 { // "hello" (5) + "world!" (6)
 		t.Errorf("dirSize = %d, want 11", size)
+	}
+}
+
+func TestListContainerStats(t *testing.T) {
+	stats := []*agentpb.ContainerStats{
+		{AppName: "app-one", MemoryBytes: 42_000_000, StorageBytes: 128_000_000},
+		{AppName: "app-two", MemoryBytes: 18_000_000, StorageBytes: 96_000_000},
+	}
+	mock := &mockContainerdClient{}
+	mock.statsResult = stats
+	client, cleanup := startContainerServer(t, mock)
+	defer cleanup()
+
+	resp, err := client.ListContainerStats(context.Background(), &agentpb.ListContainerStatsRequest{})
+	if err != nil {
+		t.Fatalf("ListContainerStats: %v", err)
+	}
+	if len(resp.Stats) != 2 {
+		t.Fatalf("len(Stats) = %d, want 2", len(resp.Stats))
+	}
+	if resp.Stats[0].AppName != "app-one" {
+		t.Errorf("Stats[0].AppName = %q, want app-one", resp.Stats[0].AppName)
+	}
+	if resp.Stats[0].MemoryBytes != 42_000_000 {
+		t.Errorf("Stats[0].MemoryBytes = %d, want 42000000", resp.Stats[0].MemoryBytes)
+	}
+	if resp.Stats[1].StorageBytes != 96_000_000 {
+		t.Errorf("Stats[1].StorageBytes = %d, want 96000000", resp.Stats[1].StorageBytes)
+	}
+}
+
+func TestListContainerStats_Error(t *testing.T) {
+	mock := &mockContainerdClient{statsErr: fmt.Errorf("cgroup unavailable")}
+	client, cleanup := startContainerServer(t, mock)
+	defer cleanup()
+
+	_, err := client.ListContainerStats(context.Background(), &agentpb.ListContainerStatsRequest{})
+	if err == nil {
+		t.Fatal("expected error from ListContainerStats")
 	}
 }

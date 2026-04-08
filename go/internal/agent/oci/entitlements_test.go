@@ -24,6 +24,15 @@ func hasMountDest(spec *Spec, dest string) bool {
 	return false
 }
 
+func mountForDest(spec *Spec, dest string) (Mount, bool) {
+	for _, m := range spec.Mounts {
+		if m.Destination == dest {
+			return m, true
+		}
+	}
+	return Mount{}, false
+}
+
 func hasNamespace(spec *Spec, nsType string) bool {
 	for _, ns := range spec.Linux.Namespaces {
 		if ns.Type == nsType {
@@ -36,6 +45,15 @@ func hasNamespace(spec *Spec, nsType string) bool {
 func hasEnv(spec *Spec, envPrefix string) bool {
 	for _, e := range spec.Process.Env {
 		if len(e) >= len(envPrefix) && e[:len(envPrefix)] == envPrefix {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAllowAllDeviceRule(spec *Spec) bool {
+	for _, d := range spec.Linux.Resources.Devices {
+		if d.Allow && d.Type == "" && d.Major == nil && d.Minor == nil {
 			return true
 		}
 	}
@@ -193,6 +211,22 @@ func TestApplyEntitlements_Audio(t *testing.T) {
 
 	if !hasEnv(spec, "PIPEWIRE_RUNTIME_DIR") {
 		t.Error("audio entitlement did not set PIPEWIRE_RUNTIME_DIR")
+	}
+
+	// Audio should remain constrained to explicit sound-device rules even
+	// though it calls SetDeviceCapabilities().
+	foundSoundRule := false
+	for _, d := range spec.Linux.Resources.Devices {
+		if d.Major != nil && *d.Major == 116 && d.Allow {
+			foundSoundRule = true
+			break
+		}
+	}
+	if !foundSoundRule {
+		t.Error("audio entitlement did not add sound cgroup device rule (major 116)")
+	}
+	if hasAllowAllDeviceRule(spec) {
+		t.Error("audio entitlement should not add a generic allow-all device cgroup rule")
 	}
 }
 
@@ -369,16 +403,25 @@ func TestApplyEntitlements_Video(t *testing.T) {
 	if !foundV4L2Rule {
 		t.Error("video entitlement did not add V4L2 cgroup device rule (major 81)")
 	}
+	if hasAllowAllDeviceRule(spec) {
+		t.Error("video entitlement should not add a generic allow-all device cgroup rule")
+	}
 
-	// Should mount /dev/video0 when it exists on the host.
-	if _, err := os.Stat("/dev/video0"); err == nil {
-		if !hasMountDest(spec, "/dev/video0") {
-			t.Error("video entitlement did not add /dev/video0 mount")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("stat /dev/video0: %v", err)
-	} else {
-		t.Skip("/dev/video0 not present on this host")
+	devMount, ok := mountForDest(spec, "/dev")
+	if !ok {
+		t.Fatal("video entitlement did not define /dev mount")
+	}
+	if devMount.Source != "/dev" || devMount.Type != "bind" {
+		t.Fatalf("/dev mount = %+v, want bind mount from host /dev", devMount)
+	}
+	if !slices.Contains(devMount.Options, "rbind") {
+		t.Error("video entitlement /dev mount missing rbind option")
+	}
+	if !slices.Contains(devMount.Options, "rw") {
+		t.Error("video entitlement /dev mount missing rw option")
+	}
+	if !slices.Contains(devMount.Options, "noexec") {
+		t.Error("video entitlement /dev mount missing noexec option")
 	}
 }
 

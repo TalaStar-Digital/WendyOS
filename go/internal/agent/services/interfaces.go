@@ -46,6 +46,7 @@ type ContainerdClient interface {
 	StopContainer(ctx context.Context, appName string) error
 	DeleteContainer(ctx context.Context, appName string, deleteImage bool) error
 	ListContainers(ctx context.Context) ([]*agentpb.AppContainer, error)
+	GetContainerStats(ctx context.Context) ([]*agentpb.ContainerStats, error)
 }
 
 // ContainerOutput represents a chunk of output from a running container.
