@@ -15,7 +15,7 @@ on:
 jobs:
   integration-test:
     name: Integration (${{ matrix.os }})
-    runs-on: [self-hosted, wendy-hw, '${{ matrix.os }}']
+    runs-on: [self-hosted, wendy-agent, '${{ matrix.os }}']
     concurrency:
       group: integration-hw-${{ matrix.os }}
       cancel-in-progress: false
@@ -78,7 +78,7 @@ jobs:
 
   integration-test-gpu:
     name: Integration (GPU)
-    runs-on: [self-hosted, wendy-hw, gpu]
+    runs-on: [self-hosted, wendy-agent, gpu]
     concurrency:
       group: integration-hw-gpu
       cancel-in-progress: false
