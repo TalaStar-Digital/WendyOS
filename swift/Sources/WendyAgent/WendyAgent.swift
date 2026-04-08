@@ -22,7 +22,7 @@ struct WendyAgent: AsyncParsableCommand {
     var otelPort: Int = 4317
 
     @Option(name: .shortAndLong, help: "The directory to store configuration files in.")
-    var configDir: String = "/etc/wendy-agent"
+    var configDirectory: String = "/etc/wendy-agent"
 
     @Option(help: "Path to the app executable to run.")
     var appPath: String = ""
@@ -56,17 +56,22 @@ struct WendyAgent: AsyncParsableCommand {
             logger.info("Docker not found, Linux container support disabled")
         }
 
+        let appsBase = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/wendy-agent/apps")
+
         let services: [any RegistrableRPCService] = [
             AgentService(),
             ContainerService(
                 broadcaster: broadcaster,
                 executablePath: appPath,
                 sandboxProfilePath: sandboxProfile.isEmpty ? nil : sandboxProfile,
+                appsBase: appsBase,
                 dockerAvailable: dockerAvailable
             ),
             AudioService(),
             ProvisioningService(),
             TelemetryService(broadcaster: broadcaster),
+            FileSyncService(appsBase: appsBase),
         ]
 
         let server = GRPCServer(
