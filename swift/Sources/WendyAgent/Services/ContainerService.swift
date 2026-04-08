@@ -14,8 +14,8 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
     private var runningProcesses: [String: Foundation.Process] = [:]
     private let sandboxProfilePath: String?
 
-    /// Maps app name → (appDirectory, binaryName) for apps uploaded via WriteLayer.
-    private var appDirectories: [String: (directory: String, binaryName: String)] = [:]
+    /// Maps app name → (appDirectory, binaryName, args) for native apps uploaded via file sync or layers.
+    private var appDirectories: [String: (directory: String, binaryName: String, args: [String])] = [:]
 
     /// Docker backend for Linux containers. Nil when Docker is not available.
     private let dockerBackend: DockerContainerBackend?
@@ -134,7 +134,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 throw RPCError(code: .notFound, message: "Binary not found at \(binaryPath) after extraction")
             }
 
-            appDirectories[appName] = (directory: appDirectory, binaryName: binaryName)
+            appDirectories[appName] = (directory: appDirectory, binaryName: binaryName, args: [])
             logger.info("OCI image unpacked", metadata: ["app_name": "\(appName)", "binary": "\(binaryName)"])
         } else if !imageName.isEmpty {
             // Legacy: imageName is the binary name directly.
@@ -143,7 +143,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             guard FileManager.default.fileExists(atPath: binaryPath) else {
                 throw RPCError(code: .notFound, message: "Binary not found at \(binaryPath)")
             }
-            appDirectories[appName] = (directory: appDirectory, binaryName: imageName)
+            appDirectories[appName] = (directory: appDirectory, binaryName: imageName, args: [])
             logger.info("Registered app directory", metadata: ["app_name": "\(appName)", "binary": "\(binaryPath)"])
         } else {
             // File-sync path: imageName is empty, cmd carries the binary name.
@@ -160,7 +160,11 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                     message: "Binary not found at \(binaryPath). Run 'wendy run' to sync files first."
                 )
             }
-            appDirectories[appName] = (directory: appDirectory, binaryName: cmd)
+            appDirectories[appName] = (
+                directory: appDirectory,
+                binaryName: cmd,
+                args: Array(request.message.userArgs)
+            )
             logger.info(
                 "Registered app (file-sync path)",
                 metadata: ["app_name": "\(appName)", "binary": "\(binaryPath)"]
@@ -248,22 +252,26 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         // Resolve binary path: prefer uploaded app, fall back to --appPath.
         let binaryPath: String
         let profilePath: String?
+        let processArgs: [String]
         if let entry = appDirectories[appName] {
             binaryPath = "\(entry.directory)/\(entry.binaryName)"
             let candidateProfile = "\(entry.directory)/sandbox.sb"
             profilePath = FileManager.default.fileExists(atPath: candidateProfile) ? candidateProfile : nil
+            processArgs = entry.args
         } else {
             binaryPath = executablePath
             profilePath = sandboxProfilePath
+            processArgs = []
         }
 
         let process = Foundation.Process()
         if let profilePath {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-            process.arguments = ["-f", profilePath, binaryPath]
+            process.arguments = ["-f", profilePath, binaryPath] + processArgs
             logger.info("Launching \(binaryPath) sandboxed with profile \(profilePath)")
         } else {
             process.executableURL = URL(fileURLWithPath: binaryPath)
+            process.arguments = processArgs
             logger.info("Launching \(binaryPath) (not sandboxed)")
         }
 

@@ -411,6 +411,86 @@ func TestValidate_ReadinessValidConfig(t *testing.T) {
 	}
 }
 
+func TestRunArgs_RoundTripJSON(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantRunNil  bool
+		wantRunArgs []string
+	}{
+		{
+			name:       "no run",
+			input:      `{"appId":"sh.wendy.App"}`,
+			wantRunNil: true,
+		},
+		{
+			name:        "one arg",
+			input:       `{"appId":"sh.wendy.App","run":{"args":["--verbose"]}}`,
+			wantRunArgs: []string{"--verbose"},
+		},
+		{
+			name:        "empty args",
+			input:       `{"appId":"sh.wendy.App","run":{"args":[]}}`,
+			wantRunArgs: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := LoadFromBytes([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("LoadFromBytes: %v", err)
+			}
+
+			if tt.wantRunNil {
+				if cfg.Run != nil {
+					t.Fatalf("Run = %#v, want nil", cfg.Run)
+				}
+			} else {
+				if cfg.Run == nil {
+					t.Fatal("Run = nil, want non-nil")
+				}
+				if len(cfg.Run.Args) != len(tt.wantRunArgs) {
+					t.Fatalf("Run.Args len = %d, want %d", len(cfg.Run.Args), len(tt.wantRunArgs))
+				}
+				for i, want := range tt.wantRunArgs {
+					if got := cfg.Run.Args[i]; got != want {
+						t.Fatalf("Run.Args[%d] = %q, want %q", i, got, want)
+					}
+				}
+			}
+
+			data, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+
+			var decoded AppConfig
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+
+			if tt.wantRunNil {
+				if decoded.Run != nil {
+					t.Fatalf("decoded.Run = %#v, want nil", decoded.Run)
+				}
+			} else {
+				if decoded.Run == nil {
+					t.Fatal("decoded.Run = nil, want non-nil")
+				}
+				if len(decoded.Run.Args) != len(tt.wantRunArgs) {
+					t.Fatalf("decoded.Run.Args len = %d, want %d", len(decoded.Run.Args), len(tt.wantRunArgs))
+				}
+				for i, want := range tt.wantRunArgs {
+					if got := decoded.Run.Args[i]; got != want {
+						t.Fatalf("decoded.Run.Args[%d] = %q, want %q", i, got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
 // --- Files field tests ---
 
 func TestLoadFromFile_WithFiles_BothFields(t *testing.T) {

@@ -50,6 +50,9 @@
     "python": {
       "$ref": "#/$defs/python"
     },
+    "run": {
+      "$ref": "#/$defs/run"
+    },
     "files": {
       "type": "array",
       "description": "Files or directories to sync to the device before the app starts.",
@@ -280,6 +283,20 @@
         "sourceRoot": {
           "type": "string",
           "description": "Path to the Python source root directory."
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "description": "Runtime configuration applied when the app is started.",
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "type": "array",
+          "description": "Command-line arguments passed directly to the app executable.",
+          "items": {
+            "type": "string"
+          }
         }
       }
     }

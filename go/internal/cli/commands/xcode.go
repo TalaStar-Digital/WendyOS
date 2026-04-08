@@ -312,9 +312,14 @@ func runMacOSXcodeWithAgent(ctx context.Context, conn *grpcclient.AgentConnectio
 	}
 
 	// Create and start the container.
+	var runArgs []string
+	if appCfg.Run != nil {
+		runArgs = appCfg.Run.Args
+	}
 	createReq := &agentpb.CreateContainerRequest{
-		AppName: appCfg.AppID,
-		Cmd:     xcodeEntrypoint(productPath, isApp),
+		AppName:  appCfg.AppID,
+		Cmd:      xcodeEntrypoint(productPath, isApp),
+		UserArgs: runArgs,
 	}
 	return runMacOSNativeContainer(ctx, conn, appCfg, createReq, opts)
 }
