@@ -57,8 +57,14 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         self.blobsDirectory = "\(baseDirectory)/blobs"
 
         // Ensure directories exist.
-        try? FileManager.default.createDirectory(at: self.appsBase, withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(atPath: "\(blobsDirectory)/sha256", withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            at: self.appsBase,
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.createDirectory(
+            atPath: "\(blobsDirectory)/sha256",
+            withIntermediateDirectories: true
+        )
     }
 
     // MARK: - Implemented
@@ -69,7 +75,10 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
     ) async throws -> ServerResponse<Wendy_Agent_Services_V1_CreateContainerResponse> {
         let appName = request.message.appName
         let imageName = request.message.imageName
-        logger.info("CreateContainer called", metadata: ["app_name": "\(appName)", "image_name": "\(imageName)"])
+        logger.info(
+            "CreateContainer called",
+            metadata: ["app_name": "\(appName)", "image_name": "\(imageName)"]
+        )
 
         // Parse app config to determine the target platform.
         let appConfig: WendyAppConfig? = {
@@ -85,7 +94,8 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             guard let dockerBackend else {
                 throw RPCError(
                     code: .failedPrecondition,
-                    message: "Docker is required for Linux containers but was not found. Install Docker Desktop, Colima, or OrbStack."
+                    message:
+                        "Docker is required for Linux containers but was not found. Install Docker Desktop, Colima, or OrbStack."
                 )
             }
 
@@ -96,7 +106,10 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             if let appConfig {
                 appConfigs[appName] = appConfig
             }
-            logger.info("Linux container image pulled via Docker", metadata: ["app_name": "\(appName)"])
+            logger.info(
+                "Linux container image pulled via Docker",
+                metadata: ["app_name": "\(appName)"]
+            )
             return ServerResponse(message: Wendy_Agent_Services_V1_CreateContainerResponse())
         }
 
@@ -108,13 +121,19 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 existing.terminate()
                 existing.waitUntilExit()
             }
-            logger.info("Stopped existing process for re-deploy", metadata: ["app_name": "\(appName)"])
+            logger.info(
+                "Stopped existing process for re-deploy",
+                metadata: ["app_name": "\(appName)"]
+            )
         }
 
         if imageName.hasPrefix("sha256:") {
             // OCI image: parse manifest → config → extract layer.
             let appDirectory = appsBase.appendingPathComponent(appName).path
-            try FileManager.default.createDirectory(atPath: appDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                atPath: appDirectory,
+                withIntermediateDirectories: true
+            )
 
             // Read manifest blob.
             let manifestData = try readBlob(digest: imageName)
@@ -124,11 +143,13 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             let configData = try readBlob(digest: manifest.config.digest)
             let config = try JSONDecoder().decode(OCIImageConfig.self, from: configData)
 
-            guard let entrypoint = config.config?.Entrypoint, let firstEntry = entrypoint.first else {
+            guard let entrypoint = config.config?.Entrypoint, let firstEntry = entrypoint.first
+            else {
                 throw RPCError(code: .invalidArgument, message: "OCI config has no entrypoint")
             }
             // Strip leading "./" from entrypoint to get the binary name.
-            let binaryName = firstEntry.hasPrefix("./") ? String(firstEntry.dropFirst(2)) : firstEntry
+            let binaryName =
+                firstEntry.hasPrefix("./") ? String(firstEntry.dropFirst(2)) : firstEntry
 
             // Extract layer tarball into app directory.
             guard let layerDesc = manifest.layers.first else {
@@ -138,7 +159,10 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
 
             let binaryPath = "\(appDirectory)/\(binaryName)"
             guard FileManager.default.fileExists(atPath: binaryPath) else {
-                throw RPCError(code: .notFound, message: "Binary not found at \(binaryPath) after extraction")
+                throw RPCError(
+                    code: .notFound,
+                    message: "Binary not found at \(binaryPath) after extraction"
+                )
             }
 
             appDirectories[appName] = NativeLaunchInfo(
@@ -147,7 +171,10 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 args: [],
                 currentDirectory: nil
             )
-            logger.info("OCI image unpacked", metadata: ["app_name": "\(appName)", "binary": "\(binaryName)"])
+            logger.info(
+                "OCI image unpacked",
+                metadata: ["app_name": "\(appName)", "binary": "\(binaryName)"]
+            )
         } else if !imageName.isEmpty {
             // Legacy: imageName is the binary name directly.
             let appDirectory = appsBase.appendingPathComponent(appName).path
@@ -161,7 +188,10 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 args: [],
                 currentDirectory: nil
             )
-            logger.info("Registered app directory", metadata: ["app_name": "\(appName)", "binary": "\(binaryPath)"])
+            logger.info(
+                "Registered app directory",
+                metadata: ["app_name": "\(appName)", "binary": "\(binaryPath)"]
+            )
         } else {
             // File-sync path: imageName is empty, cmd carries the binary name.
             let cmd = request.message.cmd
@@ -171,18 +201,22 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             }
             let appDirectory = appsBase.appendingPathComponent(appName).path
             let binaryPath = "\(appDirectory)/\(cmd)"
+
             guard FileManager.default.fileExists(atPath: binaryPath) else {
                 throw RPCError(
                     code: .notFound,
-                    message: "Binary not found at \(binaryPath). Run 'wendy run' to sync files first."
+                    message:
+                        "Binary not found at \(binaryPath). Run 'wendy run' to sync files first."
                 )
             }
+
             appDirectories[appName] = NativeLaunchInfo(
                 directory: appDirectory,
                 binaryName: cmd,
                 args: Array(request.message.userArgs),
-                currentDirectory: nil
+                currentDirectory: appDirectory
             )
+
             logger.info(
                 "Registered app (file-sync path)",
                 metadata: ["app_name": "\(appName)", "binary": "\(binaryPath)"]
@@ -203,7 +237,10 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         if dockerApps.contains(appName), let dockerBackend {
             let appConfig = appConfigs[appName]
             guard let deviceImage = dockerImageNames[appName] else {
-                throw RPCError(code: .failedPrecondition, message: "No Docker image found for \(appName). Call CreateContainer first.")
+                throw RPCError(
+                    code: .failedPrecondition,
+                    message: "No Docker image found for \(appName). Call CreateContainer first."
+                )
             }
 
             let (process, stdoutPipe, stderrPipe) = try await dockerBackend.createAndStart(
@@ -212,12 +249,17 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 appConfig: appConfig
             )
             runningProcesses[appName] = process
-            logger.info("Docker container started", metadata: ["app_name": "\(appName)", "pid": "\(process.processIdentifier)"])
+            logger.info(
+                "Docker container started",
+                metadata: ["app_name": "\(appName)", "pid": "\(process.processIdentifier)"]
+            )
 
             let broadcaster = self.broadcaster
             return StreamingServerResponse { writer in
                 var started = Wendy_Agent_Services_V1_RunContainerLayersResponse()
-                started.responseType = .started(Wendy_Agent_Services_V1_RunContainerLayersResponse.Started())
+                started.responseType = .started(
+                    Wendy_Agent_Services_V1_RunContainerLayersResponse.Started()
+                )
                 try await writer.write(started)
 
                 try await withThrowingTaskGroup(of: Void.self) { group in
@@ -229,9 +271,11 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                             try await writer.write(response)
 
                             await Self.broadcastLog(
-                                broadcaster: broadcaster, appName: appName,
+                                broadcaster: broadcaster,
+                                appName: appName,
                                 text: String(decoding: data, as: UTF8.self),
-                                stream: "stdout", severity: .info
+                                stream: "stdout",
+                                severity: .info
                             )
                         }
                     }
@@ -243,9 +287,11 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                             try await writer.write(response)
 
                             await Self.broadcastLog(
-                                broadcaster: broadcaster, appName: appName,
+                                broadcaster: broadcaster,
+                                appName: appName,
                                 text: String(decoding: data, as: UTF8.self),
-                                stream: "stderr", severity: .warn
+                                stream: "stderr",
+                                severity: .warn
                             )
                         }
                     }
@@ -275,7 +321,8 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         if let entry = appDirectories[appName] {
             binaryPath = "\(entry.directory)/\(entry.binaryName)"
             let candidateProfile = "\(entry.directory)/sandbox.sb"
-            profilePath = FileManager.default.fileExists(atPath: candidateProfile) ? candidateProfile : nil
+            profilePath =
+                FileManager.default.fileExists(atPath: candidateProfile) ? candidateProfile : nil
             processArgs = entry.args
             currentDirectory = entry.currentDirectory
         } else {
@@ -307,10 +354,16 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         do {
             try process.run()
         } catch {
-            throw RPCError(code: .internalError, message: "Failed to launch process at \(binaryPath): \(error)")
+            throw RPCError(
+                code: .internalError,
+                message: "Failed to launch process at \(binaryPath): \(error)"
+            )
         }
         runningProcesses[appName] = process
-        logger.info("Process started", metadata: ["app_name": "\(appName)", "pid": "\(process.processIdentifier)"])
+        logger.info(
+            "Process started",
+            metadata: ["app_name": "\(appName)", "pid": "\(process.processIdentifier)"]
+        )
 
         // Capture values for the sendable closure.
         let broadcaster = self.broadcaster
@@ -318,7 +371,9 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         return StreamingServerResponse { writer in
             // Send "started" message.
             var started = Wendy_Agent_Services_V1_RunContainerLayersResponse()
-            started.responseType = .started(Wendy_Agent_Services_V1_RunContainerLayersResponse.Started())
+            started.responseType = .started(
+                Wendy_Agent_Services_V1_RunContainerLayersResponse.Started()
+            )
             try await writer.write(started)
 
             try await withThrowingTaskGroup(of: Void.self) { group in
@@ -514,7 +569,10 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         }
 
         guard !digestStr.isEmpty else {
-            throw RPCError(code: .invalidArgument, message: "No digest received in WriteLayer stream")
+            throw RPCError(
+                code: .invalidArgument,
+                message: "No digest received in WriteLayer stream"
+            )
         }
 
         // Detect format: "sha256:<hex>" (OCI, 2 parts) vs "<app>:<file>:sha256:<hex>" (legacy, 4 parts).
@@ -527,16 +585,22 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 .map { String(format: "%02x", $0) }
                 .joined()
             guard computedHash == expectedHash else {
-                throw RPCError(code: .dataLoss, message: "SHA256 mismatch: expected \(expectedHash), got \(computedHash)")
+                throw RPCError(
+                    code: .dataLoss,
+                    message: "SHA256 mismatch: expected \(expectedHash), got \(computedHash)"
+                )
             }
 
             let blobPath = "\(blobsDirectory)/sha256/\(expectedHash)"
             try accumulated.write(to: URL(fileURLWithPath: blobPath))
 
-            logger.info("WriteLayer completed (OCI blob)", metadata: [
-                "digest": "\(digestStr)",
-                "size": "\(accumulated.count)",
-            ])
+            logger.info(
+                "WriteLayer completed (OCI blob)",
+                metadata: [
+                    "digest": "\(digestStr)",
+                    "size": "\(accumulated.count)",
+                ]
+            )
         } else if parts.count == 4 && parts[2] == "sha256" {
             // Legacy format: "<appName>:<filename>:sha256:<hash>".
             let appName = parts[0]
@@ -547,23 +611,35 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 .map { String(format: "%02x", $0) }
                 .joined()
             guard computedHash == expectedHash else {
-                throw RPCError(code: .dataLoss, message: "SHA256 mismatch: expected \(expectedHash), got \(computedHash)")
+                throw RPCError(
+                    code: .dataLoss,
+                    message: "SHA256 mismatch: expected \(expectedHash), got \(computedHash)"
+                )
             }
 
             let appDirectory = appsBase.appendingPathComponent(appName).path
-            try FileManager.default.createDirectory(atPath: appDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                atPath: appDirectory,
+                withIntermediateDirectories: true
+            )
             let filePath = "\(appDirectory)/\(filename)"
             try accumulated.write(to: URL(fileURLWithPath: filePath))
 
             if filename != "sandbox.sb" {
-                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: filePath)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o755],
+                    ofItemAtPath: filePath
+                )
             }
 
-            logger.info("WriteLayer completed (legacy)", metadata: [
-                "app_name": "\(appName)",
-                "filename": "\(filename)",
-                "size": "\(accumulated.count)",
-            ])
+            logger.info(
+                "WriteLayer completed (legacy)",
+                metadata: [
+                    "app_name": "\(appName)",
+                    "filename": "\(filename)",
+                    "size": "\(accumulated.count)",
+                ]
+            )
         } else {
             throw RPCError(code: .invalidArgument, message: "Invalid digest format: \(digestStr)")
         }
@@ -576,8 +652,13 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
     func createContainerWithProgress(
         request: ServerRequest<Wendy_Agent_Services_V1_CreateContainerRequest>,
         context: ServerContext
-    ) async throws -> StreamingServerResponse<Wendy_Agent_Services_V1_CreateContainerProgressResponse> {
-        throw RPCError(code: .unimplemented, message: "CreateContainerWithProgress is not implemented")
+    ) async throws -> StreamingServerResponse<
+        Wendy_Agent_Services_V1_CreateContainerProgressResponse
+    > {
+        throw RPCError(
+            code: .unimplemented,
+            message: "CreateContainerWithProgress is not implemented"
+        )
     }
 
     func runContainer(
@@ -604,7 +685,8 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         tarProcess.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
         tarProcess.arguments = ["-xzf", blobPath, "-C", destinationDirectory]
 
-        let status = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, Error>) in
+        let status = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Int32, Error>) in
             tarProcess.terminationHandler = { p in
                 continuation.resume(returning: p.terminationStatus)
             }
@@ -616,7 +698,10 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         }
 
         guard status == 0 else {
-            throw RPCError(code: .internalError, message: "tar extraction failed with status \(status)")
+            throw RPCError(
+                code: .internalError,
+                message: "tar extraction failed with status \(status)"
+            )
         }
     }
 
@@ -635,24 +720,30 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         logRecord.severityNumber = severity
         logRecord.severityText = severity == .info ? "INFO" : "WARN"
         logRecord.body = .with { $0.stringValue = text }
-        logRecord.attributes.append(.with {
-            $0.key = "stream"
-            $0.value = .with { $0.stringValue = stream }
-        })
+        logRecord.attributes.append(
+            .with {
+                $0.key = "stream"
+                $0.value = .with { $0.stringValue = stream }
+            }
+        )
 
         var scopeLogs = Opentelemetry_Proto_Logs_V1_ScopeLogs()
         scopeLogs.logRecords = [logRecord]
 
         var resourceLogs = Opentelemetry_Proto_Logs_V1_ResourceLogs()
         resourceLogs.scopeLogs = [scopeLogs]
-        resourceLogs.resource.attributes.append(.with {
-            $0.key = "service.name"
-            $0.value = .with { $0.stringValue = appName }
-        })
-        resourceLogs.resource.attributes.append(.with {
-            $0.key = "wendy.app.name"
-            $0.value = .with { $0.stringValue = appName }
-        })
+        resourceLogs.resource.attributes.append(
+            .with {
+                $0.key = "service.name"
+                $0.value = .with { $0.stringValue = appName }
+            }
+        )
+        resourceLogs.resource.attributes.append(
+            .with {
+                $0.key = "wendy.app.name"
+                $0.value = .with { $0.stringValue = appName }
+            }
+        )
 
         await broadcaster.broadcastLogs(
             Opentelemetry_Proto_Collector_Logs_V1_ExportLogsServiceRequest.with {
