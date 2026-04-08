@@ -449,7 +449,7 @@ jobs:
           $MSI_ARCH = if ("${{ matrix.arch }}" -eq "arm64") { "arm64" } else { "x64" }
 
           wix build `
-            --accept-osmf-eula `
+            -acceptEula wix7 `
             -d Version="$MSI_VERSION" `
             -d ExePath="wendy-cli-windows-${{ matrix.goarch }}/wendy.exe" `
             -arch $MSI_ARCH `
