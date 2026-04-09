@@ -5,9 +5,10 @@ package wendy.agent.services.v1;
 service WendyFileSyncService {
   // SyncFiles is a bidirectional stream. The CLI sends FileSyncStart, then
   // FileSyncChunk/FileSyncCommit pairs for content transfers, then optional
-  // FileSyncChmod requests for metadata-only updates, then closes the send
-  // side. The agent responds with FileSyncManifest, FileSyncAck per finalized
-  // file, then FileSyncComplete after pruning stale files.
+  // FileSyncChmod requests for metadata-only updates, then optional
+  // FileSyncDelete requests for stale files, then closes the send side.
+  // The agent responds with FileSyncManifest, FileSyncAck per finalized file,
+  // then FileSyncComplete after applying the requested file operations.
   rpc SyncFiles(stream FileSyncRequest) returns (stream FileSyncResponse);
 }
 
@@ -25,6 +26,7 @@ message FileSyncRequest {
     FileSyncChunk  chunk  = 2;
     FileSyncCommit commit = 3;
     FileSyncChmod  chmod  = 4;
+    FileSyncDelete delete = 5;
   }
 }
 
@@ -60,6 +62,11 @@ message FileSyncChmod {
   bytes  sha256 = 4; // exactly 32 bytes
 }
 
+// FileSyncDelete removes the listed stale files from the app working directory.
+message FileSyncDelete {
+  repeated string paths = 1;
+}
+
 message FileSyncResponse {
   oneof response_type {
     FileSyncManifest manifest = 1;
@@ -78,6 +85,6 @@ message FileSyncAck {
   string path = 1;
 }
 
-// FileSyncComplete signals that the agent has pruned stale files and the
-// session is done.
+// FileSyncComplete signals that the agent has applied all requested file
+// operations and the session is done.
 message FileSyncComplete {}

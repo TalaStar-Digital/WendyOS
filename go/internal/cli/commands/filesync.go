@@ -363,8 +363,17 @@ func syncFiles(
 		}
 	}
 
-	for _, path := range diff.staleRemote {
-		cliLogln("deleted: %s", path)
+	if len(diff.staleRemote) > 0 {
+		for _, path := range diff.staleRemote {
+			cliLogln("deleted: %s", path)
+		}
+		if err := stream.Send(&agentpb.FileSyncRequest{
+			RequestType: &agentpb.FileSyncRequest_Delete{
+				Delete: &agentpb.FileSyncDelete{Paths: append([]string(nil), diff.staleRemote...)},
+			},
+		}); err != nil {
+			return fmt.Errorf("sending delete request: %w", err)
+		}
 	}
 
 	if err := stream.CloseSend(); err != nil {

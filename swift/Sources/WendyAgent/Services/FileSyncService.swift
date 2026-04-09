@@ -384,6 +384,41 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
                         metadata: ["path": "\(chmod.path)", "app_id": "\(appID)"]
                     )
 
+                case .delete(let deleteRequest):
+                    guard activeTransfer == nil else {
+                        throw RPCError(
+                            code: .invalidArgument,
+                            message: "Cannot delete files while a file transfer is active"
+                        )
+                    }
+
+                    var batchPaths = Set<String>()
+                    for path in deleteRequest.paths {
+                        guard batchPaths.insert(path).inserted else {
+                            throw RPCError(
+                                code: .invalidArgument,
+                                message: "Duplicate delete path: \(path)"
+                            )
+                        }
+                        guard !finalizedPaths.contains(path) else {
+                            throw RPCError(
+                                code: .invalidArgument,
+                                message: "Path already finalized: \(path)"
+                            )
+                        }
+
+                        let destinationURL = try validatedDestination(for: path, in: workDir)
+                        if FileManager.default.fileExists(atPath: destinationURL.path) {
+                            try FileManager.default.removeItem(at: destinationURL)
+                        }
+                        finalizedPaths.insert(path)
+
+                        logger.info(
+                            "File deleted",
+                            metadata: ["path": "\(path)", "app_id": "\(appID)"]
+                        )
+                    }
+
                 case .start, nil:
                     throw RPCError(code: .invalidArgument, message: "Unexpected message in stream")
                 }
@@ -398,18 +433,6 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
         } catch {
             cleanupActiveTransfer()
             throw error
-        }
-
-        // Prune stale files: on disk after the session but absent from CLI's declared set.
-        let postSessionManifest = try buildManifest(at: workDir)
-        let cliPaths = Set(manifestByPath.keys)
-        for entry in postSessionManifest where !cliPaths.contains(entry.path) {
-            let staleURL = workDir.appendingPathComponent(entry.path)
-            try? FileManager.default.removeItem(at: staleURL)
-            logger.info(
-                "Pruned stale file",
-                metadata: ["path": "\(entry.path)", "app_id": "\(appID)"]
-            )
         }
 
         // Send FileSyncComplete.

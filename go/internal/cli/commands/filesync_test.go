@@ -179,6 +179,7 @@ type fakeSyncServer struct {
 	received         []*agentpb.FileSyncRequest
 	ackedPaths       []string
 	modeUpdatedPaths []string
+	deletedPaths     []string
 	onStart          func(*agentpb.FileSyncStart)
 	onChunk          func(*agentpb.FileSyncChunk)
 }
@@ -235,6 +236,10 @@ func (s *fakeSyncServer) SyncFiles(stream agentpb.WendyFileSyncService_SyncFiles
 			if err := stream.Send(&resp); err != nil {
 				return err
 			}
+		case *agentpb.FileSyncRequest_Delete:
+			s.mu.Lock()
+			s.deletedPaths = append(s.deletedPaths, r.Delete.Paths...)
+			s.mu.Unlock()
 		}
 	}
 
@@ -535,9 +540,13 @@ func TestSyncFiles_DeterministicOperationOrder(t *testing.T) {
 			gotOrder = append(gotOrder, "commit:"+msg.Commit.Path)
 		case *agentpb.FileSyncRequest_Chmod:
 			gotOrder = append(gotOrder, "mode:"+msg.Chmod.Path)
+		case *agentpb.FileSyncRequest_Delete:
+			for _, path := range msg.Delete.Paths {
+				gotOrder = append(gotOrder, "delete:"+path)
+			}
 		}
 	}
-	wantOrder := []string{"commit:b.bin", "commit:c.bin", "mode:a.bin"}
+	wantOrder := []string{"commit:b.bin", "commit:c.bin", "mode:a.bin", "delete:stale.bin"}
 	if !equalStrings(gotOrder, wantOrder) {
 		t.Fatalf("operation order = %v, want %v", gotOrder, wantOrder)
 	}
@@ -617,9 +626,35 @@ func TestSyncFiles_NothingToSyncPrintsUpToDate(t *testing.T) {
 	}
 	for _, r := range srv.snapshotRequests() {
 		switch r.RequestType.(type) {
-		case *agentpb.FileSyncRequest_Commit, *agentpb.FileSyncRequest_Chunk, *agentpb.FileSyncRequest_Chmod:
-			t.Fatal("unexpected chunk, commit, or mode update when nothing to sync")
+		case *agentpb.FileSyncRequest_Commit, *agentpb.FileSyncRequest_Chunk, *agentpb.FileSyncRequest_Chmod, *agentpb.FileSyncRequest_Delete:
+			t.Fatal("unexpected chunk, commit, mode update, or delete when nothing to sync")
 		}
+	}
+}
+
+func TestSyncFiles_StaleOnlySendsExplicitDelete(t *testing.T) {
+	srv := &fakeSyncServer{
+		agentManifest: []*agentpb.FileSyncEntry{{
+			Path: "stale.bin", Sha256: sha256Bytes([]byte("stale")), Size: 5, Mode: 0o644,
+		}},
+	}
+	conn, cleanup := startFakeServer(t, srv)
+	defer cleanup()
+
+	output := captureStdout(t, func() {
+		if err := syncFiles(context.Background(), conn, "sh.wendy.App", []fileSyncEntry{}); err != nil {
+			t.Fatalf("syncFiles: %v", err)
+		}
+	})
+
+	if !equalStrings(srv.deletedPaths, []string{"stale.bin"}) {
+		t.Fatalf("deletedPaths = %v, want [stale.bin]", srv.deletedPaths)
+	}
+	if !strings.Contains(output, "deleted: stale.bin") {
+		t.Fatalf("stdout missing deletion line: %q", output)
+	}
+	if strings.Contains(output, "Syncing files...") {
+		t.Fatalf("stdout should not contain sync header for delete-only sync: %q", output)
 	}
 }
 

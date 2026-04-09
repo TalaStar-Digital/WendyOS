@@ -606,12 +606,68 @@ struct RunSessionTests {
         let staleURL = appDir.appendingPathComponent("old.bin")
         try Data("stale".utf8).write(to: staleURL)
 
+        let responses = try await runSession(
+            messages: [
+                startRequest(appID: appID, manifest: []),
+                deleteRequest(paths: ["old.bin"]),
+            ],
+            appsBase: appsBaseURL
+        )
+
+        #expect(responses.count == 2)
+        #expect(!FileManager.default.fileExists(atPath: staleURL.path))
+    }
+
+    @Test("files absent from manifest are not pruned implicitly")
+    func filesAbsentFromManifestAreNotPrunedImplicitly() async throws {
+        let appsBase = try makeTempDir()
+        defer { cleanup(appsBase) }
+        let appID = "sh.wendy.TestApp"
+        let appsBaseURL = URL(fileURLWithPath: appsBase)
+        let appDir = appsBaseURL.appendingPathComponent(appID)
+        try FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
+        let staleURL = appDir.appendingPathComponent("old.bin")
+        try Data("stale".utf8).write(to: staleURL)
+
         _ = try await runSession(
             messages: [startRequest(appID: appID, manifest: [])],
             appsBase: appsBaseURL
         )
 
-        #expect(!FileManager.default.fileExists(atPath: staleURL.path))
+        #expect(FileManager.default.fileExists(atPath: staleURL.path))
+    }
+
+    @Test("missing delete target is ignored")
+    func missingDeleteTargetIsIgnored() async throws {
+        let appsBase = try makeTempDir()
+        defer { cleanup(appsBase) }
+
+        let responses = try await runSession(
+            messages: [
+                startRequest(appID: "sh.wendy.TestApp", manifest: []),
+                deleteRequest(paths: ["missing.bin"]),
+            ],
+            appsBase: URL(fileURLWithPath: appsBase)
+        )
+
+        #expect(responses.count == 2)
+    }
+
+    @Test("delete during active transfer rejected")
+    func deleteDuringActiveTransferRejected() async throws {
+        let appsBase = try makeTempDir()
+        defer { cleanup(appsBase) }
+        let content = Data("hello".utf8)
+        let manifest = [manifestEntry(path: "app", content: content, mode: 0o644)]
+
+        await expectRunSessionFailure(
+            messages: [
+                startRequest(appID: "sh.wendy.TestApp", manifest: manifest),
+                chunkRequest(path: "app", data: content, sequence: 0, cumulativeSize: 5, sha256: sha256Digest(content)),
+                deleteRequest(paths: ["old.bin"]),
+            ],
+            appsBase: URL(fileURLWithPath: appsBase)
+        )
     }
 }
 
@@ -802,6 +858,15 @@ private func chmodRequest(
 
     var request = Wendy_Agent_Services_V1_FileSyncRequest()
     request.requestType = .chmod(chmod)
+    return request
+}
+
+private func deleteRequest(paths: [String]) -> Wendy_Agent_Services_V1_FileSyncRequest {
+    var deleteRequest = Wendy_Agent_Services_V1_FileSyncDelete()
+    deleteRequest.paths = paths
+
+    var request = Wendy_Agent_Services_V1_FileSyncRequest()
+    request.requestType = .delete(deleteRequest)
     return request
 }
 

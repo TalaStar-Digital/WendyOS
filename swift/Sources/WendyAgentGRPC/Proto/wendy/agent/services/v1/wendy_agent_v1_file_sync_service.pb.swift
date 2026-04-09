@@ -86,6 +86,14 @@ public struct Wendy_Agent_Services_V1_FileSyncRequest: Sendable {
     set {requestType = .chmod(newValue)}
   }
 
+  public var delete: Wendy_Agent_Services_V1_FileSyncDelete {
+    get {
+      if case .delete(let v)? = requestType {return v}
+      return Wendy_Agent_Services_V1_FileSyncDelete()
+    }
+    set {requestType = .delete(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum OneOf_RequestType: Equatable, Sendable {
@@ -93,6 +101,7 @@ public struct Wendy_Agent_Services_V1_FileSyncRequest: Sendable {
     case chunk(Wendy_Agent_Services_V1_FileSyncChunk)
     case commit(Wendy_Agent_Services_V1_FileSyncCommit)
     case chmod(Wendy_Agent_Services_V1_FileSyncChmod)
+    case delete(Wendy_Agent_Services_V1_FileSyncDelete)
 
   }
 
@@ -186,6 +195,19 @@ public struct Wendy_Agent_Services_V1_FileSyncChmod: Sendable {
   public init() {}
 }
 
+/// FileSyncDelete removes the listed stale files from the app working directory.
+public struct Wendy_Agent_Services_V1_FileSyncDelete: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var paths: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public struct Wendy_Agent_Services_V1_FileSyncResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -255,8 +277,8 @@ public struct Wendy_Agent_Services_V1_FileSyncAck: Sendable {
   public init() {}
 }
 
-/// FileSyncComplete signals that the agent has pruned stale files and the
-/// session is done.
+/// FileSyncComplete signals that the agent has applied all requested file
+/// operations and the session is done.
 public struct Wendy_Agent_Services_V1_FileSyncComplete: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -318,7 +340,7 @@ extension Wendy_Agent_Services_V1_FileSyncEntry: SwiftProtobuf.Message, SwiftPro
 
 extension Wendy_Agent_Services_V1_FileSyncRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".FileSyncRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}chunk\0\u{1}commit\0\u{1}chmod\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}chunk\0\u{1}commit\0\u{1}chmod\0\u{1}delete\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -378,6 +400,19 @@ extension Wendy_Agent_Services_V1_FileSyncRequest: SwiftProtobuf.Message, SwiftP
           self.requestType = .chmod(v)
         }
       }()
+      case 5: try {
+        var v: Wendy_Agent_Services_V1_FileSyncDelete?
+        var hadOneofValue = false
+        if let current = self.requestType {
+          hadOneofValue = true
+          if case .delete(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.requestType = .delete(v)
+        }
+      }()
       default: break
       }
     }
@@ -404,6 +439,10 @@ extension Wendy_Agent_Services_V1_FileSyncRequest: SwiftProtobuf.Message, SwiftP
     case .chmod?: try {
       guard case .chmod(let v)? = self.requestType else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    }()
+    case .delete?: try {
+      guard case .delete(let v)? = self.requestType else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
     }()
     case nil: break
     }
@@ -586,6 +625,36 @@ extension Wendy_Agent_Services_V1_FileSyncChmod: SwiftProtobuf.Message, SwiftPro
     if lhs.mode != rhs.mode {return false}
     if lhs.size != rhs.size {return false}
     if lhs.sha256 != rhs.sha256 {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Wendy_Agent_Services_V1_FileSyncDelete: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".FileSyncDelete"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}paths\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedStringField(value: &self.paths) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.paths.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.paths, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Wendy_Agent_Services_V1_FileSyncDelete, rhs: Wendy_Agent_Services_V1_FileSyncDelete) -> Bool {
+    if lhs.paths != rhs.paths {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -28,9 +28,10 @@ const (
 type WendyFileSyncServiceClient interface {
 	// SyncFiles is a bidirectional stream. The CLI sends FileSyncStart, then
 	// FileSyncChunk/FileSyncCommit pairs for content transfers, then optional
-	// FileSyncChmod requests for metadata-only updates, then closes the send
-	// side. The agent responds with FileSyncManifest, FileSyncAck per finalized
-	// file, then FileSyncComplete after pruning stale files.
+	// FileSyncChmod requests for metadata-only updates, then optional
+	// FileSyncDelete requests for stale files, then closes the send side.
+	// The agent responds with FileSyncManifest, FileSyncAck per finalized file,
+	// then FileSyncComplete after applying the requested file operations.
 	SyncFiles(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[FileSyncRequest, FileSyncResponse], error)
 }
 
@@ -61,9 +62,10 @@ type WendyFileSyncService_SyncFilesClient = grpc.BidiStreamingClient[FileSyncReq
 type WendyFileSyncServiceServer interface {
 	// SyncFiles is a bidirectional stream. The CLI sends FileSyncStart, then
 	// FileSyncChunk/FileSyncCommit pairs for content transfers, then optional
-	// FileSyncChmod requests for metadata-only updates, then closes the send
-	// side. The agent responds with FileSyncManifest, FileSyncAck per finalized
-	// file, then FileSyncComplete after pruning stale files.
+	// FileSyncChmod requests for metadata-only updates, then optional
+	// FileSyncDelete requests for stale files, then closes the send side.
+	// The agent responds with FileSyncManifest, FileSyncAck per finalized file,
+	// then FileSyncComplete after applying the requested file operations.
 	SyncFiles(grpc.BidiStreamingServer[FileSyncRequest, FileSyncResponse]) error
 	mustEmbedUnimplementedWendyFileSyncServiceServer()
 }
