@@ -73,6 +73,11 @@ type FileSyncEntry struct {
 	To   string `json:"to,omitempty"`
 }
 
+// RunConfig holds runtime configuration applied when the app is started.
+type RunConfig struct {
+	Args []string `json:"args,omitempty"`
+}
+
 // AppConfig represents the wendy.json application configuration.
 type AppConfig struct {
 	AppID        string           `json:"appId"`
@@ -80,6 +85,7 @@ type AppConfig struct {
 	Platform     string           `json:"platform,omitempty"`
 	Language     string           `json:"language,omitempty"`
 	Xcode        *XcodeConfig     `json:"xcode,omitempty"`
+	Run          *RunConfig       `json:"run,omitempty"`
 	Entitlements []Entitlement    `json:"entitlements,omitempty"`
 	Readiness    *ReadinessConfig `json:"readiness,omitempty"`
 	Hooks        *HooksConfig     `json:"hooks,omitempty"`

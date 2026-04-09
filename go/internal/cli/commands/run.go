@@ -521,9 +521,14 @@ func runMacOSSwiftPMWithAgent(ctx context.Context, conn *grpcclient.AgentConnect
 		return fmt.Errorf("syncing files: %w", err)
 	}
 
+	var runArgs []string
+	if appCfg.Run != nil {
+		runArgs = appCfg.Run.Args
+	}
 	createReq := &agentpb.CreateContainerRequest{
-		AppName: appCfg.AppID,
-		Cmd:     product,
+		AppName:  appCfg.AppID,
+		Cmd:      product,
+		UserArgs: runArgs,
 	}
 	return runMacOSNativeContainer(ctx, conn, appCfg, createReq, opts)
 }
@@ -705,7 +710,6 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 		return err
 	}
 	defer proxyCleanup()
-
 
 	repo := strings.ToLower(appCfg.AppID)
 	registryImage := fmt.Sprintf("%s/%s:latest", registryAddr, repo)
