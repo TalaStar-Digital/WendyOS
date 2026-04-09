@@ -36,7 +36,8 @@ public struct Wendy_Agent_Services_V1_FileSyncEntry: Sendable {
 
   public var size: Int64 = 0
 
-  public var sha256: String = String()
+  /// exactly 32 bytes
+  public var sha256: Data = Data()
 
   /// unix file permissions (e.g. 0755)
   public var mode: UInt32 = 0
@@ -77,12 +78,30 @@ public struct Wendy_Agent_Services_V1_FileSyncRequest: Sendable {
     set {requestType = .commit(newValue)}
   }
 
+  public var chmod: Wendy_Agent_Services_V1_FileSyncChmod {
+    get {
+      if case .chmod(let v)? = requestType {return v}
+      return Wendy_Agent_Services_V1_FileSyncChmod()
+    }
+    set {requestType = .chmod(newValue)}
+  }
+
+  public var delete: Wendy_Agent_Services_V1_FileSyncDelete {
+    get {
+      if case .delete(let v)? = requestType {return v}
+      return Wendy_Agent_Services_V1_FileSyncDelete()
+    }
+    set {requestType = .delete(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum OneOf_RequestType: Equatable, Sendable {
     case start(Wendy_Agent_Services_V1_FileSyncStart)
     case chunk(Wendy_Agent_Services_V1_FileSyncChunk)
     case commit(Wendy_Agent_Services_V1_FileSyncCommit)
+    case chmod(Wendy_Agent_Services_V1_FileSyncChmod)
+    case delete(Wendy_Agent_Services_V1_FileSyncDelete)
 
   }
 
@@ -114,7 +133,8 @@ public struct Wendy_Agent_Services_V1_FileSyncStart: Sendable {
   fileprivate var _manifest: Wendy_Agent_Services_V1_FileSyncManifest? = nil
 }
 
-/// FileSyncChunk carries a slice of a file being transferred.
+/// FileSyncChunk carries a slice of a file being transferred along with the
+/// cumulative post-chunk state for immediate validation.
 public struct Wendy_Agent_Services_V1_FileSyncChunk: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -124,6 +144,13 @@ public struct Wendy_Agent_Services_V1_FileSyncChunk: Sendable {
   public var path: String = String()
 
   public var data: Data = Data()
+
+  public var sequence: UInt64 = 0
+
+  public var cumulativeSize: Int64 = 0
+
+  /// exactly 32 bytes
+  public var sha256: Data = Data()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -138,9 +165,43 @@ public struct Wendy_Agent_Services_V1_FileSyncCommit: Sendable {
 
   public var path: String = String()
 
-  public var sha256: String = String()
+  /// exactly 32 bytes
+  public var sha256: Data = Data()
 
   public var size: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// FileSyncChmod applies a metadata-only mode change for an unchanged file.
+public struct Wendy_Agent_Services_V1_FileSyncChmod: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var path: String = String()
+
+  public var mode: UInt32 = 0
+
+  public var size: Int64 = 0
+
+  /// exactly 32 bytes
+  public var sha256: Data = Data()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// FileSyncDelete removes the listed stale files from the app working directory.
+public struct Wendy_Agent_Services_V1_FileSyncDelete: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var paths: [String] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -216,8 +277,8 @@ public struct Wendy_Agent_Services_V1_FileSyncAck: Sendable {
   public init() {}
 }
 
-/// FileSyncComplete signals that the agent has pruned stale files and the
-/// session is done.
+/// FileSyncComplete signals that the agent has applied all requested file
+/// operations and the session is done.
 public struct Wendy_Agent_Services_V1_FileSyncComplete: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -244,7 +305,7 @@ extension Wendy_Agent_Services_V1_FileSyncEntry: SwiftProtobuf.Message, SwiftPro
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.path) }()
       case 2: try { try decoder.decodeSingularInt64Field(value: &self.size) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.sha256) }()
+      case 3: try { try decoder.decodeSingularBytesField(value: &self.sha256) }()
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.mode) }()
       default: break
       }
@@ -259,7 +320,7 @@ extension Wendy_Agent_Services_V1_FileSyncEntry: SwiftProtobuf.Message, SwiftPro
       try visitor.visitSingularInt64Field(value: self.size, fieldNumber: 2)
     }
     if !self.sha256.isEmpty {
-      try visitor.visitSingularStringField(value: self.sha256, fieldNumber: 3)
+      try visitor.visitSingularBytesField(value: self.sha256, fieldNumber: 3)
     }
     if self.mode != 0 {
       try visitor.visitSingularUInt32Field(value: self.mode, fieldNumber: 4)
@@ -279,7 +340,7 @@ extension Wendy_Agent_Services_V1_FileSyncEntry: SwiftProtobuf.Message, SwiftPro
 
 extension Wendy_Agent_Services_V1_FileSyncRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".FileSyncRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}chunk\0\u{1}commit\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}chunk\0\u{1}commit\0\u{1}chmod\0\u{1}delete\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -326,6 +387,32 @@ extension Wendy_Agent_Services_V1_FileSyncRequest: SwiftProtobuf.Message, SwiftP
           self.requestType = .commit(v)
         }
       }()
+      case 4: try {
+        var v: Wendy_Agent_Services_V1_FileSyncChmod?
+        var hadOneofValue = false
+        if let current = self.requestType {
+          hadOneofValue = true
+          if case .chmod(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.requestType = .chmod(v)
+        }
+      }()
+      case 5: try {
+        var v: Wendy_Agent_Services_V1_FileSyncDelete?
+        var hadOneofValue = false
+        if let current = self.requestType {
+          hadOneofValue = true
+          if case .delete(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.requestType = .delete(v)
+        }
+      }()
       default: break
       }
     }
@@ -348,6 +435,14 @@ extension Wendy_Agent_Services_V1_FileSyncRequest: SwiftProtobuf.Message, SwiftP
     case .commit?: try {
       guard case .commit(let v)? = self.requestType else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    }()
+    case .chmod?: try {
+      guard case .chmod(let v)? = self.requestType else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    }()
+    case .delete?: try {
+      guard case .delete(let v)? = self.requestType else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
     }()
     case nil: break
     }
@@ -402,7 +497,7 @@ extension Wendy_Agent_Services_V1_FileSyncStart: SwiftProtobuf.Message, SwiftPro
 
 extension Wendy_Agent_Services_V1_FileSyncChunk: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".FileSyncChunk"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}data\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}data\0\u{1}sequence\0\u{3}cumulative_size\0\u{1}sha256\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -412,6 +507,9 @@ extension Wendy_Agent_Services_V1_FileSyncChunk: SwiftProtobuf.Message, SwiftPro
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.path) }()
       case 2: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.sequence) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.cumulativeSize) }()
+      case 5: try { try decoder.decodeSingularBytesField(value: &self.sha256) }()
       default: break
       }
     }
@@ -424,12 +522,24 @@ extension Wendy_Agent_Services_V1_FileSyncChunk: SwiftProtobuf.Message, SwiftPro
     if !self.data.isEmpty {
       try visitor.visitSingularBytesField(value: self.data, fieldNumber: 2)
     }
+    if self.sequence != 0 {
+      try visitor.visitSingularUInt64Field(value: self.sequence, fieldNumber: 3)
+    }
+    if self.cumulativeSize != 0 {
+      try visitor.visitSingularInt64Field(value: self.cumulativeSize, fieldNumber: 4)
+    }
+    if !self.sha256.isEmpty {
+      try visitor.visitSingularBytesField(value: self.sha256, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Wendy_Agent_Services_V1_FileSyncChunk, rhs: Wendy_Agent_Services_V1_FileSyncChunk) -> Bool {
     if lhs.path != rhs.path {return false}
     if lhs.data != rhs.data {return false}
+    if lhs.sequence != rhs.sequence {return false}
+    if lhs.cumulativeSize != rhs.cumulativeSize {return false}
+    if lhs.sha256 != rhs.sha256 {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -446,7 +556,7 @@ extension Wendy_Agent_Services_V1_FileSyncCommit: SwiftProtobuf.Message, SwiftPr
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.path) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.sha256) }()
+      case 2: try { try decoder.decodeSingularBytesField(value: &self.sha256) }()
       case 3: try { try decoder.decodeSingularInt64Field(value: &self.size) }()
       default: break
       }
@@ -458,7 +568,7 @@ extension Wendy_Agent_Services_V1_FileSyncCommit: SwiftProtobuf.Message, SwiftPr
       try visitor.visitSingularStringField(value: self.path, fieldNumber: 1)
     }
     if !self.sha256.isEmpty {
-      try visitor.visitSingularStringField(value: self.sha256, fieldNumber: 2)
+      try visitor.visitSingularBytesField(value: self.sha256, fieldNumber: 2)
     }
     if self.size != 0 {
       try visitor.visitSingularInt64Field(value: self.size, fieldNumber: 3)
@@ -470,6 +580,81 @@ extension Wendy_Agent_Services_V1_FileSyncCommit: SwiftProtobuf.Message, SwiftPr
     if lhs.path != rhs.path {return false}
     if lhs.sha256 != rhs.sha256 {return false}
     if lhs.size != rhs.size {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Wendy_Agent_Services_V1_FileSyncChmod: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".FileSyncChmod"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}mode\0\u{1}size\0\u{1}sha256\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.mode) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.size) }()
+      case 4: try { try decoder.decodeSingularBytesField(value: &self.sha256) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.path.isEmpty {
+      try visitor.visitSingularStringField(value: self.path, fieldNumber: 1)
+    }
+    if self.mode != 0 {
+      try visitor.visitSingularUInt32Field(value: self.mode, fieldNumber: 2)
+    }
+    if self.size != 0 {
+      try visitor.visitSingularInt64Field(value: self.size, fieldNumber: 3)
+    }
+    if !self.sha256.isEmpty {
+      try visitor.visitSingularBytesField(value: self.sha256, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Wendy_Agent_Services_V1_FileSyncChmod, rhs: Wendy_Agent_Services_V1_FileSyncChmod) -> Bool {
+    if lhs.path != rhs.path {return false}
+    if lhs.mode != rhs.mode {return false}
+    if lhs.size != rhs.size {return false}
+    if lhs.sha256 != rhs.sha256 {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Wendy_Agent_Services_V1_FileSyncDelete: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".FileSyncDelete"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}paths\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedStringField(value: &self.paths) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.paths.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.paths, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Wendy_Agent_Services_V1_FileSyncDelete, rhs: Wendy_Agent_Services_V1_FileSyncDelete) -> Bool {
+    if lhs.paths != rhs.paths {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -26,8 +26,8 @@ type FileSyncEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // relative to app working directory
 	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
-	Sha256        string                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
-	Mode          uint32                 `protobuf:"varint,4,opt,name=mode,proto3" json:"mode,omitempty"` // unix file permissions (e.g. 0755)
+	Sha256        []byte                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"` // exactly 32 bytes
+	Mode          uint32                 `protobuf:"varint,4,opt,name=mode,proto3" json:"mode,omitempty"`    // unix file permissions (e.g. 0755)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -76,11 +76,11 @@ func (x *FileSyncEntry) GetSize() int64 {
 	return 0
 }
 
-func (x *FileSyncEntry) GetSha256() string {
+func (x *FileSyncEntry) GetSha256() []byte {
 	if x != nil {
 		return x.Sha256
 	}
-	return ""
+	return nil
 }
 
 func (x *FileSyncEntry) GetMode() uint32 {
@@ -97,6 +97,8 @@ type FileSyncRequest struct {
 	//	*FileSyncRequest_Start
 	//	*FileSyncRequest_Chunk
 	//	*FileSyncRequest_Commit
+	//	*FileSyncRequest_Chmod
+	//	*FileSyncRequest_Delete
 	RequestType   isFileSyncRequest_RequestType `protobuf_oneof:"request_type"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -166,6 +168,24 @@ func (x *FileSyncRequest) GetCommit() *FileSyncCommit {
 	return nil
 }
 
+func (x *FileSyncRequest) GetChmod() *FileSyncChmod {
+	if x != nil {
+		if x, ok := x.RequestType.(*FileSyncRequest_Chmod); ok {
+			return x.Chmod
+		}
+	}
+	return nil
+}
+
+func (x *FileSyncRequest) GetDelete() *FileSyncDelete {
+	if x != nil {
+		if x, ok := x.RequestType.(*FileSyncRequest_Delete); ok {
+			return x.Delete
+		}
+	}
+	return nil
+}
+
 type isFileSyncRequest_RequestType interface {
 	isFileSyncRequest_RequestType()
 }
@@ -182,11 +202,23 @@ type FileSyncRequest_Commit struct {
 	Commit *FileSyncCommit `protobuf:"bytes,3,opt,name=commit,proto3,oneof"`
 }
 
+type FileSyncRequest_Chmod struct {
+	Chmod *FileSyncChmod `protobuf:"bytes,4,opt,name=chmod,proto3,oneof"`
+}
+
+type FileSyncRequest_Delete struct {
+	Delete *FileSyncDelete `protobuf:"bytes,5,opt,name=delete,proto3,oneof"`
+}
+
 func (*FileSyncRequest_Start) isFileSyncRequest_RequestType() {}
 
 func (*FileSyncRequest_Chunk) isFileSyncRequest_RequestType() {}
 
 func (*FileSyncRequest_Commit) isFileSyncRequest_RequestType() {}
+
+func (*FileSyncRequest_Chmod) isFileSyncRequest_RequestType() {}
+
+func (*FileSyncRequest_Delete) isFileSyncRequest_RequestType() {}
 
 // FileSyncStart opens a sync session for the given app. The CLI sends its
 // local manifest so the agent can reply with what it already has.
@@ -242,13 +274,17 @@ func (x *FileSyncStart) GetManifest() *FileSyncManifest {
 	return nil
 }
 
-// FileSyncChunk carries a slice of a file being transferred.
+// FileSyncChunk carries a slice of a file being transferred along with the
+// cumulative post-chunk state for immediate validation.
 type FileSyncChunk struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // relative to app working directory
-	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Path           string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // relative to app working directory
+	Data           []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	Sequence       uint64                 `protobuf:"varint,3,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	CumulativeSize int64                  `protobuf:"varint,4,opt,name=cumulative_size,json=cumulativeSize,proto3" json:"cumulative_size,omitempty"`
+	Sha256         []byte                 `protobuf:"bytes,5,opt,name=sha256,proto3" json:"sha256,omitempty"` // exactly 32 bytes
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *FileSyncChunk) Reset() {
@@ -295,11 +331,32 @@ func (x *FileSyncChunk) GetData() []byte {
 	return nil
 }
 
+func (x *FileSyncChunk) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *FileSyncChunk) GetCumulativeSize() int64 {
+	if x != nil {
+		return x.CumulativeSize
+	}
+	return 0
+}
+
+func (x *FileSyncChunk) GetSha256() []byte {
+	if x != nil {
+		return x.Sha256
+	}
+	return nil
+}
+
 // FileSyncCommit signals the end of a single file transfer.
 type FileSyncCommit struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Sha256        string                 `protobuf:"bytes,2,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	Sha256        []byte                 `protobuf:"bytes,2,opt,name=sha256,proto3" json:"sha256,omitempty"` // exactly 32 bytes
 	Size          int64                  `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -342,11 +399,11 @@ func (x *FileSyncCommit) GetPath() string {
 	return ""
 }
 
-func (x *FileSyncCommit) GetSha256() string {
+func (x *FileSyncCommit) GetSha256() []byte {
 	if x != nil {
 		return x.Sha256
 	}
-	return ""
+	return nil
 }
 
 func (x *FileSyncCommit) GetSize() int64 {
@@ -354,6 +411,120 @@ func (x *FileSyncCommit) GetSize() int64 {
 		return x.Size
 	}
 	return 0
+}
+
+// FileSyncChmod applies a metadata-only mode change for an unchanged file.
+type FileSyncChmod struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Mode          uint32                 `protobuf:"varint,2,opt,name=mode,proto3" json:"mode,omitempty"`
+	Size          int64                  `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	Sha256        []byte                 `protobuf:"bytes,4,opt,name=sha256,proto3" json:"sha256,omitempty"` // exactly 32 bytes
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileSyncChmod) Reset() {
+	*x = FileSyncChmod{}
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileSyncChmod) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileSyncChmod) ProtoMessage() {}
+
+func (x *FileSyncChmod) ProtoReflect() protoreflect.Message {
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileSyncChmod.ProtoReflect.Descriptor instead.
+func (*FileSyncChmod) Descriptor() ([]byte, []int) {
+	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *FileSyncChmod) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FileSyncChmod) GetMode() uint32 {
+	if x != nil {
+		return x.Mode
+	}
+	return 0
+}
+
+func (x *FileSyncChmod) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *FileSyncChmod) GetSha256() []byte {
+	if x != nil {
+		return x.Sha256
+	}
+	return nil
+}
+
+// FileSyncDelete removes the listed stale files from the app working directory.
+type FileSyncDelete struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Paths         []string               `protobuf:"bytes,1,rep,name=paths,proto3" json:"paths,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileSyncDelete) Reset() {
+	*x = FileSyncDelete{}
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileSyncDelete) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileSyncDelete) ProtoMessage() {}
+
+func (x *FileSyncDelete) ProtoReflect() protoreflect.Message {
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileSyncDelete.ProtoReflect.Descriptor instead.
+func (*FileSyncDelete) Descriptor() ([]byte, []int) {
+	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *FileSyncDelete) GetPaths() []string {
+	if x != nil {
+		return x.Paths
+	}
+	return nil
 }
 
 type FileSyncResponse struct {
@@ -370,7 +541,7 @@ type FileSyncResponse struct {
 
 func (x *FileSyncResponse) Reset() {
 	*x = FileSyncResponse{}
-	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[5]
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -382,7 +553,7 @@ func (x *FileSyncResponse) String() string {
 func (*FileSyncResponse) ProtoMessage() {}
 
 func (x *FileSyncResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[5]
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -395,7 +566,7 @@ func (x *FileSyncResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileSyncResponse.ProtoReflect.Descriptor instead.
 func (*FileSyncResponse) Descriptor() ([]byte, []int) {
-	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescGZIP(), []int{5}
+	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *FileSyncResponse) GetResponseType() isFileSyncResponse_ResponseType {
@@ -464,7 +635,7 @@ type FileSyncManifest struct {
 
 func (x *FileSyncManifest) Reset() {
 	*x = FileSyncManifest{}
-	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[6]
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -476,7 +647,7 @@ func (x *FileSyncManifest) String() string {
 func (*FileSyncManifest) ProtoMessage() {}
 
 func (x *FileSyncManifest) ProtoReflect() protoreflect.Message {
-	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[6]
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -489,7 +660,7 @@ func (x *FileSyncManifest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileSyncManifest.ProtoReflect.Descriptor instead.
 func (*FileSyncManifest) Descriptor() ([]byte, []int) {
-	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescGZIP(), []int{6}
+	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *FileSyncManifest) GetFiles() []*FileSyncEntry {
@@ -509,7 +680,7 @@ type FileSyncAck struct {
 
 func (x *FileSyncAck) Reset() {
 	*x = FileSyncAck{}
-	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[7]
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -521,7 +692,7 @@ func (x *FileSyncAck) String() string {
 func (*FileSyncAck) ProtoMessage() {}
 
 func (x *FileSyncAck) ProtoReflect() protoreflect.Message {
-	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[7]
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -534,7 +705,7 @@ func (x *FileSyncAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileSyncAck.ProtoReflect.Descriptor instead.
 func (*FileSyncAck) Descriptor() ([]byte, []int) {
-	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescGZIP(), []int{7}
+	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *FileSyncAck) GetPath() string {
@@ -544,8 +715,8 @@ func (x *FileSyncAck) GetPath() string {
 	return ""
 }
 
-// FileSyncComplete signals that the agent has pruned stale files and the
-// session is done.
+// FileSyncComplete signals that the agent has applied all requested file
+// operations and the session is done.
 type FileSyncComplete struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -554,7 +725,7 @@ type FileSyncComplete struct {
 
 func (x *FileSyncComplete) Reset() {
 	*x = FileSyncComplete{}
-	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[8]
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -566,7 +737,7 @@ func (x *FileSyncComplete) String() string {
 func (*FileSyncComplete) ProtoMessage() {}
 
 func (x *FileSyncComplete) ProtoReflect() protoreflect.Message {
-	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[8]
+	mi := &file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -579,7 +750,7 @@ func (x *FileSyncComplete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileSyncComplete.ProtoReflect.Descriptor instead.
 func (*FileSyncComplete) Descriptor() ([]byte, []int) {
-	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescGZIP(), []int{8}
+	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescGZIP(), []int{10}
 }
 
 var File_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto protoreflect.FileDescriptor
@@ -590,23 +761,35 @@ const file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDes
 	"\rFileSyncEntry\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12\x16\n" +
-	"\x06sha256\x18\x03 \x01(\tR\x06sha256\x12\x12\n" +
-	"\x04mode\x18\x04 \x01(\rR\x04mode\"\xe4\x01\n" +
+	"\x06sha256\x18\x03 \x01(\fR\x06sha256\x12\x12\n" +
+	"\x04mode\x18\x04 \x01(\rR\x04mode\"\xe7\x02\n" +
 	"\x0fFileSyncRequest\x12>\n" +
 	"\x05start\x18\x01 \x01(\v2&.wendy.agent.services.v1.FileSyncStartH\x00R\x05start\x12>\n" +
 	"\x05chunk\x18\x02 \x01(\v2&.wendy.agent.services.v1.FileSyncChunkH\x00R\x05chunk\x12A\n" +
-	"\x06commit\x18\x03 \x01(\v2'.wendy.agent.services.v1.FileSyncCommitH\x00R\x06commitB\x0e\n" +
+	"\x06commit\x18\x03 \x01(\v2'.wendy.agent.services.v1.FileSyncCommitH\x00R\x06commit\x12>\n" +
+	"\x05chmod\x18\x04 \x01(\v2&.wendy.agent.services.v1.FileSyncChmodH\x00R\x05chmod\x12A\n" +
+	"\x06delete\x18\x05 \x01(\v2'.wendy.agent.services.v1.FileSyncDeleteH\x00R\x06deleteB\x0e\n" +
 	"\frequest_type\"m\n" +
 	"\rFileSyncStart\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12E\n" +
-	"\bmanifest\x18\x02 \x01(\v2).wendy.agent.services.v1.FileSyncManifestR\bmanifest\"7\n" +
+	"\bmanifest\x18\x02 \x01(\v2).wendy.agent.services.v1.FileSyncManifestR\bmanifest\"\x94\x01\n" +
 	"\rFileSyncChunk\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"P\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\x12\x1a\n" +
+	"\bsequence\x18\x03 \x01(\x04R\bsequence\x12'\n" +
+	"\x0fcumulative_size\x18\x04 \x01(\x03R\x0ecumulativeSize\x12\x16\n" +
+	"\x06sha256\x18\x05 \x01(\fR\x06sha256\"P\n" +
 	"\x0eFileSyncCommit\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
-	"\x06sha256\x18\x02 \x01(\tR\x06sha256\x12\x12\n" +
-	"\x04size\x18\x03 \x01(\x03R\x04size\"\xef\x01\n" +
+	"\x06sha256\x18\x02 \x01(\fR\x06sha256\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x03R\x04size\"c\n" +
+	"\rFileSyncChmod\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
+	"\x04mode\x18\x02 \x01(\rR\x04mode\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x03R\x04size\x12\x16\n" +
+	"\x06sha256\x18\x04 \x01(\fR\x06sha256\"&\n" +
+	"\x0eFileSyncDelete\x12\x14\n" +
+	"\x05paths\x18\x01 \x03(\tR\x05paths\"\xef\x01\n" +
 	"\x10FileSyncResponse\x12G\n" +
 	"\bmanifest\x18\x01 \x01(\v2).wendy.agent.services.v1.FileSyncManifestH\x00R\bmanifest\x128\n" +
 	"\x03ack\x18\x02 \x01(\v2$.wendy.agent.services.v1.FileSyncAckH\x00R\x03ack\x12G\n" +
@@ -632,34 +815,38 @@ func file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDesc
 	return file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDescData
 }
 
-var file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_goTypes = []any{
 	(*FileSyncEntry)(nil),    // 0: wendy.agent.services.v1.FileSyncEntry
 	(*FileSyncRequest)(nil),  // 1: wendy.agent.services.v1.FileSyncRequest
 	(*FileSyncStart)(nil),    // 2: wendy.agent.services.v1.FileSyncStart
 	(*FileSyncChunk)(nil),    // 3: wendy.agent.services.v1.FileSyncChunk
 	(*FileSyncCommit)(nil),   // 4: wendy.agent.services.v1.FileSyncCommit
-	(*FileSyncResponse)(nil), // 5: wendy.agent.services.v1.FileSyncResponse
-	(*FileSyncManifest)(nil), // 6: wendy.agent.services.v1.FileSyncManifest
-	(*FileSyncAck)(nil),      // 7: wendy.agent.services.v1.FileSyncAck
-	(*FileSyncComplete)(nil), // 8: wendy.agent.services.v1.FileSyncComplete
+	(*FileSyncChmod)(nil),    // 5: wendy.agent.services.v1.FileSyncChmod
+	(*FileSyncDelete)(nil),   // 6: wendy.agent.services.v1.FileSyncDelete
+	(*FileSyncResponse)(nil), // 7: wendy.agent.services.v1.FileSyncResponse
+	(*FileSyncManifest)(nil), // 8: wendy.agent.services.v1.FileSyncManifest
+	(*FileSyncAck)(nil),      // 9: wendy.agent.services.v1.FileSyncAck
+	(*FileSyncComplete)(nil), // 10: wendy.agent.services.v1.FileSyncComplete
 }
 var file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_depIdxs = []int32{
-	2, // 0: wendy.agent.services.v1.FileSyncRequest.start:type_name -> wendy.agent.services.v1.FileSyncStart
-	3, // 1: wendy.agent.services.v1.FileSyncRequest.chunk:type_name -> wendy.agent.services.v1.FileSyncChunk
-	4, // 2: wendy.agent.services.v1.FileSyncRequest.commit:type_name -> wendy.agent.services.v1.FileSyncCommit
-	6, // 3: wendy.agent.services.v1.FileSyncStart.manifest:type_name -> wendy.agent.services.v1.FileSyncManifest
-	6, // 4: wendy.agent.services.v1.FileSyncResponse.manifest:type_name -> wendy.agent.services.v1.FileSyncManifest
-	7, // 5: wendy.agent.services.v1.FileSyncResponse.ack:type_name -> wendy.agent.services.v1.FileSyncAck
-	8, // 6: wendy.agent.services.v1.FileSyncResponse.complete:type_name -> wendy.agent.services.v1.FileSyncComplete
-	0, // 7: wendy.agent.services.v1.FileSyncManifest.files:type_name -> wendy.agent.services.v1.FileSyncEntry
-	1, // 8: wendy.agent.services.v1.WendyFileSyncService.SyncFiles:input_type -> wendy.agent.services.v1.FileSyncRequest
-	5, // 9: wendy.agent.services.v1.WendyFileSyncService.SyncFiles:output_type -> wendy.agent.services.v1.FileSyncResponse
-	9, // [9:10] is the sub-list for method output_type
-	8, // [8:9] is the sub-list for method input_type
-	8, // [8:8] is the sub-list for extension type_name
-	8, // [8:8] is the sub-list for extension extendee
-	0, // [0:8] is the sub-list for field type_name
+	2,  // 0: wendy.agent.services.v1.FileSyncRequest.start:type_name -> wendy.agent.services.v1.FileSyncStart
+	3,  // 1: wendy.agent.services.v1.FileSyncRequest.chunk:type_name -> wendy.agent.services.v1.FileSyncChunk
+	4,  // 2: wendy.agent.services.v1.FileSyncRequest.commit:type_name -> wendy.agent.services.v1.FileSyncCommit
+	5,  // 3: wendy.agent.services.v1.FileSyncRequest.chmod:type_name -> wendy.agent.services.v1.FileSyncChmod
+	6,  // 4: wendy.agent.services.v1.FileSyncRequest.delete:type_name -> wendy.agent.services.v1.FileSyncDelete
+	8,  // 5: wendy.agent.services.v1.FileSyncStart.manifest:type_name -> wendy.agent.services.v1.FileSyncManifest
+	8,  // 6: wendy.agent.services.v1.FileSyncResponse.manifest:type_name -> wendy.agent.services.v1.FileSyncManifest
+	9,  // 7: wendy.agent.services.v1.FileSyncResponse.ack:type_name -> wendy.agent.services.v1.FileSyncAck
+	10, // 8: wendy.agent.services.v1.FileSyncResponse.complete:type_name -> wendy.agent.services.v1.FileSyncComplete
+	0,  // 9: wendy.agent.services.v1.FileSyncManifest.files:type_name -> wendy.agent.services.v1.FileSyncEntry
+	1,  // 10: wendy.agent.services.v1.WendyFileSyncService.SyncFiles:input_type -> wendy.agent.services.v1.FileSyncRequest
+	7,  // 11: wendy.agent.services.v1.WendyFileSyncService.SyncFiles:output_type -> wendy.agent.services.v1.FileSyncResponse
+	11, // [11:12] is the sub-list for method output_type
+	10, // [10:11] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_init() }
@@ -671,8 +858,10 @@ func file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_init() 
 		(*FileSyncRequest_Start)(nil),
 		(*FileSyncRequest_Chunk)(nil),
 		(*FileSyncRequest_Commit)(nil),
+		(*FileSyncRequest_Chmod)(nil),
+		(*FileSyncRequest_Delete)(nil),
 	}
-	file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[5].OneofWrappers = []any{
+	file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_msgTypes[7].OneofWrappers = []any{
 		(*FileSyncResponse_Manifest)(nil),
 		(*FileSyncResponse_Ack)(nil),
 		(*FileSyncResponse_Complete)(nil),
@@ -683,7 +872,7 @@ func file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_init() 
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDesc), len(file_wendy_agent_services_v1_wendy_agent_v1_file_sync_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
