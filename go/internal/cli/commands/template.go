@@ -105,15 +105,46 @@ func isTemplateLanguage(language string, meta *repoMeta) bool {
 	return false
 }
 
+// progressCallback reports download progress. total is the expected content
+// length in bytes (0 if unknown); written is the cumulative number of bytes
+// read from the response body so far.
+type progressCallback func(written, total int64)
+
+// progressReader wraps an io.Reader and invokes onProgress after each Read.
+type progressReader struct {
+	r          io.Reader
+	total      int64
+	written    int64
+	onProgress progressCallback
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.r.Read(p)
+	if n > 0 {
+		pr.written += int64(n)
+		if pr.onProgress != nil {
+			pr.onProgress(pr.written, pr.total)
+		}
+	}
+	return n, err
+}
+
 // downloadTemplateArchive fetches the templates repo tarball and extracts
 // the files for {language}/{templateName}/ into a map of relative path -> content.
 // It also returns the parsed template.json manifest.
 // If branch is empty, it defaults to templateRepoBranch ("main").
-func downloadTemplateArchive(language, templateName, branch string) (map[string][]byte, *templateManifest, error) {
+// If onProgress is non-nil, it is invoked as the response body is read.
+func downloadTemplateArchive(language, templateName, branch string, onProgress progressCallback) (map[string][]byte, *templateManifest, error) {
 	branch = resolveTemplateBranch(branch)
 	url := fmt.Sprintf("https://github.com/%s/%s/archive/refs/heads/%s.tar.gz",
 		templateRepoOwner, templateRepoName, branch)
+	return downloadTemplateArchiveFromURL(url, branch, language, templateName, onProgress)
+}
 
+// downloadTemplateArchiveFromURL is the testable core of downloadTemplateArchive:
+// it performs the HTTP GET against the caller-supplied URL and delegates
+// tarball parsing to extractTemplateArchive.
+func downloadTemplateArchiveFromURL(url, branch, language, templateName string, onProgress progressCallback) (map[string][]byte, *templateManifest, error) {
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -129,7 +160,23 @@ func downloadTemplateArchive(language, templateName, branch string) (map[string]
 		return nil, nil, fmt.Errorf("downloading template (branch %q): HTTP %d", branch, resp.StatusCode)
 	}
 
-	gz, err := gzip.NewReader(resp.Body)
+	var reader io.Reader = resp.Body
+	if onProgress != nil {
+		reader = &progressReader{
+			r:          resp.Body,
+			total:      resp.ContentLength,
+			onProgress: onProgress,
+		}
+	}
+
+	return extractTemplateArchive(reader, language, templateName)
+}
+
+// extractTemplateArchive reads a gzipped tarball from r and extracts files
+// matching {language}/{templateName}/ into a map of relative path -> content.
+// It also returns the parsed template.json manifest.
+func extractTemplateArchive(r io.Reader, language, templateName string) (map[string][]byte, *templateManifest, error) {
+	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return nil, nil, fmt.Errorf("decompressing template archive: %w", err)
 	}

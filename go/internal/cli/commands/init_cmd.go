@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
 	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
@@ -337,7 +338,7 @@ func resolveInitTemplateForTarget(target string, opts initOptions) (string, *rep
 		tmpl := normalizeInitChoice(opts.template)
 
 		// Fetch meta.json to validate or show picker.
-		meta, err := fetchRepoMeta(opts.branch)
+		meta, err := fetchRepoMetaWithUI(opts.branch)
 		if err != nil {
 			return "", nil, err
 		}
@@ -368,7 +369,7 @@ func resolveInitTemplateForTarget(target string, opts initOptions) (string, *rep
 	}
 
 	// In interactive mode, fetch meta and offer templates for this target.
-	meta, err := fetchRepoMeta(opts.branch)
+	meta, err := fetchRepoMetaWithUI(opts.branch)
 	if err != nil {
 		return "", nil, err
 	}
@@ -476,6 +477,68 @@ func metaTemplateNames(meta *repoMeta) string {
 	return strings.Join(names, ", ")
 }
 
+// fetchRepoMetaWithUI wraps fetchRepoMeta with a bubbletea spinner when
+// stdout is a TTY. In non-interactive contexts it falls back to a plain
+// printf so logs stay readable.
+func fetchRepoMetaWithUI(branch string) (*repoMeta, error) {
+	if !isInteractiveTerminal() {
+		fmt.Println("Fetching template registry...")
+		return fetchRepoMeta(branch)
+	}
+
+	spin := tui.NewSpinner("Fetching template registry...")
+	prog := tea.NewProgram(spin)
+
+	var meta *repoMeta
+	var fetchErr error
+	go func() {
+		meta, fetchErr = fetchRepoMeta(branch)
+		prog.Send(tui.SpinnerDoneMsg{Err: fetchErr})
+	}()
+
+	if _, err := prog.Run(); err != nil {
+		return nil, fmt.Errorf("spinner TUI: %w", err)
+	}
+	return meta, fetchErr
+}
+
+// downloadTemplateArchiveWithUI wraps downloadTemplateArchive with a
+// bubbletea progress bar when stdout is a TTY. In non-interactive contexts
+// it falls back to plain text.
+func downloadTemplateArchiveWithUI(language, tmpl, branch string) (map[string][]byte, *templateManifest, error) {
+	title := fmt.Sprintf("Downloading template %q for %s (branch: %s)", tmpl, language, resolveTemplateBranch(branch))
+
+	if !isInteractiveTerminal() {
+		fmt.Printf("\n%s...\n", title)
+		return downloadTemplateArchive(language, tmpl, branch, nil)
+	}
+
+	prog := tea.NewProgram(tui.NewProgress(title))
+
+	var (
+		files    map[string][]byte
+		manifest *templateManifest
+		dlErr    error
+	)
+	go func() {
+		files, manifest, dlErr = downloadTemplateArchive(language, tmpl, branch, func(written, total int64) {
+			if total > 0 {
+				prog.Send(tui.ProgressUpdateMsg{
+					Percent: float64(written) / float64(total),
+					Written: written,
+					Total:   total,
+				})
+			}
+		})
+		prog.Send(tui.ProgressDoneMsg{Err: dlErr})
+	}()
+
+	if _, err := prog.Run(); err != nil {
+		return nil, nil, fmt.Errorf("progress TUI: %w", err)
+	}
+	return files, manifest, dlErr
+}
+
 // runTemplateFlow handles init when a template is selected.
 // destDir is the resolved project directory (either cwd or a new subdir).
 func runTemplateFlow(cwd, destDir, appID, tmpl, target string, meta *repoMeta, opts initOptions) error {
@@ -490,9 +553,7 @@ func runTemplateFlow(cwd, destDir, appID, tmpl, target string, meta *repoMeta, o
 		return err
 	}
 
-	fmt.Printf("\nDownloading template %q for %s (branch: %s)...\n", tmpl, language, resolveTemplateBranch(opts.branch))
-
-	files, manifest, err := downloadTemplateArchive(language, tmpl, opts.branch)
+	files, manifest, err := downloadTemplateArchiveWithUI(language, tmpl, opts.branch)
 	if err != nil {
 		return err
 	}
