@@ -99,7 +99,7 @@ jobs:
     name: Deploy (${{ matrix.os }})
     if: inputs.deploy == true
     needs: [generate-validate]
-    runs-on: [self-hosted, wendy-hw, '${{ matrix.os }}']
+    runs-on: [self-hosted, wendy-developer, '${{ matrix.os }}']
     concurrency:
       group: template-deploy-${{ matrix.os }}
       cancel-in-progress: false

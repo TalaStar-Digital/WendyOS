@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -67,6 +68,12 @@ func (s *AgentService) GetAgentVersion(_ context.Context, _ *agentpb.GetAgentVer
 		resp.OsVersion = &v
 	}
 
+	// Read hardware platform identifier if available.
+	if data, err := os.ReadFile("/etc/wendyos/device-type"); err == nil {
+		v := strings.TrimSpace(string(data))
+		resp.DeviceType = &v
+	}
+
 	return resp, nil
 }
 
@@ -108,6 +115,11 @@ func detectFeatureset() []string {
 	// Camera: same as video for now but could be refined.
 	if _, err := os.Stat("/dev/video0"); err == nil {
 		features = append(features, "camera")
+	}
+
+	// Mender OTA: check for mender-update binary.
+	if _, found := resolveMenderBinary(); found {
+		features = append(features, "mender")
 	}
 
 	return features
@@ -351,6 +363,68 @@ func (s *AgentService) ForgetBluetoothPeripheral(ctx context.Context, req *agent
 // "  10%" or "50% 5120 kB" or "Installing:  75%".
 var menderProgressRe = regexp.MustCompile(`(\d{1,3})%`)
 
+// enableJetsonRootfsAB ensures rootfs A/B redundancy is configured on NVIDIA
+// Jetson devices by writing the required UEFI EFI variables. It is a no-op on
+// non-Jetson hardware (detected by the absence of nvbootctrl).
+//
+// The caller must be running as root; the function returns an error if the
+// device appears to be a Jetson but the prerequisite APP_b partition is absent.
+func enableJetsonRootfsAB(logger *zap.Logger) error {
+	const guid = "781e084c-a330-417c-b678-38e696380cb9"
+	const efivarsDir = "/sys/firmware/efi/efivars"
+
+	nvbootctrl, err := exec.LookPath("nvbootctrl")
+	if err != nil {
+		// Not a Jetson device — nothing to do.
+		return nil
+	}
+
+	if _, err := os.Stat(efivarsDir); err != nil {
+		return fmt.Errorf("EFI vars not accessible at %s: %w", efivarsDir, err)
+	}
+
+	if _, err := os.Stat("/dev/disk/by-partlabel/APP_b"); err != nil {
+		return fmt.Errorf("APP_b partition not found — device needs reflashing for rootfs A/B support")
+	}
+
+	// Exit code 0 means A/B is NOT yet enabled; non-zero means already enabled.
+	checkCmd := exec.Command(nvbootctrl, "-t", "rootfs", "is-rootfs-ab-enabled")
+	if err := checkCmd.Run(); err != nil {
+		logger.Info("Jetson rootfs A/B already enabled, skipping EFI var setup")
+		return nil
+	}
+
+	logger.Info("Enabling Jetson rootfs A/B redundancy")
+
+	writeVar := func(name string, value []byte) error {
+		path := fmt.Sprintf("%s/%s-%s", efivarsDir, name, guid)
+		if _, err := os.Stat(path); err == nil {
+			logger.Info("EFI var already exists, skipping", zap.String("name", name))
+			return nil
+		}
+		// EFI variable format: 4-byte attributes header + value bytes.
+		// Attributes: 0x07 = NV|BS|RT (non-volatile, boot-service, runtime-service).
+		data := append([]byte{0x07, 0x00, 0x00, 0x00}, value...)
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			return fmt.Errorf("writing EFI var %s: %w", name, err)
+		}
+		logger.Info("EFI var written", zap.String("name", name))
+		return nil
+	}
+
+	// RootfsRedundancyLevel = 1, RootfsRetryCountMax = 3.
+	if err := writeVar("RootfsRedundancyLevel", []byte{0x01, 0x00, 0x00, 0x00}); err != nil {
+		return err
+	}
+	if err := writeVar("RootfsRetryCountMax", []byte{0x03, 0x00, 0x00, 0x00}); err != nil {
+		return err
+	}
+
+	out, _ := exec.Command(nvbootctrl, "-t", "rootfs", "dump-slots-info").CombinedOutput()
+	logger.Info("Jetson rootfs A/B enabled", zap.String("slots_info", strings.TrimSpace(string(out))))
+	return nil
+}
+
 // UpdateOS streams OS update progress using mender.
 func (s *AgentService) UpdateOS(req *agentpb.UpdateOSRequest, stream grpc.ServerStreamingServer[agentpb.UpdateOSResponse]) error {
 	s.logger.Info("UpdateOS started", zap.String("artifact_url", req.GetArtifactUrl()))
@@ -366,9 +440,30 @@ func (s *AgentService) UpdateOS(req *agentpb.UpdateOSRequest, stream grpc.Server
 		})
 	}
 
-	sendProgress("downloading", 0)
+	if err := enableJetsonRootfsAB(s.logger); err != nil {
+		return stream.Send(&agentpb.UpdateOSResponse{
+			ResponseType: &agentpb.UpdateOSResponse_Failed_{
+				Failed: &agentpb.UpdateOSResponse_Failed{
+					ErrorMessage: fmt.Sprintf("Jetson A/B setup failed: %v", err),
+				},
+			},
+		})
+	}
 
-	cmd := exec.CommandContext(stream.Context(), "mender", "install", req.GetArtifactUrl())
+	sendProgress("downloading", 0)
+	cmdName, found := resolveMenderBinary()
+	if !found {
+		return stream.Send(&agentpb.UpdateOSResponse{
+			ResponseType: &agentpb.UpdateOSResponse_Failed_{
+				Failed: &agentpb.UpdateOSResponse_Failed{
+					ErrorMessage: "mender-update binary not found",
+				},
+			},
+		})
+	}
+
+	cmd := exec.CommandContext(stream.Context(), cmdName, "install", req.GetArtifactUrl())
+	cmd.Env = envWithPath("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -414,6 +509,7 @@ func (s *AgentService) UpdateOS(req *agentpb.UpdateOSRequest, stream grpc.Server
 
 	scanLines := func(r io.Reader) {
 		scanner := bufio.NewScanner(r)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
 			lower := strings.ToLower(line)
@@ -452,6 +548,9 @@ func (s *AgentService) UpdateOS(req *agentpb.UpdateOSRequest, stream grpc.Server
 				}
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			s.logger.Warn("mender output scan error", zap.Error(err))
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -474,13 +573,93 @@ func (s *AgentService) UpdateOS(req *agentpb.UpdateOSRequest, stream grpc.Server
 
 	sendProgress("finalizing", 100)
 
-	return stream.Send(&agentpb.UpdateOSResponse{
+	if err := stream.Send(&agentpb.UpdateOSResponse{
 		ResponseType: &agentpb.UpdateOSResponse_Completed_{
 			Completed: &agentpb.UpdateOSResponse_Completed{
 				RebootRequired: true,
 			},
 		},
-	})
+	}); err != nil {
+		return err
+	}
+
+	if err := rebootSystem(); err != nil {
+		s.logger.Error("Failed to reboot after OS update", zap.Error(err))
+	}
+
+	return nil
+}
+
+// envWithPath returns os.Environ() with the PATH entry replaced by the given value.
+// This ensures PATH is set exactly once (not duplicated), which matters because
+// getenv on Linux returns the first match — appending would leave the original in place.
+func envWithPath(path string) []string {
+	env := os.Environ()
+	for i, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			env[i] = "PATH=" + path
+			return env
+		}
+	}
+	return append(env, "PATH="+path)
+}
+
+// resolveMenderBinary finds the mender-update binary. It checks PATH via
+// exec.LookPath and then probes absolute paths directly. The os.Stat fallback
+// is restricted to absolute paths to avoid accidentally executing a file from
+// the current working directory. mender-update is preferred over legacy mender.
+func resolveMenderBinary() (string, bool) {
+	candidates := []string{
+		"mender-update",
+		"/usr/local/sbin/mender-update",
+		"/usr/local/bin/mender-update",
+		"/usr/sbin/mender-update",
+		"/usr/bin/mender-update",
+		"/sbin/mender-update",
+		"/bin/mender-update",
+		"mender",
+		"/usr/local/sbin/mender",
+		"/usr/local/bin/mender",
+		"/usr/sbin/mender",
+		"/usr/bin/mender",
+		"/sbin/mender",
+		"/bin/mender",
+	}
+	for _, c := range candidates {
+		if path, err := exec.LookPath(c); err == nil {
+			return path, true
+		}
+		if filepath.IsAbs(c) {
+			if _, err := os.Stat(c); err == nil {
+				return c, true
+			}
+		}
+	}
+	return "", false
+}
+
+// CommitMenderUpdate runs "mender-update commit" on startup to confirm a
+// pending Mender A/B update. If not committed, Mender rolls back on next reboot.
+// This is a no-op if mender-update is not installed.
+func CommitMenderUpdate(logger *zap.Logger) {
+	binary, found := resolveMenderBinary()
+	if !found {
+		return
+	}
+	cmd := exec.Command(binary, "commit")
+	cmd.Env = envWithPath("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			// Exit code 2 means "nothing to commit" — not an error.
+			logger.Debug("mender-update commit: nothing to commit", zap.String("output", strings.TrimSpace(string(out))))
+			return
+		}
+		logger.Warn("mender-update commit failed", zap.String("output", strings.TrimSpace(string(out))), zap.Error(err))
+		return
+	}
+	logger.Info("Committed Mender update", zap.String("output", strings.TrimSpace(string(out))))
 }
 
 // CleanupOldBackups removes agent binary backups older than 48 hours.

@@ -449,6 +449,7 @@ jobs:
           $MSI_ARCH = if ("${{ matrix.arch }}" -eq "arm64") { "arm64" } else { "x64" }
 
           wix build `
+            -acceptEula wix7 `
             -d Version="$MSI_VERSION" `
             -d ExePath="wendy-cli-windows-${{ matrix.goarch }}/wendy.exe" `
             -arch $MSI_ARCH `
@@ -466,7 +467,7 @@ jobs:
   publish-linux-repos:
     name: Publish to GCP Artifact Registry
     runs-on: ubuntu-latest
-    needs: [determine-version, package-linux]
+    needs: [determine-version, package-linux, test-templates]
     if: needs.determine-version.outputs.is_release == 'true' && needs.determine-version.outputs.is_prerelease == 'false'
     permissions:
       contents: read
@@ -520,7 +521,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [determine-version, build, build-go-macos, package-linux, package-windows]
+    needs: [determine-version, build, build-go-macos, package-linux, package-windows, test-templates]
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
     steps:
       - name: Download artifact
@@ -1001,8 +1002,6 @@ jobs:
 
   test-templates:
     name: Template Tests
-    needs: [release]
-    if: needs.release.result == 'success'
     permissions:
       contents: read
     uses: ./.github/workflows/test-templates.yml

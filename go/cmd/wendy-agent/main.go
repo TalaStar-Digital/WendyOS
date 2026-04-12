@@ -61,6 +61,9 @@ func main() {
 
 	logger.Info("Starting wendy-agent", zap.String("version", version.Version))
 
+	// Commit any pending Mender A/B update so it isn't rolled back on next reboot.
+	services.CommitMenderUpdate(logger)
+
 	// Clean up old agent binary backups from previous updates.
 	services.CleanupOldBackups(logger)
 
