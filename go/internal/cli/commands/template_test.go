@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -388,9 +389,9 @@ func TestDownloadTemplateArchiveFromURL_CancelledDuringRetryWaitReturnsContextEr
 		templateArchiveRetryDelay = origDelay
 	})
 
-	var attempts int
+	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
+		attempts.Add(1)
 		time.Sleep(2 * templateArchiveAttemptTimeout)
 	}))
 	t.Cleanup(srv.Close)
@@ -412,8 +413,8 @@ func TestDownloadTemplateArchiveFromURL_CancelledDuringRetryWaitReturnsContextEr
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
 	}
-	if attempts != 1 {
-		t.Fatalf("attempts = %d, want 1", attempts)
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("attempts = %d, want 1", got)
 	}
 }
 
