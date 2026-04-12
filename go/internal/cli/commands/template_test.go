@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -371,6 +372,48 @@ func TestDownloadTemplateArchiveFromURL_RetriesTransientTimeout(t *testing.T) {
 	defer mu.Unlock()
 	if attempts != 2 {
 		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestDownloadTemplateArchiveFromURL_CancelledDuringRetryWaitReturnsContextError(t *testing.T) {
+	origTimeout := templateArchiveAttemptTimeout
+	origAttempts := templateArchiveMaxAttempts
+	origDelay := templateArchiveRetryDelay
+	templateArchiveAttemptTimeout = 20 * time.Millisecond
+	templateArchiveMaxAttempts = 3
+	templateArchiveRetryDelay = 200 * time.Millisecond
+	t.Cleanup(func() {
+		templateArchiveAttemptTimeout = origTimeout
+		templateArchiveMaxAttempts = origAttempts
+		templateArchiveRetryDelay = origDelay
+	})
+
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		time.Sleep(2 * templateArchiveAttemptTimeout)
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := downloadTemplateArchiveFromURL(ctx, srv.URL, "main", "python", "simple-api", nil)
+		errCh <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	err := <-errCh
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
 	}
 }
 

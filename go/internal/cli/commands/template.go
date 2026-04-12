@@ -175,9 +175,6 @@ func downloadTemplateArchiveFromURL(ctx context.Context, url, branch, language, 
 		}
 
 		if err := waitForTemplateArchiveRetry(ctx, templateArchiveRetryDelay); err != nil {
-			if lastErr != nil {
-				return nil, nil, lastErr
-			}
 			return nil, nil, err
 		}
 	}

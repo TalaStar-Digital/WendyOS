@@ -93,16 +93,16 @@ func (m ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View implements tea.Model.
 func (m ProgressModel) View() string {
-	if m.done && m.err != nil {
-		if !m.showErr {
-			return ""
-		}
-		return fmt.Sprintf("Error: %v\n", m.err)
-	}
-
 	byteInfo := ""
 	if m.written > 0 && m.total > 0 {
 		byteInfo = fmt.Sprintf("  (%s / %s)", formatBytes(m.written), formatBytes(m.total))
+	}
+
+	if m.done && m.err != nil {
+		if !m.showErr {
+			return fmt.Sprintf("%s\n%s%s\n", m.title, m.progress.ViewAs(m.percent), byteInfo)
+		}
+		return fmt.Sprintf("Error: %v\n", m.err)
 	}
 
 	if m.done {
