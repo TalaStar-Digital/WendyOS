@@ -958,10 +958,30 @@ jobs:
                 Write-Host $response.message
               }
             } catch {
-              $statusCode = $_.Exception.Response.StatusCode.value__
+              $statusCode = $null
+              if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+                $statusCode = $_.Exception.Response.StatusCode.value__
+              }
+              $errorMessage = $null
+              if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+                $errorMessage = $_.ErrorDetails.Message
+              }
+              if ([string]::IsNullOrWhiteSpace($errorMessage)) {
+                $errorMessage = $_.Exception.Message
+              }
+
               if ($statusCode -eq 409) {
                 Write-Host "winget-pkgs fork is already up to date."
                 return
+              }
+
+              if (
+                $statusCode -eq 422 -and (
+                  $errorMessage -match "refusing to allow a Personal Access Token to create or update workflow" -or
+                  $errorMessage -match "workflow scope"
+                )
+              ) {
+                throw "WINGET_GITHUB_TOKEN cannot sync $($viewer.login)/winget-pkgs because GitHub rejected workflow file updates in the fork. Update the secret to a token with workflow scope (for a classic PAT) or equivalent workflow-file write permission, then rerun the release workflow. GitHub API response: $errorMessage"
               }
 
               throw
