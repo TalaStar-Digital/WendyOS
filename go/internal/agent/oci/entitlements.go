@@ -50,8 +50,8 @@ func ApplyEntitlements(spec *Spec, cfg *appconfig.AppConfig, opts ApplyOptions) 
 				didSetDeviceCapabilities = true
 				SetDeviceCapabilities(spec, cfg.AppID)
 			}
-		case appconfig.EntitlementVideo:
-			applyVideo(spec)
+		case appconfig.EntitlementVideo, appconfig.EntitlementCamera:
+			applyCamera(spec)
 			if !didSetDeviceCapabilities {
 				didSetDeviceCapabilities = true
 				SetDeviceCapabilities(spec, cfg.AppID)
@@ -60,8 +60,6 @@ func ApplyEntitlements(spec *Spec, cfg *appconfig.AppConfig, opts ApplyOptions) 
 			applyPersist(spec, ent, cfg.AppID)
 		case appconfig.EntitlementBluetooth:
 			applyBluetooth(spec, cfg.AppID, opts.DBusProxyAvailable)
-		case appconfig.EntitlementCamera:
-			applyCamera(spec)
 		case appconfig.EntitlementUSB:
 			applyUSB(spec)
 		case appconfig.EntitlementI2C:
@@ -294,8 +292,8 @@ func applyAudio(spec *Spec) {
 	)
 }
 
-// applyVideo adds video device access.
-func applyVideo(spec *Spec) {
+// applyCamera adds camera/V4L2 device access.
+func applyCamera(spec *Spec) {
 	spec.Process.User.AdditionalGids = appendUnique(spec.Process.User.AdditionalGids, videoGroupGID)
 
 	// Allow video4linux devices (major 81).
@@ -318,6 +316,11 @@ func applyVideo(spec *Spec) {
 		Type:        "bind",
 		Options:     []string{"rbind", "rw", "nosuid", "noexec"},
 	})
+}
+
+// applyVideo is a deprecated alias for camera/V4L2 device access.
+func applyVideo(spec *Spec) {
+	applyCamera(spec)
 }
 
 // applyPersist adds a persistent volume bind mount, creating the host
@@ -368,12 +371,6 @@ func applyBluetooth(spec *Spec, appID string, proxyAvailable bool) {
 	spec.Process.Env = append(spec.Process.Env,
 		"DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket",
 	)
-}
-
-// applyCamera adds camera/V4L2 device access.
-func applyCamera(spec *Spec) {
-	// Camera uses the same V4L2 devices as video.
-	applyVideo(spec)
 }
 
 // applyUSB adds USB device access.

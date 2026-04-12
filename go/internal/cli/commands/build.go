@@ -35,6 +35,14 @@ func newBuildCmd() *cobra.Command {
 
 			cfgPath := filepath.Join(cwd, "wendy.json")
 			appCfg, cfgErr := ensureAppConfig(cfgPath, false)
+			if cfgErr == nil {
+				if err := appCfg.Validate(); err != nil {
+					return fmt.Errorf("invalid wendy.json: %w", err)
+				}
+				if err := warnAppConfigFile(cfgPath); err != nil {
+					return fmt.Errorf("reading wendy.json warnings: %w", err)
+				}
+			}
 
 			target, _ := resolveTarget(cmd.Context())
 

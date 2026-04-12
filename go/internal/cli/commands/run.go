@@ -228,6 +228,9 @@ func runCommand(ctx context.Context, opts runOptions) error {
 	if err := appCfg.Validate(); err != nil {
 		return fmt.Errorf("invalid wendy.json: %w", err)
 	}
+	if err := warnAppConfigFile(cfgPath); err != nil {
+		return fmt.Errorf("reading wendy.json warnings: %w", err)
+	}
 
 	// Debug mode requires host networking for remote debugger access
 	// (gdb/lldb for native apps, debugpy for Python apps).

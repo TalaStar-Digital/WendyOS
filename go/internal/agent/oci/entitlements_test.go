@@ -51,6 +51,13 @@ func hasEnv(spec *Spec, envPrefix string) bool {
 	return false
 }
 
+func hasCapability(spec *Spec, cap string) bool {
+	if spec.Process.Capabilities == nil {
+		return false
+	}
+	return slices.Contains(spec.Process.Capabilities.Bounding, cap)
+}
+
 func hasAllowAllDeviceRule(spec *Spec) bool {
 	for _, d := range spec.Linux.Resources.Devices {
 		if d.Allow && d.Type == "" && d.Major == nil && d.Minor == nil {
@@ -374,6 +381,48 @@ func TestBluetoothEntitlementDoesNotExposeNetworkManager(t *testing.T) {
 	}
 }
 
+func assertCameraEntitlement(t *testing.T, spec *Spec, entType string) {
+	t.Helper()
+
+	if !hasGID(spec, 44) {
+		t.Errorf("%s entitlement did not add GID 44", entType)
+	}
+
+	foundV4L2Rule := false
+	for _, d := range spec.Linux.Resources.Devices {
+		if d.Major != nil && *d.Major == 81 && d.Allow {
+			foundV4L2Rule = true
+			break
+		}
+	}
+	if !foundV4L2Rule {
+		t.Errorf("%s entitlement did not add V4L2 cgroup device rule (major 81)", entType)
+	}
+	if hasAllowAllDeviceRule(spec) {
+		t.Errorf("%s entitlement should not add a generic allow-all device cgroup rule", entType)
+	}
+
+	devMount, ok := mountForDest(spec, "/dev")
+	if !ok {
+		t.Fatalf("%s entitlement did not define /dev mount", entType)
+	}
+	if devMount.Source != "/dev" || devMount.Type != "bind" {
+		t.Fatalf("%s entitlement /dev mount = %+v, want bind mount from host /dev", entType, devMount)
+	}
+	if !slices.Contains(devMount.Options, "rbind") {
+		t.Errorf("%s entitlement /dev mount missing rbind option", entType)
+	}
+	if !slices.Contains(devMount.Options, "rw") {
+		t.Errorf("%s entitlement /dev mount missing rw option", entType)
+	}
+	if !slices.Contains(devMount.Options, "noexec") {
+		t.Errorf("%s entitlement /dev mount missing noexec option", entType)
+	}
+	if !hasCapability(spec, "CAP_SYS_PTRACE") {
+		t.Errorf("%s entitlement did not add device capability wiring", entType)
+	}
+}
+
 func TestApplyEntitlements_Video(t *testing.T) {
 	spec := DefaultSpec("/rootfs", []string{"/bin/sh"})
 	cfg := &appconfig.AppConfig{
@@ -387,42 +436,23 @@ func TestApplyEntitlements_Video(t *testing.T) {
 		t.Fatalf("ApplyEntitlements() error = %v", err)
 	}
 
-	// Should add video group GID 44.
-	if !hasGID(spec, 44) {
-		t.Error("video entitlement did not add GID 44")
+	assertCameraEntitlement(t, spec, "video")
+}
+
+func TestApplyEntitlements_Camera(t *testing.T) {
+	spec := DefaultSpec("/rootfs", []string{"/bin/sh"})
+	cfg := &appconfig.AppConfig{
+		AppID: "test-app",
+		Entitlements: []appconfig.Entitlement{
+			{Type: appconfig.EntitlementCamera},
+		},
 	}
 
-	// Should add a cgroup rule for V4L2 devices (major 81).
-	foundV4L2Rule := false
-	for _, d := range spec.Linux.Resources.Devices {
-		if d.Major != nil && *d.Major == 81 && d.Allow {
-			foundV4L2Rule = true
-			break
-		}
-	}
-	if !foundV4L2Rule {
-		t.Error("video entitlement did not add V4L2 cgroup device rule (major 81)")
-	}
-	if hasAllowAllDeviceRule(spec) {
-		t.Error("video entitlement should not add a generic allow-all device cgroup rule")
+	if err := ApplyEntitlements(spec, cfg, ApplyOptions{}); err != nil {
+		t.Fatalf("ApplyEntitlements() error = %v", err)
 	}
 
-	devMount, ok := mountForDest(spec, "/dev")
-	if !ok {
-		t.Fatal("video entitlement did not define /dev mount")
-	}
-	if devMount.Source != "/dev" || devMount.Type != "bind" {
-		t.Fatalf("/dev mount = %+v, want bind mount from host /dev", devMount)
-	}
-	if !slices.Contains(devMount.Options, "rbind") {
-		t.Error("video entitlement /dev mount missing rbind option")
-	}
-	if !slices.Contains(devMount.Options, "rw") {
-		t.Error("video entitlement /dev mount missing rw option")
-	}
-	if !slices.Contains(devMount.Options, "noexec") {
-		t.Error("video entitlement /dev mount missing noexec option")
-	}
+	assertCameraEntitlement(t, spec, "camera")
 }
 
 func TestApplyEntitlements_Multiple(t *testing.T) {
