@@ -161,6 +161,22 @@ func TestProgressModel_ErrorDoneMsg(t *testing.T) {
 	}
 }
 
+func TestProgressModel_WithoutErrorViewSuppressesInlineError(t *testing.T) {
+	p := NewProgress("Uploading...").WithoutErrorView()
+
+	testErr := fmt.Errorf("upload failed")
+	model, _ := p.Update(ProgressDoneMsg{Err: testErr})
+	updated := model.(ProgressModel)
+
+	if updated.Err() != testErr {
+		t.Errorf("Err() = %v; want %v", updated.Err(), testErr)
+	}
+
+	if view := updated.View(); view != "" {
+		t.Errorf("suppressed error view = %q, want empty string", view)
+	}
+}
+
 func TestProgressModel_ViewByteCounter(t *testing.T) {
 	p := NewProgress("Extracting...")
 

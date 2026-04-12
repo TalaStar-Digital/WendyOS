@@ -31,6 +31,7 @@ type ProgressModel struct {
 	total    int64
 	done     bool
 	err      error
+	showErr  bool
 }
 
 // NewProgress creates a new ProgressModel with the given title.
@@ -40,7 +41,16 @@ func NewProgress(title string) ProgressModel {
 	return ProgressModel{
 		progress: p,
 		title:    title,
+		showErr:  true,
 	}
+}
+
+// WithoutErrorView suppresses inline error rendering in View. This is useful
+// when the caller will surface the returned error separately and would
+// otherwise print it twice.
+func (m ProgressModel) WithoutErrorView() ProgressModel {
+	m.showErr = false
+	return m
 }
 
 // Init implements tea.Model.
@@ -84,6 +94,9 @@ func (m ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View implements tea.Model.
 func (m ProgressModel) View() string {
 	if m.done && m.err != nil {
+		if !m.showErr {
+			return ""
+		}
 		return fmt.Sprintf("Error: %v\n", m.err)
 	}
 
