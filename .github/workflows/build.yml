@@ -962,7 +962,10 @@ jobs:
               if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
                 $statusCode = $_.Exception.Response.StatusCode.value__
               }
-              $errorMessage = $_.ErrorDetails.Message
+              $errorMessage = $null
+              if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+                $errorMessage = $_.ErrorDetails.Message
+              }
               if ([string]::IsNullOrWhiteSpace($errorMessage)) {
                 $errorMessage = $_.Exception.Message
               }
