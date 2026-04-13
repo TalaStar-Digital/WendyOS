@@ -123,6 +123,7 @@ jobs:
           # privacy restrictions that block Go binaries launched by the
           # LaunchAgent-based GitHub Actions runner.
           WORKDIR="$(pwd)"
+          SSH_ENV="export PATH='$PATH' DOCKER_HOST='${DOCKER_HOST:-}'"
           SSH="ssh -o StrictHostKeyChecking=no localhost"
 
           TEST_ARGS="-w $WORKDIR/bin/wendy"
@@ -152,7 +153,7 @@ jobs:
             DEVICES=("$INPUT_HOSTNAME")
           else
             echo "==> Discovering LAN devices..."
-            DISCOVER_JSON=$($SSH "cd '$WORKDIR' && ./bin/wendy discover --json --timeout 10s" 2>/tmp/wendy-discover-stderr.txt)
+            DISCOVER_JSON=$($SSH "$SSH_ENV && cd '$WORKDIR' && ./bin/wendy discover --json --timeout 10s" 2>/tmp/wendy-discover-stderr.txt)
             cat /tmp/wendy-discover-stderr.txt >&2 || true
             DEVICES=()
             while IFS= read -r line; do
@@ -169,7 +170,7 @@ jobs:
           for device in "${DEVICES[@]}"; do
             echo ""
             echo "==> Testing device: $device"
-            $SSH "cd '$WORKDIR' && scripts/test-ci.sh $TEST_ARGS -h '$device'" || OVERALL_FAIL=1
+            $SSH "$SSH_ENV && cd '$WORKDIR' && scripts/test-ci.sh $TEST_ARGS -h '$device'" || OVERALL_FAIL=1
             docker buildx rm wendy --force 2>/dev/null || true
           done
           exit $OVERALL_FAIL
