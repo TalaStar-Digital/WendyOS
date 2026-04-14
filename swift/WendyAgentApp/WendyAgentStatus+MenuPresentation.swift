@@ -6,11 +6,11 @@ internal extension WendyAgentStatus {
         case .idle:
             "Idle"
         case .starting:
-            "Starting"
+            "Starting..."
         case .running:
             "Running"
         case .stopping:
-            "Stopping"
+            "Stopping..."
         case .stopped:
             "Stopped"
         case .failed:
