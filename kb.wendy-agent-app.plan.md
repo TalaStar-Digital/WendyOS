@@ -1,851 +1,368 @@
-# WendyAgentApp plan
+# WendyAgent macOS app plan
 
 ## Goal
 
-Turn the Swift-based Wendy agent into a proper macOS app with a single window for configuration, while keeping the existing CLI working during the transition.
+Turn the current Swift-based Wendy agent into a simple macOS menu bar app.
+
+Keep this intentionally small:
+
+- no main window
+- no configuration UI
+- no separate UI Swift package
+- no CLI product
+- no broad lifecycle abstraction layer
+
+The first version should launch the agent automatically, live in the
+menu bar, and provide a minimal menu with a quit action.
+
+## Final shape
+
+We only need two pieces:
+
+1. **`WendyAgent` Swift package**
+   - lives in `swift/`
+   - is the shared core runtime
+   - owns all agent behavior and service wiring
+   - is exposed as a library product/module
+
+2. **`WendyAgentApp` Xcode project**
+   - lives in `swift/` alongside the package
+   - owns the macOS menu bar UI and packaging
+   - contains the app entry point, menu bar icon, error presentation,
+     assets, and `Info.plist`
+
+This is the whole plan. We are explicitly **not** creating a separate
+`WendyAgentUI` target or package.
 
 ## Naming
 
-Use explicit names for the three pieces:
-
-- **Wendy Agent**: the shared logic/library extracted from the current CLI entry point
-- **Wendy Agent CLI**: the command-line frontend
-- **Wendy Agent App**: the native macOS app frontend
-
-For code/project identifiers:
-
-- Swift package library target/module: `WendyAgent`
-- Swift package CLI target/module: `WendyAgentCLI`
-- macOS app project name: `WendyAgentApp`
-- macOS app target name: `WendyAgentApp`
-- macOS app display name shown to users: `WendyAgent`
-
-## High-level architecture
-
-We will split the current Swift implementation into two frontends over one shared core:
-
-1. **Wendy Agent CLI**
-   - remains in `swift/Package.swift`
-   - continues to parse CLI arguments and launch the agent
-   - becomes a thin wrapper over the shared library
-
-2. **Wendy Agent**
-   - contains the actual agent logic currently assembled in `WendyAgent.swift`
-   - exposes configuration, lifecycle, and status APIs reusable by both CLI and app
-   - owns service composition, Docker detection, gRPC server startup, OTel collector startup, Bonjour advertising, and shutdown behavior
-
-3. **Wendy Agent App**
-   - native macOS app built in Xcode
-   - uses the shared `Wendy Agent` library
-   - provides a single window to configure and control the agent
-   - uses `WendyAgentApp` as the Xcode project/target name and `WendyAgent` as the user-facing app display name
-
-## Why this approach
-
-- Lowest-risk migration path
-- Keeps the current CLI behavior available while the app is being built out
-- Avoids duplicating startup and service wiring logic
-- Makes it easy to remove the CLI later if desired without affecting the core agent logic
-
-## Proposed implementation phases
-
-### Phase 1: extract shared Wendy Agent library
-
-Refactor the existing CLI entry point so the startup logic moves into a reusable library target in the Swift package.
-
-The shared library should define:
-
-- an agent configuration model for everything currently passed via CLI
-- an agent lifecycle type that can be started and stopped programmatically
-- runtime/status reporting suitable for both CLI and app usage
-
-The library should own:
-
-- logging bootstrap strategy or configurable logging integration
-- Docker availability checks and local registry setup
-- gRPC server creation and startup
-- local OpenTelemetry collector startup
-- Bonjour advertiser startup
-- service registration and shutdown coordination
-
-### Phase 2: keep Wendy Agent CLI working on top of the library
-
-Refactor the existing `wendy-agent` executable so it:
-
-- still uses `swift-argument-parser`
-- still accepts the current CLI options for now
-- maps those options into the shared library configuration
-- starts the shared library and waits for shutdown
-
-This should preserve behavior while validating that the extraction was clean.
-
-### Phase 3: create the native macOS app
-
-Create an Xcode macOS app target/project for **WendyAgentApp** that depends on the local Swift package.
-
-The app should:
-
-- use `WendyAgentApp` as the Xcode project name
-- use `WendyAgentApp` as the Xcode target name
-- use `WendyAgent` as the app display name shown to users
-- use a single main window
-- use the shared library rather than duplicating startup logic
-
-The app window should include controls for everything currently configurable through the CLI:
-
-- main port
-- OTel port
-- config directory
-- app executable path
-- sandbox profile path
-
-Even though `configDirectory` does not appear to be used yet in the current Swift implementation, it should remain part of the shared configuration for parity until we intentionally remove or repurpose it.
-
-### Phase 4: app lifecycle and UI behavior
-
-The app should own lifecycle explicitly rather than relying on CLI signal handling.
-
-The first version should support:
-
-- start/stop controls
-- validation of configuration values
-- visible running/stopped/error state
-- presentation of startup failures in the window
-- optional basic log/status output if it is cheap to expose from the shared library
-
-The shared library API should be designed around programmatic control, with the CLI adapting to it rather than the library being designed around POSIX signals.
-
-### Phase 5: later cleanup
-
-Once the app is stable and covers the intended workflow, we can decide whether to:
-
-- keep the CLI for development/debugging use
-- reduce CLI scope
-- remove the CLI entirely
-
-That decision can be deferred.
-
-## Project structure direction
-
-### Swift package
-
-Keep the Swift package as the home for:
-
-- **WendyAgentCLI** executable frontend target
-- **WendyAgent** shared library target
-- existing generated gRPC/protobuf targets
-- tests
-
-The package file and directory structure should remain as close as possible to what exists today.
-
-That means:
-
-- keep `swift/Package.swift` as the package root
-- keep `swift/Sources/WendyAgent/` as the main shared source directory
-- keep `swift/Sources/WendyAgent/Docker/` as-is
-- keep `swift/Sources/WendyAgent/Services/` as-is
-- keep generated targets and tests in their current locations
-- add only the minimum new files and directories needed to split the CLI frontend from the shared library
-
-### Xcode app
-
-Create a separate native macOS app target/project for **WendyAgentApp** instead of trying to make the app itself a SwiftPM executable target.
-
-Reasoning:
-
-- app bundle metadata is more natural in Xcode
-- signing, entitlements, assets, and Info.plist management are cleaner
-- this gives a proper macOS app development workflow without disturbing the Swift package organization
-
-## Key design constraints
-
-### Shared lifecycle API
-
-The extracted `Wendy Agent` library should support:
-
-- constructing the agent from configuration
-- starting asynchronously
-- stopping programmatically
-- surfacing status/errors back to callers
-
-This is required for the app and improves the CLI design as well.
-
-### Environment differences between CLI and app
-
-A GUI app launched from Finder may not inherit the same shell environment as the CLI.
-
-We should account for differences in:
-
-- `PATH`
-- Docker command discovery
-- executable launch behavior
-- file path assumptions
-
-### Distribution model
-
-The macOS app will likely need to be treated as a non-App-Store app because it:
-
-- opens listening ports
-- launches local processes
-- may invoke Docker
-- accesses files under user-controlled locations
-
-## Initial app scope
-
-The first version of the app should stay intentionally small:
-
-- one window
-- config form
-- start/stop controls
-- basic runtime state
-- error handling
-- optionally a simple log pane
-
-Things like menu bar integration, launch-at-login, onboarding, or deeper provisioning UX should come later.
-
-## Success criteria
-
-We should consider this plan successful when:
-
-1. the current `wendy-agent` executable still works with no meaningful behavior regression
-2. the shared `Wendy Agent` library is the single place where the agent is assembled and run
-3. the native macOS app with Xcode project/target name `WendyAgentApp` and display name `WendyAgent` can configure and start the agent from a single window
-4. both frontends use the same underlying logic and configuration model
-
-## Concrete target and module layout
-
-### Naming conventions
-
 Use these names consistently:
 
-- shared library: `WendyAgent`
-- CLI target/module: `WendyAgentCLI`
-- executable product: `wendy-agent`
-- macOS app project name: `WendyAgentApp`
-- macOS app target name: `WendyAgentApp`
-- macOS app display name shown to users: `WendyAgent`
+- Swift package name: `WendyAgent`
+- Swift package library product/module: `WendyAgent`
+- Xcode project name: `WendyAgentApp`
+- Xcode app target name: `WendyAgentApp`
+- app display name shown to users: `WendyAgent`
 
-The library and app intentionally use different code/project identifiers so the app can import the package cleanly without naming collisions.
+## Product behavior
 
-### Swift package products
+The app should behave like this:
 
-The Swift package should evolve to expose:
+- user launches **WendyAgent**
+- the agent starts automatically
+- the app appears only as a menu bar item
+- there is no main window
+- clicking the menu bar item opens the menu
+- the menu contains **Quit WendyAgent**
 
-- a library product: `WendyAgent`
-- an executable product: `wendy-agent`
+This should be a menu bar app configured as an `LSUIElement` app, so it:
+
+- has no Dock icon
+- does not behave like a normal foreground windowed app
+- stays centered on the menu bar experience
+
+## Startup and failure behavior
+
+### Normal startup
+
+On launch:
+
+1. create the shared `Agent`
+2. call `start()` automatically
+3. show the normal menu bar icon
+
+### Startup failure
+
+If startup fails:
+
+- keep the app alive
+- show an error-badged menu bar icon
+- show the error message in the menu
+- keep **Quit WendyAgent** available
+
+This avoids silent failure without requiring a full UI.
+
+A first menu shape in the failed state is:
+
+- error message text
+- separator
+- `Quit WendyAgent`
+
+## Core package plan
+
+### Objective
+
+Refactor the current Swift code so the runtime lives in a library instead
+of an `@main` CLI command.
+
+### Public API
+
+Keep the API deliberately tiny.
+
+```swift
+public struct AgentConfiguration: Sendable {
+    public var port: Int = 50051
+    public var otelPort: Int = 4317
+    public var configDirectory: String = "/etc/wendy-agent"
+    public var appPath: String = ""
+    public var sandboxProfile: String = ""
+}
+
+public actor Agent {
+    public init(configuration: AgentConfiguration = .init())
+    public func start() async throws
+    public func stop() async
+}
+```
+
+That is enough for the app.
+
+We do **not** need, yet:
+
+- CLI-facing argument parsing
+- event streams
+- public runtime status models
+- log streaming APIs
+- generalized frontend-neutral abstractions
+
+### Internals to preserve
+
+The `WendyAgent` library should continue to own the existing runtime
+behavior:
+
+- logging bootstrap
+- Docker detection and local registry startup
+- gRPC server startup
+- local OpenTelemetry receiver startup
+- Bonjour advertising
+- service group startup and shutdown
+- existing service registration and wiring
+
+### Source layout
+
+Keep the core refactor minimal and close to the current layout.
+
+```text
+swift/
+  Package.swift
+  Sources/
+    WendyAgent/
+      Agent.swift
+      AgentConfiguration.swift
+      Docker/
+      Services/
+```
+
+Guidelines:
+
+- keep the package root in `swift/`
+- keep `Sources/WendyAgent/` as the main source directory
+- keep existing `Docker/` and `Services/` code in place as much as
+  possible
+- add only the minimum top-level files needed for the library boundary
+- do not introduce extra architecture folders such as `Core/`,
+  `Runtime/`, `Bootstrap/`, or `Internal/`
+
+### Swift package manifest direction
+
+`swift/Package.swift` should be simplified to match the new purpose:
+
+- package name becomes `WendyAgent`
+- expose a library product named `WendyAgent`
+- drop the CLI executable product entirely
+- keep generated gRPC/protobuf targets and tests
 
 Conceptually:
 
 ```swift
 products: [
     .library(name: "WendyAgent", targets: ["WendyAgent"]),
-    .executable(name: "wendy-agent", targets: ["WendyAgentCLI"]),
 ]
 ```
 
-### Swift package targets
+## Xcode app plan
 
-Recommended package target split:
+### Objective
 
-- `WendyAgent`
-  - shared library target
-  - contains the extracted agent logic and public API
-- `WendyAgentCLI`
-  - executable target used for the WendyAgent CLI frontend
-  - thin adapter around the shared library
-- `WendyAgentTests`
-  - tests for the shared library target
-- existing generated gRPC/protobuf targets stay as they are:
-  - `WendyAgentGRPC`
-  - `WendyCloudGRPC`
-  - `OpenTelemetryGRPC`
+The Xcode app should be a simple, standard macOS app target that owns
+all UI concerns.
 
-Conceptually:
+### Location and layout
 
-```swift
-targets: [
-    .target(
-        name: "WendyAgent",
-        dependencies: [
-            .product(name: "Logging", package: "swift-log"),
-            .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
-            .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-            .product(name: "GRPCCore", package: "grpc-swift-2"),
-            .product(name: "GRPCServiceLifecycle", package: "grpc-swift-extras"),
-            .target(name: "WendyAgentGRPC"),
-            .target(name: "WendyCloudGRPC"),
-        ],
-        path: "Sources/WendyAgent"
-    ),
-    .executableTarget(
-        name: "WendyAgentCLI",
-        dependencies: [
-            .target(name: "WendyAgent"),
-            .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            .product(name: "Logging", package: "swift-log"),
-        ],
-        path: "Sources/WendyAgentCLI"
-    ),
-    .testTarget(
-        name: "WendyAgentTests",
-        dependencies: [
-            .target(name: "WendyAgent"),
-            .target(name: "WendyAgentGRPC"),
-            .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
-            .product(name: "GRPCCore", package: "grpc-swift-2"),
-        ],
-        path: "Tests/WendyAgentTests"
-    ),
-]
-```
+Keep the project inside `swift/` alongside the package.
 
-### Shared library source layout
-
-Recommended source layout inside the Swift package, kept as close as possible to the current structure:
+Recommended shape:
 
 ```text
 swift/
-  Sources/
-    WendyAgent/
-      WendyAgent.swift
-      AgentConfiguration.swift
-      AgentState.swift
-      AgentEvent.swift
-      AgentRunInfo.swift
-      AgentDirectories.swift
-      AgentLogging.swift
-      AgentAssembly.swift
-      AgentEnvironment.swift
-      Docker/
-        DockerCLI.swift
-        DockerContainerBackend.swift
-      Services/
-        AgentService.swift
-        AudioService.swift
-        BonjourAdvertiser.swift
-        ContainerService.swift
-        FileSyncService.swift
-        LocalOTelReceiver.swift
-        OCITypes.swift
-        ProvisioningService.swift
-        TelemetryBroadcaster.swift
-        TelemetryService.swift
-```
-
-Notes:
-
-- keep `WendyAgent/Docker/` and `WendyAgent/Services/` in place
-- add new shared-library files at the top level of `Sources/WendyAgent/`
-- do not introduce new package subtrees such as `Core/`, `Bootstrap/`, or `Internal/`
-- prefer minimal movement of existing files so the refactor stays easy to review
-
-### CLI source layout
-
-Recommended CLI layout:
-
-```text
-swift/
-  Sources/
-    WendyAgentCLI/
-      main.swift
-      CLIOptions.swift
-      CLILogging.swift
-      CLISignalHandling.swift
-```
-
-The CLI should be intentionally thin and mostly limited to:
-
-- argument parsing
-- mapping CLI options to `AgentConfiguration`
-- logging setup appropriate for terminal usage
-- signal handling that calls `Agent.stop()`
-
-### Xcode app layout
-
-Create a separate Xcode macOS app project that references the local Swift package.
-
-Recommended layout:
-
-```text
-macos/
   WendyAgentApp.xcodeproj
   WendyAgentApp/
-    App/
-      WendyAgentApp.swift
-    Model/
-      AppSettings.swift
-      SettingsValidation.swift
-    Store/
-      SettingsStore.swift
-    ViewModel/
-      AgentViewModel.swift
-    View/
-      MainWindowView.swift
-      ConfigurationFormView.swift
-      RuntimeStatusView.swift
-      LogView.swift
-    Resources/
-      Assets.xcassets
-    Support/
-      Info.plist
+    WendyAgentApp.swift
+    WendyAgentAppState.swift
+    Assets.xcassets
+    Info.plist
 ```
 
-Layout rule:
+### Xcode-side code structure
 
-- keep code in a shallow `category/file.swift` structure
-- do not introduce arbitrarily deep folder hierarchies
+Keep the app code tiny.
 
-Recommended Xcode naming:
-
-- project name: `WendyAgentApp`
-- app target name: `WendyAgentApp`
-- product/module name: `WendyAgentApp`
-- app display name: `WendyAgent`
-- Dock/app name: `WendyAgent`
-
-The app should import the local Swift package module `WendyAgent`.
-
-## Main public types and proposed APIs
-
-The shared library should expose a deliberately small, frontend-neutral public API.
-
-### `AgentConfiguration`
-
-Represents everything currently configurable through the CLI.
-
-```swift
-public struct AgentConfiguration: Sendable, Codable, Equatable {
-    public var port: Int
-    public var otelPort: Int
-    public var configDirectory: URL
-    public var appPath: URL?
-    public var sandboxProfile: URL?
-
-    public init(
-        port: Int = 50051,
-        otelPort: Int = 4317,
-        configDirectory: URL = URL(fileURLWithPath: "/etc/wendy-agent"),
-        appPath: URL? = nil,
-        sandboxProfile: URL? = nil
-    )
-
-    public func validate() throws
-}
-```
+#### `WendyAgentApp.swift`
 
 Responsibilities:
 
-- serve as the single shared configuration model used by both CLI and app
-- retain `configDirectory` for parity even if it is not yet functionally used by the Swift implementation
-- validate basic runtime correctness before startup
+- `@main`
+- declare the SwiftUI `MenuBarExtra`
+- render normal vs error-badged icon
+- render the menu contents
+- connect the app state object to the menu UI
 
-Suggested validation rules:
+#### `WendyAgentAppState.swift`
 
-- ports must be in valid ranges
-- `port` and `otelPort` must not collide
-- file paths should be checked for existence/readability when provided
-- `appPath` may be checked for executability
+This should be a small app-state object, not a large MVVM layer.
 
-### `AgentDirectories`
+Responsibilities:
 
-Represents derived filesystem locations used by the running agent.
+- own the shared `Agent`
+- start it on launch
+- handle quit
+- expose a small renderable status for the menu bar UI
 
-```swift
-public struct AgentDirectories: Sendable, Equatable {
-    public let applicationSupport: URL
-    public let appsBase: URL
-    public let blobsBase: URL
+Use one small explicit status enum rather than loose booleans.
 
-    public init(
-        applicationSupport: URL,
-        appsBase: URL,
-        blobsBase: URL
-    )
-}
-```
-
-Purpose:
-
-- expose effective runtime storage paths cleanly to both CLI and app
-- allow the app UI to display derived locations if useful
-
-### `DockerAvailability`
+Conceptually:
 
 ```swift
-public enum DockerAvailability: Sendable, Equatable {
-    case unknown
-    case unavailable
-    case available
-}
-```
-
-Purpose:
-
-- surface Docker state without exposing Docker implementation details
-
-### `AgentRunInfo`
-
-Represents the effective runtime info after startup.
-
-```swift
-public struct AgentRunInfo: Sendable, Equatable {
-    public let port: Int
-    public let otelPort: Int
-    public let directories: AgentDirectories
-    public let bonjourDisplayName: String
-    public let bonjourDeviceID: String
-    public let dockerAvailability: DockerAvailability
-}
-```
-
-Purpose:
-
-- provide callers with concrete, derived runtime facts once the agent is running
-- give the app a clean model for status display without parsing logs
-
-### `AgentFailure`
-
-```swift
-public struct AgentFailure: Sendable, Equatable, Error {
-    public let message: String
-}
-```
-
-Purpose:
-
-- provide a small, stable failure type suitable for UI display and CLI printing
-
-### `AgentState`
-
-Represents coarse-grained lifecycle state.
-
-```swift
-public enum AgentState: Sendable, Equatable {
-    case idle
+enum AppStatus {
     case starting
-    case running(AgentRunInfo)
-    case stopping
-    case failed(AgentFailure)
+    case running
+    case failed(String)
 }
 ```
 
-Purpose:
+This keeps the UI logic straightforward:
 
-- support both UI state rendering and CLI state reporting
-- avoid requiring consumers to infer lifecycle from logs
+- `.starting` -> normal icon
+- `.running` -> normal icon
+- `.failed` -> badged icon + error text in menu
 
-### `AgentLogLevel`
+### UI technology
 
-```swift
-public enum AgentLogLevel: String, Sendable, Equatable, Codable {
-    case trace
-    case debug
-    case info
-    case notice
-    case warning
-    case error
-    case critical
-}
-```
+Use SwiftUI `MenuBarExtra`.
 
-### `AgentLogMessage`
+Reasoning:
 
-```swift
-public struct AgentLogMessage: Sendable, Equatable {
-    public let date: Date
-    public let level: AgentLogLevel
-    public let subsystem: String
-    public let message: String
-}
-```
+- it is the smallest and most standard fit for this app
+- the menu is tiny
+- there is no window to manage
+- there is no need for lower-level AppKit status-item plumbing yet
 
-Purpose:
+### `Info.plist`
 
-- provide a frontend-neutral representation of log events
-- allow the CLI to print logs and the app to render them in a simple pane
+Set the app up as an `LSUIElement` app so it behaves as a menu bar app
+without a Dock icon.
 
-### `AgentEvent`
+## Icons and assets
 
-```swift
-public enum AgentEvent: Sendable, Equatable {
-    case stateChanged(AgentState)
-    case log(AgentLogMessage)
-}
-```
+## Source artwork
 
-Purpose:
+Use the Wendy mark from:
 
-- give both frontends a single stream of lifecycle and log updates
-- avoid tying the shared library to SwiftUI, AppKit, or stderr directly
+- `https://wendy.sh/layout/logo-icon.svg`
 
-### `Agent`
+Keep editable source artwork in the repo if practical.
 
-This should be the primary public entry point.
+## Menu bar icon
 
-```swift
-public actor Agent {
-    public init(configuration: AgentConfiguration)
+Create a proper menu bar template icon:
 
-    public var configuration: AgentConfiguration { get }
+- based on the Wendy logo mark
+- monochrome only
+- suitable for macOS template rendering
+- visually crisp at small menu bar sizes
 
-    public func state() -> AgentState
+Also create an error-state variant by overlaying a simple red error badge
+or exclamation mark on the normal icon.
 
-    public func start() async throws
+## App icon
 
-    public func stop() async
+Create a separate app icon from the same Wendy mark.
 
-    public func waitUntilStopped() async
+Use the emerald palette already present in `go/internal/cli/tui/theme.go`:
 
-    public func eventStream() -> AsyncStream<AgentEvent>
-}
-```
+- Emerald500: `#10b981`
+- Emerald600: `#059669`
+- Emerald700: `#047857`
+- Emerald800: `#065f46`
+- Emerald950: `#022c22`
+- optional light accent: Emerald50 `#ecfdf5`
 
-Expected behavior:
+Icon direction:
 
-- `start()`
-  - validates configuration
-  - assembles services
-  - checks Docker availability
-  - starts the main gRPC server, OTel collector, and Bonjour advertiser
-  - updates state and emits events
-- `stop()`
-  - performs graceful shutdown
-  - is safe to call multiple times
-- `waitUntilStopped()`
-  - allows the CLI to block on the shared agent lifecycle cleanly
-- `eventStream()`
-  - allows either frontend to observe state transitions and logs
+- clean, functional first pass
+- modern macOS app icon
+- emerald-forward color treatment
+- strong contrast and simple silhouette
+- no overly elaborate rendering or visual effects
 
-Rationale for making `Agent` an `actor`:
+## Implementation phases
 
-- lifecycle management is inherently stateful and concurrent
-- actor isolation is a natural fit for start/stop/wait semantics
-- it reduces the chance of invalid transitions or duplicate starts
+### Phase 1: convert the current CLI runtime into a library
 
-## Internal shared-library types
+Do the minimum necessary to turn the existing code into `WendyAgent`:
 
-These do not need to be public, but the implementation should likely center around them.
+- remove the CLI `@main` role
+- extract the runtime logic into `Agent`
+- add `AgentConfiguration`
+- keep service wiring behavior intact
+- simplify `Package.swift` to a library-first package
 
-### `AgentAssembly`
+### Phase 2: build the menu bar app in Xcode
 
-Responsible for turning configuration into assembled services.
+Create or simplify the Xcode app inside `swift/` so it:
 
-Conceptually:
+- imports `WendyAgent`
+- uses `MenuBarExtra`
+- starts the agent automatically
+- presents failed startup in the menu bar
+- quits cleanly by calling `Agent.stop()`
 
-```swift
-struct AgentAssembly {
-    func makeServices(configuration: AgentConfiguration) async throws -> AssembledAgent
-}
-```
+### Phase 3: add the app assets
 
-### `AssembledAgent`
+Add:
 
-Private/internal structure holding the assembled runtime pieces.
+- the monochrome menu bar template icon
+- the error-badged menu bar icon
+- the emerald app icon
 
-Conceptually:
+Then wire them into the app target.
 
-```swift
-struct AssembledAgent {
-    let runInfo: AgentRunInfo
-    let start: @Sendable () async throws -> Void
-    let stop: @Sendable () async -> Void
-    let waitUntilStopped: @Sendable () async -> Void
-}
-```
+## Success criteria
 
-This can be implemented differently in practice, but the idea is to create a clean seam between public lifecycle control and internal service composition.
+This plan is successful when:
 
-### `AgentEnvironment`
-
-Useful as an internal abstraction over environment-derived values and runtime probing, such as:
-
-- host name
-- home directory / application support paths
-- Docker availability checks
-- future test injection points
-
-## CLI-specific types
-
-The CLI should stay intentionally small.
-
-### `CLIOptions`
-
-Conceptually:
-
-```swift
-struct CLIOptions: ParsableArguments {
-    @Option var port: Int = 50051
-    @Option var otelPort: Int = 4317
-    @Option var configDirectory: String = "/etc/wendy-agent"
-    @Option var appPath: String = ""
-    @Option var sandboxProfile: String = ""
-
-    func makeAgentConfiguration() throws -> AgentConfiguration
-}
-```
-
-Responsibilities:
-
-- preserve the current CLI contract for now
-- translate parsed options into the shared `AgentConfiguration`
-
-### `main.swift`
-
-Responsibilities:
-
-- parse CLI args
-- create `Agent`
-- subscribe to `eventStream()` and print status/log output
-- install signal handlers
-- map `SIGINT` and `SIGTERM` to `Agent.stop()`
-- call `waitUntilStopped()`
-
-## App-specific internal types
-
-These belong in the Xcode app target, not the shared library.
-
-### `AppSettings`
-
-A UI-friendly persistence model.
-
-```swift
-struct AppSettings: Codable, Equatable {
-    var port: Int
-    var otelPort: Int
-    var configDirectory: String
-    var appPath: String
-    var sandboxProfile: String
-
-    func makeAgentConfiguration() throws -> AgentConfiguration
-}
-```
-
-Rationale:
-
-- UI forms are often string-heavy and lenient while editing
-- runtime configuration should stay strongly typed and validated
-- keeping these separate makes validation and persistence cleaner
-
-### `SettingsStore`
-
-Conceptually:
-
-```swift
-final class SettingsStore {
-    func load() -> AppSettings
-    func save(_ settings: AppSettings)
-}
-```
-
-Initial backing store recommendation:
-
-- `UserDefaults` for editable app settings
-
-### `AgentViewModel`
-
-Conceptually:
-
-```swift
-@MainActor
-final class AgentViewModel: ObservableObject {
-    @Published var settings: AppSettings
-    @Published private(set) var state: AgentState = .idle
-    @Published private(set) var logs: [AgentLogMessage] = []
-    @Published private(set) var errorMessage: String?
-
-    func start()
-    func stop()
-    func saveSettings()
-    func reloadSettings()
-}
-```
-
-Responsibilities:
-
-- bridge SwiftUI state to the shared `Agent`
-- manage an event-stream consumption task
-- update published state for the window
-- expose start/stop behavior to the UI
-
-## Source migration plan
-
-### Current state
-
-Today, `swift/Sources/WendyAgent/WendyAgent.swift` effectively combines:
-
-- CLI entrypoint behavior
-- option parsing
-- runtime assembly
-- startup execution
-
-### Proposed migration
-
-1. move the runtime assembly logic out of the current `WendyAgent.swift`
-2. place public lifecycle/configuration types in the shared `WendyAgent` library surface at the top level of `Sources/WendyAgent/`
-3. keep existing `Docker/` and `Services/` directories in place with minimal movement
-4. create `swift/Sources/WendyAgentCLI/` for the new CLI wrapper target used by the Wendy Agent CLI frontend
-5. make the old CLI behavior call into the shared `Agent` actor
-
-This sequence allows the CLI to continue working while proving out the shared boundary needed by the macOS app without significantly reshaping the package.
-
-## API design principles
-
-The shared `Wendy Agent` library should:
-
-- remain frontend-neutral
-- avoid importing SwiftUI or AppKit
-- avoid owning persistence concerns such as `UserDefaults`
-- avoid exposing internal services such as `ContainerService` or `FileSyncService`
-- expose one small lifecycle-oriented API surface centered on `Agent`
-
-The app should own:
-
-- settings persistence
-- form validation UX
-- window state
-- log presentation
-
-The CLI should own:
-
-- terminal logging behavior
-- signal handling
-- argument parsing
-
-## Example usage shape
-
-### CLI side
-
-Conceptually:
-
-```swift
-let configuration = try options.makeAgentConfiguration()
-let agent = Agent(configuration: configuration)
-
-Task {
-    for await event in agent.eventStream() {
-        // print state/logs to terminal
-    }
-}
-
-try await agent.start()
-await agent.waitUntilStopped()
-```
-
-### App side
-
-Conceptually:
-
-```swift
-let configuration = try settings.makeAgentConfiguration()
-let agent = Agent(configuration: configuration)
-
-Task {
-    for await event in agent.eventStream() {
-        // bind state/logs into the UI
-    }
-}
-
-try await agent.start()
-```
-
-The same shared lifecycle model should serve both frontends cleanly.
+1. `swift/Package.swift` exposes `WendyAgent` as a library product
+2. the core agent runtime lives in the `WendyAgent` Swift package
+3. the CLI product is gone
+4. the Xcode project lives in `swift/` alongside the package
+5. launching the macOS app starts the agent automatically
+6. the app appears only as a menu bar item
+7. there is no main window or Dock icon
+8. startup failures show an error-badged icon and a readable menu error
+9. the menu includes `Quit WendyAgent`
+10. quitting the app stops the agent cleanly
+11. the app has a functional monochrome menu bar icon and an emerald app
+    icon
+
+## Guiding rule
+
+When in doubt, choose the smaller design.
+
+For this iteration, the right solution is the one with:
+
+- fewer targets
+- fewer public types
+- minimal churn in the core package
+- no separate UI package
+- no window UI
+- no abstraction created only for future possibilities
