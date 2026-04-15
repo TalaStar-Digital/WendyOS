@@ -1,3 +1,4 @@
+import Foundation
 import WendyAgentCore
 
 internal extension WendyAgentStatus {
@@ -42,7 +43,7 @@ internal extension WendyAgentStatus {
         maxLines: Int
     ) -> [String] {
         let words = message.split { $0.isWhitespace || $0.isNewline }
-        guard !words.isEmpty else { return ["WendyAgent failed."] }
+        guard !words.isEmpty else { return ["\(AppDisplayName.current) failed."] }
 
         var lines: [String] = []
         var currentLine = ""

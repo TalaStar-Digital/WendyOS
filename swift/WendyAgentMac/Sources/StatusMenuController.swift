@@ -5,8 +5,9 @@ import WendyAgentCore
 final class StatusMenuController: NSObject {
     let wendyAgent: WendyAgent
 
-    init(wendyAgent: WendyAgent) {
+    init(wendyAgent: WendyAgent, bundle: Bundle = .main) {
         self.wendyAgent = wendyAgent
+        self.bundleDisplayName = AppDisplayName.resolve(from: bundle)
         self.currentStatus = wendyAgent.status
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
@@ -20,6 +21,7 @@ final class StatusMenuController: NSObject {
         self.rebuildMenu()
     }
 
+    private let bundleDisplayName: String
     private let statusItem: NSStatusItem
     private var currentStatus: WendyAgentStatus
     private var statusObservation: WendyObservation?
@@ -53,7 +55,7 @@ final class StatusMenuController: NSObject {
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(
-            title: "Quit WendyAgent",
+            title: "Quit \(self.bundleDisplayName)",
             action: #selector(self.quitSelected),
             keyEquivalent: "q"
         )
@@ -73,8 +75,8 @@ final class StatusMenuController: NSObject {
         button.title = image == nil ? "W" : ""
         button.imagePosition = image == nil ? .noImage : .imageOnly
         button.imageScaling = .scaleProportionallyDown
-        button.toolTip = "WendyAgent — \(self.currentStatus.menuTitle)"
-        button.setAccessibilityTitle("WendyAgent")
+        button.toolTip = "\(self.bundleDisplayName) — \(self.currentStatus.menuTitle)"
+        button.setAccessibilityTitle(self.bundleDisplayName)
     }
 
     private func makeButtonImage() -> NSImage? {
@@ -84,7 +86,7 @@ final class StatusMenuController: NSObject {
 
         return NSImage(
             systemSymbolName: "diamond.fill",
-            accessibilityDescription: "WendyAgent"
+            accessibilityDescription: self.bundleDisplayName
         )
     }
 
