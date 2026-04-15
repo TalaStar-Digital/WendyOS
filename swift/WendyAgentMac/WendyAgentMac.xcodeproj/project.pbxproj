@@ -15,9 +15,19 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		B00000000000000000000005 /* WendyAgentApp */ = {
+		B00000000000000000000005 /* Sources */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = WendyAgentApp;
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000013 /* Assets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Assets;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000014 /* Design */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Design;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -37,7 +47,9 @@
 		B00000000000000000000006 = {
 			isa = PBXGroup;
 			children = (
-				B00000000000000000000005 /* WendyAgentApp */,
+				B00000000000000000000005 /* Sources */,
+				B00000000000000000000013 /* Assets */,
+				B00000000000000000000014 /* Design */,
 				B00000000000000000000007 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -66,7 +78,9 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				B00000000000000000000005 /* WendyAgentApp */,
+				B00000000000000000000005 /* Sources */,
+				B00000000000000000000013 /* Assets */,
+				B00000000000000000000014 /* Design */,
 			);
 			name = WendyAgentMac;
 			packageProductDependencies = (
