@@ -48,7 +48,7 @@ func newAppsCmd() *cobra.Command {
 func newAppsListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List running applications",
+		Short: "List known applications and their status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			target, err := resolveTarget(ctx)

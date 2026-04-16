@@ -222,6 +222,111 @@ struct ContainerServiceTests {
         #expect((await recorder.last()) == stoppedInfos)
     }
 
+    @Test("listContainers returns all known apps with their current status")
+    func listContainersReturnsAllKnownAppsWithTheirCurrentStatus() async throws {
+        let appsBase = try makeTempDir()
+        defer { cleanup(appsBase) }
+
+        let runningAppID = "sh.wendy.tests.ListRunning"
+        let stoppedAppID = "sh.wendy.tests.ListStopped"
+
+        for appID in [runningAppID, stoppedAppID] {
+            let appDirectory = URL(fileURLWithPath: appsBase).appendingPathComponent(appID)
+            try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+            try writeSleepScript(to: appDirectory.appendingPathComponent("sleep.sh"))
+        }
+
+        let service = ContainerService(
+            broadcaster: TelemetryBroadcaster(),
+            executablePath: "/usr/bin/false",
+            appsBase: URL(fileURLWithPath: appsBase)
+        )
+
+        try await registerFileSyncApp(service: service, appID: runningAppID, cmd: "sleep.sh")
+        try await registerFileSyncApp(service: service, appID: stoppedAppID, cmd: "sleep.sh")
+        try await startApp(service: service, appID: runningAppID)
+
+        let containers = try await listContainers(service: service)
+        #expect(containers.map(\.appName) == [runningAppID, stoppedAppID])
+        #expect(containers[0].runningState == .running)
+        #expect(containers[1].runningState == .stopped)
+
+        await service.stopAllApps()
+    }
+
+    @Test("persistence stores runtime state and restores apps as stopped")
+    func persistenceStoresRuntimeStateAndRestoresAppsAsStopped() async throws {
+        let appsBase = try makeTempDir()
+        defer { cleanup(appsBase) }
+
+        let appID = "sh.wendy.tests.Persistence"
+        let appDirectory = URL(fileURLWithPath: appsBase).appendingPathComponent(appID)
+        try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        try writeSleepScript(to: appDirectory.appendingPathComponent("sleep.sh"))
+
+        let service = ContainerService(
+            broadcaster: TelemetryBroadcaster(),
+            executablePath: "/usr/bin/false",
+            appsBase: URL(fileURLWithPath: appsBase)
+        )
+
+        try await registerFileSyncApp(service: service, appID: appID, cmd: "sleep.sh")
+        try await startApp(service: service, appID: appID)
+
+        try await waitUntil(description: "persisted app is running") {
+            guard let info = await service.appInfo(forAppID: appID) else { return false }
+            return info.status == .running && info.pid != nil
+        }
+
+        let persistedApps = try readPersistedApps(at: await service.infoFileURLForTesting())
+        let persistedApp = try #require(persistedApps.first { $0.info.id == appID })
+        #expect(persistedApp.info.status == .running)
+        #expect(persistedApp.info.pid != nil)
+        #expect(persistedApp.native == WendyApp.NativeMetadata(
+            directory: appDirectory.path,
+            binaryName: "sleep.sh",
+            args: [],
+            currentDirectory: appDirectory.path
+        ))
+
+        let restoredService = ContainerService(
+            broadcaster: TelemetryBroadcaster(),
+            executablePath: "/usr/bin/false",
+            appsBase: URL(fileURLWithPath: appsBase)
+        )
+
+        #expect(await restoredService.appInfo(forAppID: appID) == WendyAppInfo(
+            id: appID,
+            kind: .native,
+            status: .stopped,
+            pid: nil
+        ))
+
+        try await startApp(service: restoredService, appID: appID)
+        try await waitUntil(description: "restored app runs again") {
+            guard let info = await restoredService.appInfo(forAppID: appID) else { return false }
+            return info.status == .running && info.pid != nil
+        }
+        await restoredService.stopApp(id: appID)
+    }
+
+    @Test("corrupt persisted app state is ignored on startup")
+    func corruptPersistedAppStateIsIgnoredOnStartup() async throws {
+        let appsBase = try makeTempDir()
+        defer { cleanup(appsBase) }
+
+        let infoFileURL = URL(fileURLWithPath: appsBase).appendingPathComponent("info.json")
+        try "not valid json".write(to: infoFileURL, atomically: true, encoding: .utf8)
+
+        let service = ContainerService(
+            broadcaster: TelemetryBroadcaster(),
+            executablePath: "/usr/bin/false",
+            appsBase: URL(fileURLWithPath: appsBase)
+        )
+
+        #expect(await service.currentAppInfosForTesting().isEmpty)
+    }
+
     @Test("delete of a running app publishes stopped before removal")
     func deleteOfARunningAppPublishesStoppedBeforeRemoval() async throws {
         let appsBase = try makeTempDir()
@@ -507,6 +612,24 @@ private func startAppAndCollectStdout(
     return stdoutText
 }
 
+private func listContainers(
+    service: ContainerService
+) async throws -> [AppContainer] {
+    let response = try await service.listContainers(
+        request: ServerRequest(
+            metadata: [:],
+            message: Wendy_Agent_Services_V1_ListContainersRequest()
+        ),
+        context: makeServerContext(method: "ListContainers")
+    )
+
+    let contents = try response.accepted.get()
+    let writer = CollectingWriter<Wendy_Agent_Services_V1_ListContainersResponse>()
+    _ = try await contents.producer(RPCWriter(wrapping: writer))
+
+    return writer.snapshot().compactMap(\.container)
+}
+
 private func listContainerStats(
     service: ContainerService
 ) async throws -> [Wendy_Agent_Services_V1_ContainerStats] {
@@ -574,6 +697,11 @@ private func canonicalPath(_ path: String) throws -> String {
 
 private func cleanup(_ path: String) {
     try? FileManager.default.removeItem(atPath: path)
+}
+
+private func readPersistedApps(at url: URL) throws -> [WendyApp] {
+    let data = try Data(contentsOf: url)
+    return try JSONDecoder().decode([WendyApp].self, from: data)
 }
 
 private func waitUntil(

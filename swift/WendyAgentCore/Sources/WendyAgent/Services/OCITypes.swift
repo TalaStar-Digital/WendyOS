@@ -38,13 +38,13 @@ struct OCIRootFS: Codable {
 
 // MARK: - Wendy AppConfig (minimal parsing for platform/entitlement routing)
 
-struct WendyAppConfig: Codable {
+struct WendyAppConfig: Codable, Equatable {
     let appId: String
     let platform: String?
     let entitlements: [WendyEntitlement]?
 }
 
-struct WendyEntitlement: Codable {
+struct WendyEntitlement: Codable, Equatable {
     let type: String
     let mode: String?
     let name: String?
@@ -52,7 +52,7 @@ struct WendyEntitlement: Codable {
     let ports: [WendyPortMapping]?
 }
 
-struct WendyPortMapping: Codable {
+struct WendyPortMapping: Codable, Equatable {
     let host: UInt16
     let container: UInt16
 }

@@ -9,13 +9,9 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
     private let appsBase: URL
     private let blobsDirectory: String
     private let broadcaster: TelemetryBroadcaster
+    private let infoFileURL: URL
     private let onAppsChanged: @Sendable ([WendyAppInfo]) async -> Void
-    private struct NativeLaunchInfo {
-        let directory: String
-        let binaryName: String
-        let args: [String]
-        let currentDirectory: String?
-    }
+    private typealias NativeLaunchInfo = WendyApp.NativeMetadata
 
     private let executablePath: String
     private let logger = Logger(label: "sh.wendy.agent.container")
@@ -24,27 +20,14 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
     private var isStopping = false
     private let sandboxProfilePath: String?
 
-    /// Maps app name → native launch metadata for apps uploaded via file sync or layers.
-    private var appDirectories: [String: NativeLaunchInfo] = [:]
-
     /// Docker backend for Linux containers. Nil when Docker is not available.
     private let dockerBackend: DockerContainerBackend?
-
-    /// Tracks which apps were created via the Docker backend.
-    private var dockerApps: Set<String> = []
-
-    /// Docker image names, keyed by app name. Stored during createContainer so
-    /// startContainer uses the exact image that was pulled.
-    private var dockerImageNames: [String: String] = [:]
-
-    /// Parsed app configs, keyed by app name. Stored during createContainer for
-    /// use by startContainer.
-    private var appConfigs: [String: WendyAppConfig] = [:]
 
     init(
         broadcaster: TelemetryBroadcaster,
         executablePath: String,
         sandboxProfilePath: String? = nil,
+        stateDirectory: URL? = nil,
         appsBase: URL? = nil,
         dockerAvailable: Bool = false,
         onAppsChanged: @escaping @Sendable ([WendyAppInfo]) async -> Void = { _ in }
@@ -55,13 +38,19 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         self.sandboxProfilePath = sandboxProfilePath
         self.dockerBackend = dockerAvailable ? DockerContainerBackend() : nil
 
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let baseDirectory = "\(home)/Library/Application Support/wendy-agent"
+        let defaultStateDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/wendy-agent")
+        let resolvedStateDirectory = stateDirectory ?? appsBase ?? defaultStateDirectory
 
-        self.appsBase = appsBase ?? URL(fileURLWithPath: "\(baseDirectory)/apps")
-        self.blobsDirectory = "\(baseDirectory)/blobs"
+        self.appsBase = appsBase ?? resolvedStateDirectory.appendingPathComponent("apps")
+        self.blobsDirectory = resolvedStateDirectory.appendingPathComponent("blobs").path
+        self.infoFileURL = resolvedStateDirectory.appendingPathComponent("info.json")
 
         // Ensure directories exist.
+        try? FileManager.default.createDirectory(
+            at: resolvedStateDirectory,
+            withIntermediateDirectories: true
+        )
         try? FileManager.default.createDirectory(
             at: self.appsBase,
             withIntermediateDirectories: true
@@ -70,6 +59,8 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             atPath: "\(blobsDirectory)/sha256",
             withIntermediateDirectories: true
         )
+
+        self.appsByID = Self.loadApps(from: self.infoFileURL, logger: self.logger)
     }
 
     private func currentAppInfos() -> [WendyAppInfo] {
@@ -80,8 +71,63 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         self.currentAppInfos()
     }
 
+    func infoFileURLForTesting() -> URL {
+        self.infoFileURL
+    }
+
+    func publishCurrentApps() async {
+        await self.publishApps()
+    }
+
     private func publishApps() async {
         await self.onAppsChanged(self.currentAppInfos())
+    }
+
+    nonisolated private static func loadApps(
+        from infoFileURL: URL,
+        logger: Logger
+    ) -> [String: WendyApp] {
+        guard FileManager.default.fileExists(atPath: infoFileURL.path) else { return [:] }
+
+        do {
+            let data = try Data(contentsOf: infoFileURL)
+            let persistedApps = try JSONDecoder().decode([WendyApp].self, from: data)
+            return Dictionary(
+                uniqueKeysWithValues: persistedApps.map { app in
+                    var restoredApp = app
+                    restoredApp.info = WendyAppInfo(
+                        id: app.info.id,
+                        kind: app.info.kind,
+                        status: .stopped,
+                        pid: nil
+                    )
+                    restoredApp.process = nil
+                    restoredApp.launchToken = nil
+                    return (restoredApp.info.id, restoredApp)
+                }
+            )
+        } catch {
+            logger.warning(
+                "Failed to load persisted apps",
+                metadata: [
+                    "path": "\(infoFileURL.path)",
+                    "error": "\(String(describing: error))",
+                ]
+            )
+            return [:]
+        }
+    }
+
+    private func saveApps() throws {
+        let persistedApps = self.appsByID.values.sorted { $0.info.id < $1.info.id }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(persistedApps)
+        try FileManager.default.createDirectory(
+            at: self.infoFileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: self.infoFileURL, options: .atomic)
     }
 
     func appInfo(forAppID id: String) -> WendyAppInfo? {
@@ -126,7 +172,12 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         }
     }
 
-    private func registerApp(id: String, kind: WendyAppInfo.Kind) async {
+    private func registerApp(
+        id: String,
+        kind: WendyAppInfo.Kind,
+        native: WendyApp.NativeMetadata? = nil,
+        container: WendyApp.ContainerMetadata? = nil
+    ) async throws {
         self.appsByID[id] = WendyApp(
             info: WendyAppInfo(
                 id: id,
@@ -134,9 +185,12 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 status: .stopped,
                 pid: nil
             ),
+            native: native,
+            container: container,
             process: nil,
             launchToken: nil
         )
+        try self.saveApps()
         await self.publishApps()
     }
 
@@ -164,7 +218,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         id: String,
         process: Foundation.Process,
         launchToken: UUID
-    ) async {
+    ) async throws {
         guard var app = self.appsByID[id], app.launchToken == launchToken else { return }
         app.info = WendyAppInfo(
             id: app.info.id,
@@ -175,6 +229,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         app.process = process
         app.launchToken = launchToken
         self.appsByID[id] = app
+        try self.saveApps()
         await self.publishApps()
     }
 
@@ -193,6 +248,19 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         app.process = nil
         app.launchToken = nil
         self.appsByID[id] = app
+
+        do {
+            try self.saveApps()
+        } catch {
+            self.logger.error(
+                "Failed to persist stopped app state",
+                metadata: [
+                    "app_name": "\(id)",
+                    "error": "\(String(describing: error))",
+                ]
+            )
+        }
+
         await self.publishApps()
     }
 
@@ -230,7 +298,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
 
         let exitTask = Self.makeProcessExitTask(process)
 
-        if app.info.kind == .container, self.dockerApps.contains(id), let dockerBackend {
+        if app.info.kind == .container, app.container != nil, let dockerBackend {
             try await dockerBackend.stop(appName: id)
             let didExit = await Self.waitForProcessExit(exitTask, timeout: self.nativeStopTimeout)
             if !didExit {
@@ -259,6 +327,19 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
 
     private func removeApp(id: String) async {
         self.appsByID.removeValue(forKey: id)
+
+        do {
+            try self.saveApps()
+        } catch {
+            self.logger.error(
+                "Failed to persist app removal",
+                metadata: [
+                    "app_name": "\(id)",
+                    "error": "\(String(describing: error))",
+                ]
+            )
+        }
+
         await self.publishApps()
     }
 
@@ -332,21 +413,24 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
 
             // Pull the image from the local registry into Docker.
             try await dockerBackend.pullImage(imageName)
-            dockerApps.insert(appName)
-            dockerImageNames[appName] = imageName
-            if let appConfig {
-                appConfigs[appName] = appConfig
-            }
             logger.info(
                 "Linux container image pulled via Docker",
                 metadata: ["app_name": "\(appName)"]
             )
-            await self.registerApp(id: appName, kind: .container)
+            try await self.registerApp(
+                id: appName,
+                kind: .container,
+                container: WendyApp.ContainerMetadata(
+                    imageName: imageName,
+                    appConfig: appConfig
+                )
+            )
             return ServerResponse(message: Wendy_Agent_Services_V1_CreateContainerResponse())
         }
 
         // Native darwin path (existing behavior).
 
+        let nativeLaunchInfo: NativeLaunchInfo
         if imageName.hasPrefix("sha256:") {
             // OCI image: parse manifest → config → extract layer.
             let appDirectory = appsBase.appendingPathComponent(appName).path
@@ -385,7 +469,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 )
             }
 
-            appDirectories[appName] = NativeLaunchInfo(
+            nativeLaunchInfo = NativeLaunchInfo(
                 directory: appDirectory,
                 binaryName: binaryName,
                 args: [],
@@ -402,7 +486,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             guard FileManager.default.fileExists(atPath: binaryPath) else {
                 throw RPCError(code: .notFound, message: "Binary not found at \(binaryPath)")
             }
-            appDirectories[appName] = NativeLaunchInfo(
+            nativeLaunchInfo = NativeLaunchInfo(
                 directory: appDirectory,
                 binaryName: imageName,
                 args: [],
@@ -430,7 +514,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 )
             }
 
-            appDirectories[appName] = NativeLaunchInfo(
+            nativeLaunchInfo = NativeLaunchInfo(
                 directory: appDirectory,
                 binaryName: cmd,
                 args: Array(request.message.userArgs),
@@ -443,7 +527,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             )
         }
 
-        await self.registerApp(id: appName, kind: .native)
+        try await self.registerApp(id: appName, kind: .native, native: nativeLaunchInfo)
         return ServerResponse(message: Wendy_Agent_Services_V1_CreateContainerResponse())
     }
 
@@ -457,15 +541,17 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         try self.ensureLifecycleMutationsAllowed()
         try await self.stopTrackedAppIfRunning(id: appName)
 
+        guard let app = self.appsByID[appName] else {
+            throw RPCError(
+                code: .failedPrecondition,
+                message: "No registered app found for \(appName). Call CreateContainer first."
+            )
+        }
+
         // Docker backend path for Linux containers.
-        if dockerApps.contains(appName), let dockerBackend {
-            let appConfig = appConfigs[appName]
-            guard let deviceImage = dockerImageNames[appName] else {
-                throw RPCError(
-                    code: .failedPrecondition,
-                    message: "No Docker image found for \(appName). Call CreateContainer first."
-                )
-            }
+        if let containerMetadata = app.container, let dockerBackend {
+            let appConfig = containerMetadata.appConfig
+            let deviceImage = containerMetadata.imageName
 
             let launchToken = UUID()
             self.prepareAppForLaunch(id: appName, launchToken: launchToken)
@@ -488,7 +574,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 throw error
             }
 
-            await self.markAppRunning(id: appName, process: process, launchToken: launchToken)
+            try await self.markAppRunning(id: appName, process: process, launchToken: launchToken)
             logger.info(
                 "Docker container started",
                 metadata: ["app_name": "\(appName)", "pid": "\(process.processIdentifier)"]
@@ -549,7 +635,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         let profilePath: String?
         let processArgs: [String]
         let currentDirectory: String?
-        if let entry = appDirectories[appName] {
+        if let entry = app.native {
             binaryPath = "\(entry.directory)/\(entry.binaryName)"
             let candidateProfile = "\(entry.directory)/sandbox.sb"
             profilePath =
@@ -598,7 +684,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 message: "Failed to launch process at \(binaryPath): \(error)"
             )
         }
-        await self.markAppRunning(id: appName, process: process, launchToken: launchToken)
+        try await self.markAppRunning(id: appName, process: process, launchToken: launchToken)
         logger.info(
             "Process started",
             metadata: ["app_name": "\(appName)", "pid": "\(process.processIdentifier)"]
@@ -673,7 +759,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
 
         let didStop = try await self.stopTrackedAppIfRunning(id: appName)
         if didStop {
-            if self.dockerApps.contains(appName) {
+            if self.appsByID[appName]?.info.kind == .container {
                 logger.info("Docker container stopped", metadata: ["app_name": "\(appName)"])
             } else {
                 logger.info("Process stopped", metadata: ["app_name": "\(appName)"])
@@ -694,11 +780,8 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
 
         try await self.stopTrackedAppIfRunning(id: appName)
 
-        if dockerApps.contains(appName), let dockerBackend {
+        if self.appsByID[appName]?.container != nil, let dockerBackend {
             try await dockerBackend.remove(appName: appName)
-            dockerApps.remove(appName)
-            dockerImageNames.removeValue(forKey: appName)
-            appConfigs.removeValue(forKey: appName)
             await self.removeApp(id: appName)
             logger.info("Docker container removed", metadata: ["app_name": "\(appName)"])
         } else {
@@ -712,38 +795,12 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         request: ServerRequest<Wendy_Agent_Services_V1_ListContainersRequest>,
         context: ServerContext
     ) async throws -> StreamingServerResponse<Wendy_Agent_Services_V1_ListContainersResponse> {
-        let nativeApps = self.currentAppInfos().filter {
-            $0.kind == .native && $0.status == .running
-        }
-
-        // Collect Docker containers.
-        let dockerContainers: [DockerCLI.ContainerInfo]
-        if let dockerBackend {
-            dockerContainers = (try? await dockerBackend.listContainers()) ?? []
-        } else {
-            dockerContainers = []
-        }
-
-        let dockerAppNames = dockerApps
+        let apps = self.currentAppInfos()
         return StreamingServerResponse { writer in
-            // Native processes.
-            for app in nativeApps where !dockerAppNames.contains(app.id) {
+            for app in apps {
                 var container = AppContainer()
                 container.appName = app.id
-                container.runningState = .running
-
-                var response = Wendy_Agent_Services_V1_ListContainersResponse()
-                response.container = container
-                try await writer.write(response)
-            }
-
-            // Docker containers.
-            for info in dockerContainers {
-                var container = AppContainer()
-                // Strip "wendy-" prefix from container name.
-                let name = info.names
-                container.appName = name.hasPrefix("wendy-") ? String(name.dropFirst(6)) : name
-                container.runningState = info.state == "running" ? .running : .stopped
+                container.runningState = app.status == .running ? .running : .stopped
 
                 var response = Wendy_Agent_Services_V1_ListContainersResponse()
                 response.container = container
@@ -758,9 +815,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         request: ServerRequest<Wendy_Agent_Services_V1_ListContainerStatsRequest>,
         context: ServerContext
     ) async throws -> ServerResponse<Wendy_Agent_Services_V1_ListContainerStatsResponse> {
-        let appNames = Set(appDirectories.keys)
-            .union(appsByID.keys)
-            .union(dockerApps)
+        let appNames = Set(appsByID.keys)
             .sorted()
 
         var response = Wendy_Agent_Services_V1_ListContainerStatsResponse()

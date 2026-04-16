@@ -170,8 +170,9 @@ public final class WendyAgent {
         dockerAvailable: Bool,
         broadcaster: TelemetryBroadcaster
     ) async throws {
-        let appsBase = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/wendy-agent/apps")
+        let stateDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/wendy-agent")
+        let appsBase = stateDirectory.appendingPathComponent("apps")
 
         let containerService = ContainerService(
             broadcaster: broadcaster,
@@ -179,6 +180,7 @@ public final class WendyAgent {
             sandboxProfilePath: self.configuration.sandboxProfile.isEmpty
                 ? nil
                 : self.configuration.sandboxProfile,
+            stateDirectory: stateDirectory,
             appsBase: appsBase,
             dockerAvailable: dockerAvailable,
             onAppsChanged: { [weak self] apps in
@@ -186,6 +188,7 @@ public final class WendyAgent {
             }
         )
         self.containerService = containerService
+        await containerService.publishCurrentApps()
 
         let services: [any RegistrableRPCService] = [
             AgentService(),

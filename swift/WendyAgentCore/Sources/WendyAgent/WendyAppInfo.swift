@@ -1,10 +1,10 @@
-public struct WendyAppInfo: Sendable, Equatable {
-    public enum Kind: Sendable, Equatable {
+public struct WendyAppInfo: Sendable, Equatable, Codable {
+    public enum Kind: String, Sendable, Equatable, Codable {
         case native
         case container
     }
 
-    public enum Status: Sendable, Equatable {
+    public enum Status: String, Sendable, Equatable, Codable {
         case stopped
         case running
     }
