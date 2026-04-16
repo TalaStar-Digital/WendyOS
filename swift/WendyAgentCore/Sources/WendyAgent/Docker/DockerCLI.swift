@@ -136,13 +136,15 @@ struct DockerCLI: Sendable {
     func runAttached(
         options: [RunOption],
         image: String,
-        command: [String] = []
+        command: [String] = [],
+        terminationHandler: (@Sendable (Foundation.Process) -> Void)? = nil
     ) throws -> (process: Foundation.Process, stdout: Pipe, stderr: Pipe) {
         let allArgs = ["run"] + options.flatMap(\.arguments) + [image] + command
 
         let process = Foundation.Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [self.executable] + allArgs
+        process.terminationHandler = terminationHandler
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

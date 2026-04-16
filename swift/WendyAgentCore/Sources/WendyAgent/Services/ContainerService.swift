@@ -19,7 +19,6 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
 
     private let executablePath: String
     private let logger = Logger(label: "sh.wendy.agent.container")
-    private var runningProcesses: [String: Foundation.Process] = [:]
     private var appsByID: [String: WendyApp] = [:]
     private let sandboxProfilePath: String?
 
@@ -79,6 +78,14 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         await self.onAppsChanged(self.currentAppInfos())
     }
 
+    func appInfo(forAppID id: String) -> WendyAppInfo? {
+        self.appsByID[id]?.info
+    }
+
+    func launchToken(forAppID id: String) -> UUID? {
+        self.appsByID[id]?.launchToken
+    }
+
     private func registerApp(id: String, kind: WendyAppInfo.Kind) async {
         self.appsByID[id] = WendyApp(
             info: WendyAppInfo(
@@ -87,29 +94,13 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 status: .stopped,
                 pid: nil
             ),
-            process: nil
+            process: nil,
+            launchToken: nil
         )
         await self.publishApps()
     }
 
-    private func markAppRunning(
-        id: String,
-        kind: WendyAppInfo.Kind,
-        process: Foundation.Process
-    ) async {
-        self.appsByID[id] = WendyApp(
-            info: WendyAppInfo(
-                id: id,
-                kind: kind,
-                status: .running,
-                pid: process.processIdentifier
-            ),
-            process: process
-        )
-        await self.publishApps()
-    }
-
-    private func markAppStopped(id: String) async {
+    private func prepareAppForLaunch(id: String, launchToken: UUID) {
         guard var app = self.appsByID[id] else { return }
         app.info = WendyAppInfo(
             id: app.info.id,
@@ -118,8 +109,94 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             pid: nil
         )
         app.process = nil
+        app.launchToken = launchToken
+        self.appsByID[id] = app
+    }
+
+    private func cancelAppLaunch(id: String, launchToken: UUID) {
+        guard var app = self.appsByID[id], app.launchToken == launchToken else { return }
+        app.process = nil
+        app.launchToken = nil
+        self.appsByID[id] = app
+    }
+
+    private func markAppRunning(
+        id: String,
+        process: Foundation.Process,
+        launchToken: UUID
+    ) async {
+        guard var app = self.appsByID[id], app.launchToken == launchToken else { return }
+        app.info = WendyAppInfo(
+            id: app.info.id,
+            kind: app.info.kind,
+            status: .running,
+            pid: process.processIdentifier
+        )
+        app.process = process
+        app.launchToken = launchToken
         self.appsByID[id] = app
         await self.publishApps()
+    }
+
+    private func markAppStopped(id: String) async {
+        guard var app = self.appsByID[id] else { return }
+
+        let stoppedInfo = WendyAppInfo(
+            id: app.info.id,
+            kind: app.info.kind,
+            status: .stopped,
+            pid: nil
+        )
+        guard app.info != stoppedInfo || app.process != nil || app.launchToken != nil else { return }
+
+        app.info = stoppedInfo
+        app.process = nil
+        app.launchToken = nil
+        self.appsByID[id] = app
+        await self.publishApps()
+    }
+
+    func handleAppTermination(id: String, launchToken: UUID) async {
+        guard let app = self.appsByID[id], app.launchToken == launchToken else { return }
+        await self.markAppStopped(id: id)
+    }
+
+    private func makeTerminationHandler(
+        forAppID id: String,
+        launchToken: UUID
+    ) -> @Sendable (Foundation.Process) -> Void {
+        let service = self
+        return { _ in
+            Task {
+                await service.handleAppTermination(id: id, launchToken: launchToken)
+            }
+        }
+    }
+
+    @discardableResult
+    private func stopTrackedAppIfRunning(id: String) async throws -> Bool {
+        guard let app = self.appsByID[id],
+              let process = app.process,
+              let launchToken = app.launchToken,
+              app.info.status == .running
+        else {
+            return false
+        }
+
+        if !process.isRunning {
+            await self.handleAppTermination(id: id, launchToken: launchToken)
+            return true
+        }
+
+        if app.info.kind == .container, self.dockerApps.contains(id), let dockerBackend {
+            try await dockerBackend.stop(appName: id)
+        } else {
+            process.terminate()
+        }
+
+        process.waitUntilExit()
+        await self.handleAppTermination(id: id, launchToken: launchToken)
+        return true
     }
 
     private func removeApp(id: String) async {
@@ -139,6 +216,8 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             "CreateContainer called",
             metadata: ["app_name": "\(appName)", "image_name": "\(imageName)"]
         )
+
+        try await self.stopTrackedAppIfRunning(id: appName)
 
         // Parse app config to determine the target platform.
         let appConfig: WendyAppConfig? = {
@@ -175,18 +254,6 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         }
 
         // Native darwin path (existing behavior).
-
-        // Stop any existing process before re-deploying.
-        if let existing = runningProcesses.removeValue(forKey: appName) {
-            if existing.isRunning {
-                existing.terminate()
-                existing.waitUntilExit()
-            }
-            logger.info(
-                "Stopped existing process for re-deploy",
-                metadata: ["app_name": "\(appName)"]
-            )
-        }
 
         if imageName.hasPrefix("sha256:") {
             // OCI image: parse manifest → config → extract layer.
@@ -295,6 +362,8 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         let appName = request.message.appName
         logger.info("StartContainer called", metadata: ["app_name": "\(appName)"])
 
+        try await self.stopTrackedAppIfRunning(id: appName)
+
         // Docker backend path for Linux containers.
         if dockerApps.contains(appName), let dockerBackend {
             let appConfig = appConfigs[appName]
@@ -305,13 +374,28 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
                 )
             }
 
-            let (process, stdoutPipe, stderrPipe) = try await dockerBackend.createAndStart(
-                appName: appName,
-                imageName: deviceImage,
-                appConfig: appConfig
-            )
-            runningProcesses[appName] = process
-            await self.markAppRunning(id: appName, kind: .container, process: process)
+            let launchToken = UUID()
+            self.prepareAppForLaunch(id: appName, launchToken: launchToken)
+
+            let process: Foundation.Process
+            let stdoutPipe: Pipe
+            let stderrPipe: Pipe
+            do {
+                (process, stdoutPipe, stderrPipe) = try await dockerBackend.createAndStart(
+                    appName: appName,
+                    imageName: deviceImage,
+                    appConfig: appConfig,
+                    terminationHandler: self.makeTerminationHandler(
+                        forAppID: appName,
+                        launchToken: launchToken
+                    )
+                )
+            } catch {
+                self.cancelAppLaunch(id: appName, launchToken: launchToken)
+                throw error
+            }
+
+            await self.markAppRunning(id: appName, process: process, launchToken: launchToken)
             logger.info(
                 "Docker container started",
                 metadata: ["app_name": "\(appName)", "pid": "\(process.processIdentifier)"]
@@ -367,15 +451,6 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
 
         // Native darwin path.
 
-        // Stop any existing process with the same name.
-        if let existing = runningProcesses[appName] {
-            if existing.isRunning {
-                existing.terminate()
-                existing.waitUntilExit()
-            }
-            runningProcesses.removeValue(forKey: appName)
-        }
-
         // Resolve binary path: prefer uploaded app, fall back to --appPath.
         let binaryPath: String
         let profilePath: String?
@@ -414,16 +489,23 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        let launchToken = UUID()
+        self.prepareAppForLaunch(id: appName, launchToken: launchToken)
+        process.terminationHandler = self.makeTerminationHandler(
+            forAppID: appName,
+            launchToken: launchToken
+        )
+
         do {
             try process.run()
         } catch {
+            self.cancelAppLaunch(id: appName, launchToken: launchToken)
             throw RPCError(
                 code: .internalError,
                 message: "Failed to launch process at \(binaryPath): \(error)"
             )
         }
-        runningProcesses[appName] = process
-        await self.markAppRunning(id: appName, kind: .native, process: process)
+        await self.markAppRunning(id: appName, process: process, launchToken: launchToken)
         logger.info(
             "Process started",
             metadata: ["app_name": "\(appName)", "pid": "\(process.processIdentifier)"]
@@ -496,19 +578,13 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         let appName = request.message.appName
         logger.info("StopContainer called", metadata: ["app_name": "\(appName)"])
 
-        if dockerApps.contains(appName), let dockerBackend {
-            // Also remove from runningProcesses (the docker run process).
-            runningProcesses.removeValue(forKey: appName)
-            try await dockerBackend.stop(appName: appName)
-            await self.markAppStopped(id: appName)
-            logger.info("Docker container stopped", metadata: ["app_name": "\(appName)"])
-        } else if let process = runningProcesses.removeValue(forKey: appName) {
-            if process.isRunning {
-                process.terminate()
-                process.waitUntilExit()
+        let didStop = try await self.stopTrackedAppIfRunning(id: appName)
+        if didStop {
+            if self.dockerApps.contains(appName) {
+                logger.info("Docker container stopped", metadata: ["app_name": "\(appName)"])
+            } else {
+                logger.info("Process stopped", metadata: ["app_name": "\(appName)"])
             }
-            await self.markAppStopped(id: appName)
-            logger.info("Process stopped", metadata: ["app_name": "\(appName)"])
         } else {
             logger.warning("No running process found", metadata: ["app_name": "\(appName)"])
         }
@@ -523,8 +599,9 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         let appName = request.message.appName
         logger.info("DeleteContainer called", metadata: ["app_name": "\(appName)"])
 
+        try await self.stopTrackedAppIfRunning(id: appName)
+
         if dockerApps.contains(appName), let dockerBackend {
-            runningProcesses.removeValue(forKey: appName)
             try await dockerBackend.remove(appName: appName)
             dockerApps.remove(appName)
             dockerImageNames.removeValue(forKey: appName)
@@ -532,13 +609,6 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             await self.removeApp(id: appName)
             logger.info("Docker container removed", metadata: ["app_name": "\(appName)"])
         } else {
-            // Stop if running, then remove.
-            if let process = runningProcesses.removeValue(forKey: appName) {
-                if process.isRunning {
-                    process.terminate()
-                    process.waitUntilExit()
-                }
-            }
             await self.removeApp(id: appName)
         }
 
@@ -549,8 +619,9 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         request: ServerRequest<Wendy_Agent_Services_V1_ListContainersRequest>,
         context: ServerContext
     ) async throws -> StreamingServerResponse<Wendy_Agent_Services_V1_ListContainersResponse> {
-        // Collect native processes.
-        let processes = runningProcesses
+        let nativeApps = self.currentAppInfos().filter {
+            $0.kind == .native && $0.status == .running
+        }
 
         // Collect Docker containers.
         let dockerContainers: [DockerCLI.ContainerInfo]
@@ -563,10 +634,10 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         let dockerAppNames = dockerApps
         return StreamingServerResponse { writer in
             // Native processes.
-            for (appName, process) in processes where !dockerAppNames.contains(appName) {
+            for app in nativeApps where !dockerAppNames.contains(app.id) {
                 var container = AppContainer()
-                container.appName = appName
-                container.runningState = process.isRunning ? .running : .stopped
+                container.appName = app.id
+                container.runningState = .running
 
                 var response = Wendy_Agent_Services_V1_ListContainersResponse()
                 response.container = container
@@ -595,7 +666,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         context: ServerContext
     ) async throws -> ServerResponse<Wendy_Agent_Services_V1_ListContainerStatsResponse> {
         let appNames = Set(appDirectories.keys)
-            .union(runningProcesses.keys)
+            .union(appsByID.keys)
             .union(dockerApps)
             .sorted()
 

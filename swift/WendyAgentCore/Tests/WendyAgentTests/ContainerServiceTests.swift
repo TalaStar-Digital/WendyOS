@@ -50,6 +50,104 @@ struct ContainerServiceTests {
         #expect(await recorder.last() == .some([]))
     }
 
+    @Test("spontaneous native exits publish a stopped app update")
+    func spontaneousNativeExitPublishesStoppedAppUpdate() async throws {
+        let appsBase = try makeTempDir()
+        defer { cleanup(appsBase) }
+
+        let appID = "sh.wendy.tests.ExitOnOwn"
+        let appDirectory = URL(fileURLWithPath: appsBase).appendingPathComponent(appID)
+        try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        try writeExitAfterDelayScript(to: appDirectory.appendingPathComponent("exit.sh"))
+
+        let recorder = AppSnapshotsRecorder()
+        let service = ContainerService(
+            broadcaster: TelemetryBroadcaster(),
+            executablePath: "/usr/bin/false",
+            appsBase: URL(fileURLWithPath: appsBase),
+            onAppsChanged: { apps in
+                await recorder.record(apps)
+            }
+        )
+
+        try await registerFileSyncApp(service: service, appID: appID, cmd: "exit.sh")
+        try await startApp(service: service, appID: appID)
+
+        try await waitUntil(description: "app starts running") {
+            guard let info = await service.appInfo(forAppID: appID) else { return false }
+            return info.status == .running && info.pid != nil
+        }
+
+        try await waitUntil(description: "app exits and becomes stopped") {
+            await service.appInfo(forAppID: appID)
+                == WendyAppInfo(id: appID, kind: .native, status: .stopped, pid: nil)
+        }
+
+        let snapshots = await recorder.snapshotValues()
+        let publishedRunningSnapshot = snapshots.contains { snapshot in
+            snapshot.count == 1
+                && snapshot[0].id == appID
+                && snapshot[0].kind == .native
+                && snapshot[0].status == .running
+                && snapshot[0].pid != nil
+        }
+        #expect(publishedRunningSnapshot)
+        #expect(snapshots.last == [
+            WendyAppInfo(id: appID, kind: .native, status: .stopped, pid: nil)
+        ])
+    }
+
+    @Test("stale termination callbacks do not overwrite a newer launch")
+    func staleTerminationCallbacksDoNotOverwriteANewerLaunch() async throws {
+        let appsBase = try makeTempDir()
+        defer { cleanup(appsBase) }
+
+        let appID = "sh.wendy.tests.StaleTermination"
+        let appDirectory = URL(fileURLWithPath: appsBase).appendingPathComponent(appID)
+        try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        try writeSleepScript(to: appDirectory.appendingPathComponent("sleep.sh"))
+
+        let recorder = AppSnapshotsRecorder()
+        let service = ContainerService(
+            broadcaster: TelemetryBroadcaster(),
+            executablePath: "/usr/bin/false",
+            appsBase: URL(fileURLWithPath: appsBase),
+            onAppsChanged: { apps in
+                await recorder.record(apps)
+            }
+        )
+
+        try await registerFileSyncApp(service: service, appID: appID, cmd: "sleep.sh")
+        try await startApp(service: service, appID: appID)
+
+        try await waitUntil(description: "first launch token") {
+            await service.launchToken(forAppID: appID) != nil
+        }
+        let firstLaunchToken = try #require(await service.launchToken(forAppID: appID))
+
+        try await startApp(service: service, appID: appID)
+
+        try await waitUntil(description: "second launch replaces the first launch token") {
+            guard let info = await service.appInfo(forAppID: appID),
+                  let token = await service.launchToken(forAppID: appID)
+            else {
+                return false
+            }
+            return info.status == .running && info.pid != nil && token != firstLaunchToken
+        }
+
+        let snapshotCountBefore = await recorder.count()
+        await service.handleAppTermination(id: appID, launchToken: firstLaunchToken)
+        let snapshotCountAfter = await recorder.count()
+        let currentInfo = try #require(await service.appInfo(forAppID: appID))
+
+        #expect(snapshotCountAfter == snapshotCountBefore)
+        #expect(currentInfo.status == .running)
+        #expect(currentInfo.pid != nil)
+
+        try await stopApp(service: service, appID: appID)
+    }
+
     @Test("file-sync native launch uses synced app directory as current working directory")
     func fileSyncLaunchUsesSyncedAppDirectoryAsCurrentWorkingDirectory() async throws {
         let appsBase = try makeTempDir()
@@ -128,14 +226,22 @@ struct ContainerServiceTests {
 // MARK: - Helpers
 
 private actor AppSnapshotsRecorder {
-    private var snapshots: [[WendyAppInfo]] = []
+    private var storedSnapshots: [[WendyAppInfo]] = []
 
     func record(_ apps: [WendyAppInfo]) {
-        self.snapshots.append(apps)
+        self.storedSnapshots.append(apps)
     }
 
     func last() -> [WendyAppInfo]? {
-        self.snapshots.last
+        self.storedSnapshots.last
+    }
+
+    func count() -> Int {
+        self.storedSnapshots.count
+    }
+
+    func snapshotValues() -> [[WendyAppInfo]] {
+        self.storedSnapshots
     }
 }
 
@@ -302,6 +408,11 @@ private func writeSleepScript(to url: URL) throws {
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
 }
 
+private func writeExitAfterDelayScript(to url: URL) throws {
+    try "#!/bin/sh\nsleep 0.2\n".write(to: url, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+}
+
 private func makeTempDir() throws -> String {
     let path =
         FileManager.default.temporaryDirectory
@@ -321,4 +432,23 @@ private func canonicalPath(_ path: String) throws -> String {
 
 private func cleanup(_ path: String) {
     try? FileManager.default.removeItem(atPath: path)
+}
+
+private func waitUntil(
+    description: String,
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(20),
+    condition: @escaping @Sendable () async -> Bool
+) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now + timeout
+
+    while clock.now < deadline {
+        if await condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    throw TestError(description: "Timed out waiting for \(description)")
 }

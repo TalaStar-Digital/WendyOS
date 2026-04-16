@@ -21,7 +21,8 @@ actor DockerContainerBackend {
     func createAndStart(
         appName: String,
         imageName: String,
-        appConfig: WendyAppConfig?
+        appConfig: WendyAppConfig?,
+        terminationHandler: (@Sendable (Foundation.Process) -> Void)? = nil
     ) async throws -> (process: Foundation.Process, stdout: Pipe, stderr: Pipe) {
         let containerName = "wendy-\(appName)"
 
@@ -45,7 +46,11 @@ actor DockerContainerBackend {
             "image": "\(imageName)",
         ])
 
-        return try docker.runAttached(options: options, image: imageName)
+        return try docker.runAttached(
+            options: options,
+            image: imageName,
+            terminationHandler: terminationHandler
+        )
     }
 
     /// Stop a running Docker container.
