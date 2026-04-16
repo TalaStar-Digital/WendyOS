@@ -9,12 +9,16 @@ final class StatusMenuController: NSObject {
         self.wendyAgent = wendyAgent
         self.bundleDisplayName = AppDisplayName.resolve(from: bundle)
         self.currentStatus = wendyAgent.status
+        self.currentApps = wendyAgent.apps
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.menu = NSMenu()
         super.init()
 
         self.statusObservation = self.wendyAgent.observeStatus { @MainActor [weak self] status in
             self?.update(status: status)
+        }
+        self.appsObservation = self.wendyAgent.observeApps { @MainActor [weak self] apps in
+            self?.update(apps: apps)
         }
 
         self.menu.autoenablesItems = false
@@ -28,8 +32,16 @@ final class StatusMenuController: NSObject {
     private let statusItem: NSStatusItem
     private let menu: NSMenu
     private var currentStatus: WendyAgentStatus
+    private var currentApps: [WendyAppInfo]
     private var statusObservation: WendyObservation?
+    private var appsObservation: WendyObservation?
     private var isQuitting = false
+
+    private var runningApps: [WendyAppInfo] {
+        self.currentApps
+            .filter { $0.status == .running }
+            .sorted { $0.id < $1.id }
+    }
 
     private func update(status: WendyAgentStatus) {
         self.currentStatus = status
@@ -37,24 +49,24 @@ final class StatusMenuController: NSObject {
         self.rebuildMenu()
     }
 
+    private func update(apps: [WendyAppInfo]) {
+        self.currentApps = apps
+        self.rebuildMenu()
+    }
+
     private func rebuildMenu() {
         self.menu.removeAllItems()
 
-        let statusItem = NSMenuItem(
-            title: self.currentStatus.menuTitle,
-            action: nil,
-            keyEquivalent: ""
-        )
+        let statusItem = self.makeDisabledMenuItem(title: self.currentStatus.menuTitle)
         statusItem.image = self.makeStatusImage(for: self.currentStatus)
-        statusItem.isEnabled = false
         self.menu.addItem(statusItem)
 
         for detail in self.currentStatus.menuFailureDetails {
-            let detailItem = NSMenuItem(title: detail, action: nil, keyEquivalent: "")
-            detailItem.isEnabled = false
-            self.menu.addItem(detailItem)
+            self.menu.addItem(self.makeDisabledMenuItem(title: detail))
         }
 
+        self.menu.addItem(.separator())
+        self.addRunningAppsSection()
         self.menu.addItem(.separator())
 
         let quitItem = NSMenuItem(
@@ -64,6 +76,62 @@ final class StatusMenuController: NSObject {
         )
         quitItem.target = self
         self.menu.addItem(quitItem)
+    }
+
+    private func addRunningAppsSection() {
+        self.menu.addItem(self.makeDisabledMenuItem(title: "Running Apps"))
+
+        let runningApps = self.runningApps
+        guard !runningApps.isEmpty else {
+            self.menu.addItem(self.makeDisabledMenuItem(title: "None"))
+            return
+        }
+
+        for app in runningApps {
+            let appItem = NSMenuItem(title: app.id, action: nil, keyEquivalent: "")
+            appItem.submenu = self.makeAppSubmenu(for: app)
+            self.menu.addItem(appItem)
+        }
+    }
+
+    private func makeAppSubmenu(for app: WendyAppInfo) -> NSMenu {
+        let submenu = NSMenu(title: app.id)
+        let details = [
+            "ID: \(app.id)",
+            "Kind: \(self.displayName(for: app.kind))",
+            "Status: \(self.displayName(for: app.status))",
+            "PID: \(app.pid.map(String.init) ?? "Unknown")",
+        ]
+
+        for detail in details {
+            submenu.addItem(self.makeDisabledMenuItem(title: detail))
+        }
+
+        return submenu
+    }
+
+    private func makeDisabledMenuItem(title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    private func displayName(for kind: WendyAppInfo.Kind) -> String {
+        switch kind {
+        case .native:
+            return "Native"
+        case .container:
+            return "Container"
+        }
+    }
+
+    private func displayName(for status: WendyAppInfo.Status) -> String {
+        switch status {
+        case .stopped:
+            return "Stopped"
+        case .running:
+            return "Running"
+        }
     }
 
     private func updateStatusButton() {
@@ -126,15 +194,26 @@ final class StatusMenuController: NSObject {
         self.isQuitting = true
 
         Task { @MainActor in
-            await self.cancelStatusObservation()
+            await self.cancelObservations()
             await self.wendyAgent.stop()
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    private func cancelObservations() async {
+        await self.cancelStatusObservation()
+        await self.cancelAppsObservation()
     }
 
     private func cancelStatusObservation() async {
         guard let statusObservation = self.statusObservation else { return }
         self.statusObservation = nil
         await statusObservation.cancel()
+    }
+
+    private func cancelAppsObservation() async {
+        guard let appsObservation = self.appsObservation else { return }
+        self.appsObservation = nil
+        await appsObservation.cancel()
     }
 }
