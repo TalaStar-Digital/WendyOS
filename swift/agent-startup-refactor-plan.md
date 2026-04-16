@@ -229,6 +229,22 @@ The exact types may differ.
 - `WendyAgent` is structurally ready for deterministic startup work
 - the follow-up steps can focus on behavior instead of layout
 
+### Step 2 progress
+
+- `WendyAgent` now has explicit stored runtime slots for the main gRPC
+  server, local OTel server, Bonjour advertiser, and monitor task instead
+  of only a generic top-level run/monitor pair.
+- Startup construction work was split into concrete private helpers:
+  `prepareDockerIfNeeded()`, `startMainServer(...)`,
+  `startOTelServer(...)`, `startBonjour()`, `startMonitorTask(...)`,
+  `rollback()`, and `clearRuntimeState()`.
+- `ServiceGroup` is still temporarily used as the long-lived runtime
+  container so Step 2 stays mostly structural. Later steps can replace the
+  actual startup behavior without first untangling the layout.
+- Logging bootstrap, status observation, and overall startup/status
+  behavior remain intentionally close to the pre-refactor flow in this
+  step.
+
 ### Handoff prompt for Step 3
 
 > Continue with Step 3 from `agent-startup-refactor-plan.md`.

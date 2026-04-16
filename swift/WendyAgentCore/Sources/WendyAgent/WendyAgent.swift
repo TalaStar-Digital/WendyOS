@@ -9,6 +9,20 @@ import WendyAgentGRPC
 
 @MainActor
 public final class WendyAgent {
+    private typealias PosixGRPCServer = GRPCServer<HTTP2ServerTransport.Posix>
+
+    private struct MainServerRuntime {
+        let server: PosixGRPCServer
+    }
+
+    private struct OTelServerRuntime {
+        let server: PosixGRPCServer
+    }
+
+    private struct BonjourRuntime {
+        let advertiser: BonjourAdvertiser
+    }
+
     public let configuration: WendyAgentConfiguration
     public private(set) var status: WendyAgentStatus = .idle
 
@@ -22,8 +36,7 @@ public final class WendyAgent {
         Self.bootstrapLogging
         self.updateStatus(.starting)
 
-        let logger = Logger(label: "sh.wendy.agent")
-        logger.info(
+        self.logger.info(
             "Starting Wendy Agent",
             metadata: [
                 "grpc_port": "\(self.configuration.port)",
@@ -31,133 +44,49 @@ public final class WendyAgent {
             ]
         )
 
-        var startupStage = "telemetry broadcaster initialization"
-        logger.info("Startup stage: \(startupStage)")
         let broadcaster = TelemetryBroadcaster()
 
-        let docker = DockerCLI()
-        startupStage = "Docker availability probe"
-        logger.info("Startup stage: \(startupStage)")
-        let dockerAvailable = await docker.checkAvailable()
-        if dockerAvailable {
-            startupStage = "Docker local registry startup"
-            logger.info(
-                "Startup stage: \(startupStage)",
-                metadata: ["registry_port": "\(DockerCLI.registryPort)"]
+        do {
+            self.logger.info("Startup stage: telemetry broadcaster initialization")
+            let dockerAvailable = await self.prepareDockerIfNeeded()
+            let mainServerRuntime = try await self.startMainServer(
+                dockerAvailable: dockerAvailable,
+                broadcaster: broadcaster
             )
-            do {
-                try await docker.ensureRegistry()
-                logger.info("Startup stage complete: \(startupStage)")
-            } catch {
-                logger.warning(
-                    "Failed to start Docker registry: \(String(describing: error)). Linux container support disabled."
-                )
-            }
-        } else {
-            logger.info("Docker not available, Linux container support disabled")
-        }
+            let otelServerRuntime = try await self.startOTelServer(broadcaster: broadcaster)
+            let bonjourRuntime = try await self.startBonjour()
 
-        startupStage = "application support path setup"
-        logger.info("Startup stage: \(startupStage)")
-        let appsBase = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/wendy-agent/apps")
-
-        startupStage = "main Wendy Agent gRPC service construction"
-        logger.info("Startup stage: \(startupStage)")
-        let services: [any RegistrableRPCService] = [
-            AgentService(),
-            ContainerService(
-                broadcaster: broadcaster,
-                executablePath: self.configuration.appPath,
-                sandboxProfilePath: self.configuration.sandboxProfile.isEmpty
-                    ? nil
-                    : self.configuration.sandboxProfile,
-                appsBase: appsBase,
-                dockerAvailable: dockerAvailable
-            ),
-            AudioService(),
-            ProvisioningService(),
-            TelemetryService(broadcaster: broadcaster),
-            FileSyncService(appsBase: appsBase),
-        ]
-
-        startupStage = "main Wendy Agent gRPC server creation"
-        logger.info(
-            "Startup stage: \(startupStage)",
-            metadata: ["grpc_port": "\(self.configuration.port)"]
-        )
-        let server = GRPCServer(
-            transport: HTTP2ServerTransport.Posix(
-                address: .ipv6(host: "::", port: self.configuration.port),
-                transportSecurity: .plaintext
-            ),
-            services: services
-        )
-
-        startupStage = "local OpenTelemetry gRPC service construction"
-        logger.info("Startup stage: \(startupStage)")
-        let otelServices: [any RegistrableRPCService] = [
-            LocalOTelLogsReceiver(broadcaster: broadcaster),
-            LocalOTelMetricsReceiver(broadcaster: broadcaster),
-            LocalOTelTracesReceiver(broadcaster: broadcaster),
-        ]
-
-        startupStage = "local OpenTelemetry gRPC server creation"
-        logger.info(
-            "Startup stage: \(startupStage)",
-            metadata: ["otel_port": "\(self.configuration.otelPort)"]
-        )
-        let otelServer = GRPCServer(
-            transport: HTTP2ServerTransport.Posix(
-                address: .ipv4(host: "127.0.0.1", port: self.configuration.otelPort),
-                transportSecurity: .plaintext
-            ),
-            services: otelServices
-        )
-
-        startupStage = "Bonjour advertiser creation"
-        logger.info("Startup stage: \(startupStage)")
-        let bonjour = BonjourAdvertiser(
-            port: self.configuration.port,
-            displayName: ProcessInfo.processInfo.hostName,
-            deviceID: ProcessInfo.processInfo.hostName
-        )
-
-        startupStage = "service group creation"
-        logger.info("Startup stage: \(startupStage)")
-        let serviceGroup = ServiceGroup(
-            configuration: .init(
-                services: [
-                    .init(service: server),
-                    .init(service: otelServer),
-                    .init(service: bonjour),
-                ],
-                logger: logger
+            self.logger.info("Startup stage: service group creation")
+            let serviceGroup = self.makeServiceGroup(
+                mainServerRuntime: mainServerRuntime,
+                otelServerRuntime: otelServerRuntime,
+                bonjourRuntime: bonjourRuntime
             )
-        )
 
-        startupStage = "service group launch"
-        logger.info("Startup stage: \(startupStage)")
-        let runTask = Self.makeRunTask(serviceGroup: serviceGroup)
+            self.logger.info("Startup stage: service group launch")
+            let runTask = Self.makeRunTask(serviceGroup: serviceGroup)
 
-        self.runIdentifier &+= 1
-        let runIdentifier = self.runIdentifier
-        self.serviceGroup = serviceGroup
-        self.runTask = runTask
-        self.runTaskMonitor?.cancel()
-        self.runTaskMonitor = Task {
-            await self.monitorRunTask(runTask, runIdentifier: runIdentifier)
+            self.runIdentifier &+= 1
+            let runIdentifier = self.runIdentifier
+            self.mainServerRuntime = mainServerRuntime
+            self.otelServerRuntime = otelServerRuntime
+            self.bonjourRuntime = bonjourRuntime
+            self.serviceGroup = serviceGroup
+            self.runTask = runTask
+            self.startMonitorTask(runTask: runTask, runIdentifier: runIdentifier)
+
+            self.logger.info(
+                "Listening on port \(self.configuration.port), OTel on port \(self.configuration.otelPort)"
+            )
+
+            self.logger.info("Startup stage: status transition to running")
+            guard self.runIdentifier == runIdentifier, self.runTask != nil else { return }
+            self.updateStatus(.running)
+            self.logger.info("Startup complete: Wendy Agent is running")
+        } catch {
+            await self.rollback()
+            throw error
         }
-
-        logger.info(
-            "Listening on port \(self.configuration.port), OTel on port \(self.configuration.otelPort)"
-        )
-
-        startupStage = "status transition to running"
-        logger.info("Startup stage: \(startupStage)")
-        guard self.runIdentifier == runIdentifier, self.runTask != nil else { return }
-        self.updateStatus(.running)
-        logger.info("Startup complete: Wendy Agent is running")
     }
 
     public func stop() async {
@@ -198,12 +127,157 @@ public final class WendyAgent {
         }
     }()
 
+    private let logger = Logger(label: "sh.wendy.agent")
+
+    private var mainServerRuntime: MainServerRuntime?
+    private var otelServerRuntime: OTelServerRuntime?
+    private var bonjourRuntime: BonjourRuntime?
     private var serviceGroup: ServiceGroup?
     private var runTask: Task<Void, Error>?
-    private var runTaskMonitor: Task<Void, Never>?
+    private var monitorTask: Task<Void, Never>?
     private var runIdentifier: UInt64 = 0
     private var statusObservationRegistry = WendyObservationRegistry<WendyAgentStatus>(areEquivalent: ==)
     private var statusObservationTasks: [WendyObservationRegistry<WendyAgentStatus>.ObservationID: Task<Void, Never>] = [:]
+
+    private func prepareDockerIfNeeded() async -> Bool {
+        let docker = DockerCLI()
+
+        self.logger.info("Startup stage: Docker availability probe")
+        let dockerAvailable = await docker.checkAvailable()
+        if dockerAvailable {
+            self.logger.info(
+                "Startup stage: Docker local registry startup",
+                metadata: ["registry_port": "\(DockerCLI.registryPort)"]
+            )
+            do {
+                try await docker.ensureRegistry()
+                self.logger.info("Startup stage complete: Docker local registry startup")
+            } catch {
+                self.logger.warning(
+                    "Failed to start Docker registry: \(String(describing: error)). Linux container support disabled."
+                )
+            }
+        } else {
+            self.logger.info("Docker not available, Linux container support disabled")
+        }
+
+        return dockerAvailable
+    }
+
+    private func startMainServer(
+        dockerAvailable: Bool,
+        broadcaster: TelemetryBroadcaster
+    ) async throws -> MainServerRuntime {
+        self.logger.info("Startup stage: application support path setup")
+        let appsBase = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/wendy-agent/apps")
+
+        self.logger.info("Startup stage: main Wendy Agent gRPC service construction")
+        let services: [any RegistrableRPCService] = [
+            AgentService(),
+            ContainerService(
+                broadcaster: broadcaster,
+                executablePath: self.configuration.appPath,
+                sandboxProfilePath: self.configuration.sandboxProfile.isEmpty
+                    ? nil
+                    : self.configuration.sandboxProfile,
+                appsBase: appsBase,
+                dockerAvailable: dockerAvailable
+            ),
+            AudioService(),
+            ProvisioningService(),
+            TelemetryService(broadcaster: broadcaster),
+            FileSyncService(appsBase: appsBase),
+        ]
+
+        self.logger.info(
+            "Startup stage: main Wendy Agent gRPC server creation",
+            metadata: ["grpc_port": "\(self.configuration.port)"]
+        )
+        let server = PosixGRPCServer(
+            transport: HTTP2ServerTransport.Posix(
+                address: .ipv6(host: "::", port: self.configuration.port),
+                transportSecurity: .plaintext
+            ),
+            services: services
+        )
+
+        return MainServerRuntime(server: server)
+    }
+
+    private func startOTelServer(
+        broadcaster: TelemetryBroadcaster
+    ) async throws -> OTelServerRuntime {
+        self.logger.info("Startup stage: local OpenTelemetry gRPC service construction")
+        let services: [any RegistrableRPCService] = [
+            LocalOTelLogsReceiver(broadcaster: broadcaster),
+            LocalOTelMetricsReceiver(broadcaster: broadcaster),
+            LocalOTelTracesReceiver(broadcaster: broadcaster),
+        ]
+
+        self.logger.info(
+            "Startup stage: local OpenTelemetry gRPC server creation",
+            metadata: ["otel_port": "\(self.configuration.otelPort)"]
+        )
+        let server = PosixGRPCServer(
+            transport: HTTP2ServerTransport.Posix(
+                address: .ipv4(host: "127.0.0.1", port: self.configuration.otelPort),
+                transportSecurity: .plaintext
+            ),
+            services: services
+        )
+
+        return OTelServerRuntime(server: server)
+    }
+
+    private func startBonjour() async throws -> BonjourRuntime {
+        self.logger.info("Startup stage: Bonjour advertiser creation")
+        let advertiser = BonjourAdvertiser(
+            port: self.configuration.port,
+            displayName: ProcessInfo.processInfo.hostName,
+            deviceID: ProcessInfo.processInfo.hostName
+        )
+
+        return BonjourRuntime(advertiser: advertiser)
+    }
+
+    private func startMonitorTask(runTask: Task<Void, Error>, runIdentifier: UInt64) {
+        self.monitorTask?.cancel()
+        self.monitorTask = Task {
+            await self.monitorRunTask(runTask, runIdentifier: runIdentifier)
+        }
+    }
+
+    private func rollback() async {
+        self.clearRuntimeState()
+    }
+
+    private func clearRuntimeState() {
+        self.mainServerRuntime = nil
+        self.otelServerRuntime = nil
+        self.bonjourRuntime = nil
+        self.serviceGroup = nil
+        self.runTask = nil
+        self.monitorTask?.cancel()
+        self.monitorTask = nil
+    }
+
+    private func makeServiceGroup(
+        mainServerRuntime: MainServerRuntime,
+        otelServerRuntime: OTelServerRuntime,
+        bonjourRuntime: BonjourRuntime
+    ) -> ServiceGroup {
+        ServiceGroup(
+            configuration: .init(
+                services: [
+                    .init(service: mainServerRuntime.server),
+                    .init(service: otelServerRuntime.server),
+                    .init(service: bonjourRuntime.advertiser),
+                ],
+                logger: self.logger
+            )
+        )
+    }
 
     private func monitorRunTask(_ runTask: Task<Void, Error>, runIdentifier: UInt64) async {
         do {
@@ -217,10 +291,7 @@ public final class WendyAgent {
     private func finalizeRunTaskIfNeeded(runIdentifier: UInt64, error: (any Error)?) {
         guard self.runIdentifier == runIdentifier, self.runTask != nil else { return }
 
-        self.serviceGroup = nil
-        self.runTask = nil
-        self.runTaskMonitor?.cancel()
-        self.runTaskMonitor = nil
+        self.clearRuntimeState()
 
         switch self.status {
         case .stopping:
