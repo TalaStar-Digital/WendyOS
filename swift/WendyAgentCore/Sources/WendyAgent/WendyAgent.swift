@@ -1,10 +1,8 @@
 import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2
-import GRPCServiceLifecycle
 import Logging
 import OpenTelemetryGRPC
-import ServiceLifecycle
 import WendyAgentGRPC
 
 @MainActor
@@ -22,7 +20,8 @@ public final class WendyAgent {
     }
 
     private struct BonjourRuntime {
-        let advertiser: BonjourAdvertiser
+        let registration: BonjourRegistration
+        let task: Task<Void, Error>
     }
 
     public let configuration: WendyAgentConfiguration
@@ -66,19 +65,15 @@ public final class WendyAgent {
             self.otelServerRuntime = otelServerRuntime
 
             let bonjourRuntime = try await self.startBonjour()
+            self.bonjourRuntime = bonjourRuntime
 
-            self.logger.info("Startup stage: service group creation")
-            let serviceGroup = self.makeServiceGroup(bonjourRuntime: bonjourRuntime)
-
-            self.logger.info("Startup stage: service group launch")
-            let runTask = Self.makeRunTask(serviceGroup: serviceGroup)
+            let runTask = bonjourRuntime.task
 
             self.runIdentifier &+= 1
             let runIdentifier = self.runIdentifier
             self.mainServerRuntime = mainServerRuntime
             self.otelServerRuntime = otelServerRuntime
             self.bonjourRuntime = bonjourRuntime
-            self.serviceGroup = serviceGroup
             self.runTask = runTask
             self.startMonitorTask(runTask: runTask, runIdentifier: runIdentifier)
 
@@ -97,18 +92,19 @@ public final class WendyAgent {
     }
 
     public func stop() async {
-        guard let serviceGroup, let runTask else {
+        guard let runTask else {
             return
         }
 
         let mainServerRuntime = self.mainServerRuntime
         let otelServerRuntime = self.otelServerRuntime
+        let bonjourRuntime = self.bonjourRuntime
 
         self.updateStatus(.stopping)
 
         mainServerRuntime?.server.beginGracefulShutdown()
         otelServerRuntime?.server.beginGracefulShutdown()
-        await serviceGroup.triggerGracefulShutdown()
+        await bonjourRuntime?.registration.shutdown()
 
         var shutdownError: (any Error)?
 
@@ -163,7 +159,6 @@ public final class WendyAgent {
     private var mainServerRuntime: MainServerRuntime?
     private var otelServerRuntime: OTelServerRuntime?
     private var bonjourRuntime: BonjourRuntime?
-    private var serviceGroup: ServiceGroup?
     private var runTask: Task<Void, Error>?
     private var monitorTask: Task<Void, Never>?
     private var runIdentifier: UInt64 = 0
@@ -303,7 +298,11 @@ public final class WendyAgent {
             deviceID: ProcessInfo.processInfo.hostName
         )
 
-        return BonjourRuntime(advertiser: advertiser)
+        self.logger.info("Startup stage: Bonjour advertisement registration")
+        let runtime = try await advertiser.start()
+        self.logger.info("Startup stage complete: Bonjour advertisement registered")
+
+        return BonjourRuntime(registration: runtime.registration, task: runtime.task)
     }
 
     private func startMonitorTask(runTask: Task<Void, Error>, runIdentifier: UInt64) {
@@ -316,10 +315,13 @@ public final class WendyAgent {
     private func rollback() async {
         let mainServerRuntime = self.mainServerRuntime
         let otelServerRuntime = self.otelServerRuntime
+        let bonjourRuntime = self.bonjourRuntime
 
         mainServerRuntime?.server.beginGracefulShutdown()
         otelServerRuntime?.server.beginGracefulShutdown()
+        await bonjourRuntime?.registration.shutdown()
 
+        _ = try? await bonjourRuntime?.task.value
         _ = try? await mainServerRuntime?.task.value
         _ = try? await otelServerRuntime?.task.value
 
@@ -330,23 +332,9 @@ public final class WendyAgent {
         self.mainServerRuntime = nil
         self.otelServerRuntime = nil
         self.bonjourRuntime = nil
-        self.serviceGroup = nil
         self.runTask = nil
         self.monitorTask?.cancel()
         self.monitorTask = nil
-    }
-
-    private func makeServiceGroup(
-        bonjourRuntime: BonjourRuntime
-    ) -> ServiceGroup {
-        ServiceGroup(
-            configuration: .init(
-                services: [
-                    .init(service: bonjourRuntime.advertiser),
-                ],
-                logger: self.logger
-            )
-        )
     }
 
     private func monitorRunTask(_ runTask: Task<Void, Error>, runIdentifier: UInt64) async {
@@ -419,12 +407,6 @@ public final class WendyAgent {
         self.statusObservationRegistry.removeObservation(observationID)
         let task = self.statusObservationTasks.removeValue(forKey: observationID)
         await task?.value
-    }
-
-    nonisolated private static func makeRunTask(serviceGroup: ServiceGroup) -> Task<Void, Error> {
-        Task {
-            try await serviceGroup.run()
-        }
     }
 
     nonisolated private static func makeServeTask(server: PosixGRPCServer) -> Task<Void, Error> {

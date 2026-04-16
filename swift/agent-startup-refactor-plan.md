@@ -325,6 +325,18 @@ Give the remaining required subsystems explicit readiness behavior.
 - `WendyAgent` can eventually transition to `.running` based on real
   startup completion rather than timing
 
+### Step 4 progress
+
+- `startOTelServer(...)` now mirrors the main server startup path: it
+  launches `serve()` in its own task, awaits `listeningAddress`, and
+  retains both the server and serve task for later shutdown.
+- Bonjour advertising no longer relies on `ServiceGroup` startup timing.
+  `BonjourAdvertiser.start()` now waits for the DNS-SD registration
+  callback before returning a runtime handle.
+- `WendyAgent` now stores explicit Bonjour runtime state and shuts it
+  down directly, which removes the last required subsystem from the
+  temporary `ServiceGroup`-based startup path.
+
 ### Handoff prompt for Step 5
 
 > Continue with Step 5 from `agent-startup-refactor-plan.md`.
