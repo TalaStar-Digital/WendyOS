@@ -384,6 +384,18 @@ Make startup and shutdown read as simple top-to-bottom orchestration.
 - `stop()` is explicit and predictable
 - `.running` is only set after required startup really completed
 
+### Step 5 progress
+
+- `start()` now keeps partially started subsystem runtime in locals and
+  stores it on `WendyAgent` only after the main server, OTel server, and
+  Bonjour advertisement have all reported readiness.
+- rollback during startup now shuts down exactly the subsystem runtime
+  that was already started instead of depending on partially published
+  actor state.
+- `stop()` now guards on `.running`, shuts down the required subsystems
+  in a fixed order, waits for their long-lived tasks directly, and then
+  clears runtime state before transitioning to `.stopped`.
+
 ### Handoff prompt for Step 6
 
 > Continue with Step 6 from `agent-startup-refactor-plan.md`.

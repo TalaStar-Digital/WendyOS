@@ -98,45 +98,34 @@ public final class WendyAgent {
     }
 
     public func stop() async {
-        guard let runTask else {
+        guard case .running = self.status else {
             return
         }
 
-        let mainServerRuntime = self.mainServerRuntime
-        let otelServerRuntime = self.otelServerRuntime
-        let bonjourRuntime = self.bonjourRuntime
+        guard let mainServerRuntime = self.mainServerRuntime,
+              let otelServerRuntime = self.otelServerRuntime,
+              let bonjourRuntime = self.bonjourRuntime
+        else {
+            self.clearRuntimeState()
+            self.updateStatus(.stopped)
+            return
+        }
 
         self.updateStatus(.stopping)
+        self.runTask = nil
+        self.monitorTask?.cancel()
+        self.monitorTask = nil
 
-        mainServerRuntime?.server.beginGracefulShutdown()
-        otelServerRuntime?.server.beginGracefulShutdown()
-        await bonjourRuntime?.registration.shutdown()
+        mainServerRuntime.server.beginGracefulShutdown()
+        otelServerRuntime.server.beginGracefulShutdown()
+        await bonjourRuntime.registration.shutdown()
 
-        var shutdownError: (any Error)?
+        _ = try? await mainServerRuntime.task.value
+        _ = try? await otelServerRuntime.task.value
+        _ = try? await bonjourRuntime.task.value
 
-        do {
-            try await runTask.value
-        } catch {
-            shutdownError = error
-        }
-
-        if let mainServerRuntime {
-            do {
-                try await mainServerRuntime.task.value
-            } catch {
-                shutdownError = shutdownError ?? error
-            }
-        }
-
-        if let otelServerRuntime {
-            do {
-                try await otelServerRuntime.task.value
-            } catch {
-                shutdownError = shutdownError ?? error
-            }
-        }
-
-        self.finalizeRunTaskIfNeeded(runIdentifier: self.runIdentifier, error: shutdownError)
+        self.clearRuntimeState()
+        self.updateStatus(.stopped)
     }
 
     public func observeStatus(
