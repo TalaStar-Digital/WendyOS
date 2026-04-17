@@ -28,7 +28,7 @@ jobs:
       is_prerelease: ${{ steps.set-version.outputs.is_prerelease }}
       tag_name: ${{ steps.set-version.outputs.tag_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -101,7 +101,7 @@ jobs:
       run:
         working-directory: go
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -157,7 +157,7 @@ jobs:
       run:
         working-directory: go
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -207,7 +207,7 @@ jobs:
             goarch: arm64
             rpm-arch: aarch64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install FPM dependencies
         run: |
@@ -422,7 +422,7 @@ jobs:
           - arch: arm64
             goarch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install WiX
         run: dotnet tool install --global wix
@@ -555,7 +555,7 @@ jobs:
       # Update floating 'latest' tag for nightly prereleases
       - name: Checkout repo
         if: needs.determine-version.outputs.is_release != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Update 'latest' tag
@@ -680,7 +680,7 @@ jobs:
           repositories: homebrew-tap
 
       - name: Checkout tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: wendylabsinc/homebrew-tap
           token: ${{ steps.app-token.outputs.token }}
@@ -829,7 +829,7 @@ jobs:
             x86_64_artifact: wendy-agent-linux-amd64
             aarch64_artifact: wendy-agent-linux-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Calculate checksums from release
         id: checksums
