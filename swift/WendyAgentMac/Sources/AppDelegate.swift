@@ -61,12 +61,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Stat
         }
 
         self.onboardingWindow = nil
+        NSApplication.shared.setActivationPolicy(.accessory)
     }
 
     private func showOnboardingWindow() {
         self.onboarding.prepareForPresentation()
 
         if let onboardingWindow = self.onboardingWindow {
+            NSApplication.shared.setActivationPolicy(.regular)
             NSApplication.shared.activate(ignoringOtherApps: true)
             onboardingWindow.makeKeyAndOrderFront(nil)
             return
@@ -93,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Stat
 
         self.onboardingWindow = onboardingWindow
 
+        NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
         onboardingWindow.makeKeyAndOrderFront(nil)
     }
