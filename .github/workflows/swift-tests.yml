@@ -42,7 +42,7 @@ jobs:
 
   test:
     name: Run WendyAgentCore Tests
-    runs-on: [self-hosted, macOS]
+    runs-on: macos-15
     needs: [changes]
     if: needs.changes.outputs.swift == 'true'
     steps:
@@ -82,7 +82,7 @@ jobs:
 
   build:
     name: Build WendyAgentMac App
-    runs-on: [self-hosted, macOS]
+    runs-on: macos-15
     needs: [changes]
     if: needs.changes.outputs.swift == 'true'
     steps:
