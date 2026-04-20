@@ -19,6 +19,7 @@ NOTARY_ZIP="${TEMP_DIR}/WendyAgentMac-notary.zip"
 ARTIFACT_NAME="wendy-agent-macos-universal-${VERSION}.zip"
 ARTIFACT_PATH="${OUTPUT_DIR}/${ARTIFACT_NAME}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-wendy-notary-profile}"
+ENTITLEMENTS_PATH="$SWIFT_DIR/WendyAgentMac/Support/WendyAgentMac.entitlements"
 
 find_signing_identity() {
   if [ -n "${KEYCHAIN_PATH:-}" ]; then
@@ -37,8 +38,14 @@ if [ -z "${SIGNING_IDENTITY:-}" ]; then
   exit 1
 fi
 
+if [ ! -f "$ENTITLEMENTS_PATH" ]; then
+  echo "Missing entitlements file: $ENTITLEMENTS_PATH" >&2
+  exit 1
+fi
+
 sign_path() {
   local path="$1"
+  local entitlements_path="${2:-}"
   local command=(
     codesign
     --force
@@ -52,8 +59,13 @@ sign_path() {
   command+=(
     --options runtime
     --timestamp
-    "$path"
   )
+
+  if [ -n "$entitlements_path" ]; then
+    command+=(--entitlements "$entitlements_path")
+  fi
+
+  command+=("$path")
 
   "${command[@]}"
 }
@@ -85,7 +97,7 @@ done < <(find "$APP_PATH/Contents" \
   \( -name "*.app" -o -name "*.framework" -o -name "*.xpc" -o -name "*.appex" -o -name "*.dylib" \) \
   -print | sort -r)
 
-sign_path "$APP_PATH"
+sign_path "$APP_PATH" "$ENTITLEMENTS_PATH"
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 spctl -a -vv --type exec "$APP_PATH"
