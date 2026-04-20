@@ -3,6 +3,7 @@ name: Build products and release
 on:
   push:
     branches: [main]
+    paths: ['go/**']
   workflow_dispatch:
     inputs:
       publish:
