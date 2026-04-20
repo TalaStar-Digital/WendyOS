@@ -121,7 +121,7 @@ func detectBuildOptions(dir string) []BuildOption {
 }
 
 // injectDebugpy builds a wrapper image on top of the given image that installs debugpy.
-func injectDebugpy(ctx context.Context, registryAddr, registryImage, platform string, streamOutput *os.File, useMTLS bool) error {
+func injectDebugpy(ctx context.Context, registryAddr, registryImage, platform string, buildArgs map[string]string, streamOutput *os.File, useMTLS bool) error {
 	tmpDir, err := os.MkdirTemp("", "wendy-debugpy-*")
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
@@ -133,7 +133,7 @@ func injectDebugpy(ctx context.Context, registryAddr, registryImage, platform st
 		return fmt.Errorf("writing debugpy Dockerfile: %w", err)
 	}
 
-	return buildAndPushImage(ctx, tmpDir, registryAddr, registryImage, platform, streamOutput, useMTLS)
+	return buildAndPushImage(ctx, tmpDir, registryAddr, registryImage, platform, buildArgs, streamOutput, useMTLS)
 }
 
 // generatePythonDockerfile creates a Dockerfile for Python projects that do not already have one.
@@ -765,8 +765,8 @@ func updateBuilderConfig(ctx context.Context, builderName, config string) error 
 // buildAndPushImage builds a Docker image for the specified platform and pushes
 // it directly to the given registry using docker buildx. The registry transport
 // is conditional: plain HTTP for plaintext devices, and TLS/mTLS for provisioned
-// devices when useMTLS is enabled.
-func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, platform string, streamOutput *os.File, useMTLS bool) error {
+// devices when useMTLS is enabled. buildArgs is passed as --build-arg KEY=VALUE flags.
+func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, platform string, buildArgs map[string]string, streamOutput *os.File, useMTLS bool) error {
 	builder, effectiveAddr, err := ensureBuildxBuilder(ctx, registryAddr, useMTLS)
 	if err != nil {
 		return err
@@ -792,9 +792,14 @@ func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, pl
 		"--platform", platform,
 		"--cache-from", "type=local,src=" + cacheDir,
 		"--cache-to", "type=local,dest=" + cacheDir,
-		"--output", "type=image,name=" + registryImage + ",push=true",
-		".",
 	}
+	for k, v := range buildArgs {
+		args = append(args, "--build-arg", k+"="+v)
+	}
+	args = append(args,
+		"--output", "type=image,name="+registryImage+",push=true",
+		".",
+	)
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = dir
