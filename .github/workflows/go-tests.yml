@@ -5,8 +5,11 @@ on:
     branches: [main]
 
 concurrency:
-  group: tests-${{ github.event.pull_request.number }}
+  group: go-tests-${{ github.event.pull_request.number }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   test:
