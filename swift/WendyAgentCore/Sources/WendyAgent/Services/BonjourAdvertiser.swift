@@ -1,7 +1,7 @@
 import Dispatch
-import dnssd
 import Foundation
 import Logging
+import dnssd
 
 struct BonjourAdvertiser {
     struct Runtime {

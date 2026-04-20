@@ -29,9 +29,12 @@ struct ContainerServiceTests {
         )
 
         try await registerFileSyncApp(service: service, appID: appID, cmd: "sleep.sh")
-        #expect(await recorder.last() == .some([
-            WendyAppInfo(id: appID, kind: .native, status: .stopped, pid: nil)
-        ]))
+        #expect(
+            await recorder.last()
+                == .some([
+                    WendyAppInfo(id: appID, kind: .native, status: .stopped, pid: nil)
+                ])
+        )
 
         try await startApp(service: service, appID: appID)
         let runningSnapshot = try #require(await recorder.last())
@@ -42,9 +45,12 @@ struct ContainerServiceTests {
         #expect(runningSnapshot[0].pid != nil)
 
         try await stopApp(service: service, appID: appID)
-        #expect(await recorder.last() == .some([
-            WendyAppInfo(id: appID, kind: .native, status: .stopped, pid: nil)
-        ]))
+        #expect(
+            await recorder.last()
+                == .some([
+                    WendyAppInfo(id: appID, kind: .native, status: .stopped, pid: nil)
+                ])
+        )
 
         try await deleteApp(service: service, appID: appID)
         #expect(await recorder.last() == .some([]))
@@ -92,9 +98,11 @@ struct ContainerServiceTests {
                 && snapshot[0].pid != nil
         }
         #expect(publishedRunningSnapshot)
-        #expect(snapshots.last == [
-            WendyAppInfo(id: appID, kind: .native, status: .stopped, pid: nil)
-        ])
+        #expect(
+            snapshots.last == [
+                WendyAppInfo(id: appID, kind: .native, status: .stopped, pid: nil)
+            ]
+        )
     }
 
     @Test("stale termination callbacks do not overwrite a newer launch")
@@ -129,7 +137,7 @@ struct ContainerServiceTests {
 
         try await waitUntil(description: "second launch replaces the first launch token") {
             guard let info = await service.appInfo(forAppID: appID),
-                  let token = await service.launchToken(forAppID: appID)
+                let token = await service.launchToken(forAppID: appID)
             else {
                 return false
             }
@@ -176,12 +184,15 @@ struct ContainerServiceTests {
         await service.stopApp(id: appID)
 
         #expect(await recorder.count() == snapshotCountBefore)
-        #expect(await service.appInfo(forAppID: appID) == WendyAppInfo(
-            id: appID,
-            kind: .native,
-            status: .stopped,
-            pid: nil
-        ))
+        #expect(
+            await service.appInfo(forAppID: appID)
+                == WendyAppInfo(
+                    id: appID,
+                    kind: .native,
+                    status: .stopped,
+                    pid: nil
+                )
+        )
     }
 
     @Test("stopAllApps stops running apps and keeps them known")
@@ -202,7 +213,10 @@ struct ContainerServiceTests {
 
         for appID in appIDs {
             let appDirectory = URL(fileURLWithPath: appsBase).appendingPathComponent(appID)
-            try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: appDirectory,
+                withIntermediateDirectories: true
+            )
             try writeSleepScript(to: appDirectory.appendingPathComponent("sleep.sh"))
             try await registerFileSyncApp(service: service, appID: appID, cmd: "sleep.sh")
             try await startApp(service: service, appID: appID)
@@ -232,7 +246,10 @@ struct ContainerServiceTests {
 
         for appID in [runningAppID, stoppedAppID] {
             let appDirectory = URL(fileURLWithPath: appsBase).appendingPathComponent(appID)
-            try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: appDirectory,
+                withIntermediateDirectories: true
+            )
             try writeSleepScript(to: appDirectory.appendingPathComponent("sleep.sh"))
         }
 
@@ -282,12 +299,15 @@ struct ContainerServiceTests {
         let persistedApp = try #require(persistedApps.first { $0.info.id == appID })
         #expect(persistedApp.info.status == .running)
         #expect(persistedApp.info.pid != nil)
-        #expect(persistedApp.native == WendyApp.NativeMetadata(
-            directory: appDirectory.path,
-            binaryName: "sleep.sh",
-            args: [],
-            currentDirectory: appDirectory.path
-        ))
+        #expect(
+            persistedApp.native
+                == WendyApp.NativeMetadata(
+                    directory: appDirectory.path,
+                    binaryName: "sleep.sh",
+                    args: [],
+                    currentDirectory: appDirectory.path
+                )
+        )
 
         let restoredService = ContainerService(
             broadcaster: TelemetryBroadcaster(),
@@ -295,12 +315,15 @@ struct ContainerServiceTests {
             appsBase: URL(fileURLWithPath: appsBase)
         )
 
-        #expect(await restoredService.appInfo(forAppID: appID) == WendyAppInfo(
-            id: appID,
-            kind: .native,
-            status: .stopped,
-            pid: nil
-        ))
+        #expect(
+            await restoredService.appInfo(forAppID: appID)
+                == WendyAppInfo(
+                    id: appID,
+                    kind: .native,
+                    status: .stopped,
+                    pid: nil
+                )
+        )
 
         try await startApp(service: restoredService, appID: appID)
         try await waitUntil(description: "restored app runs again") {
@@ -419,7 +442,9 @@ struct ContainerServiceTests {
         #expect(stdout == expectedPath)
     }
 
-    @Test("sandboxed file-sync native launch uses synced app directory as current working directory")
+    @Test(
+        "sandboxed file-sync native launch uses synced app directory as current working directory"
+    )
     func sandboxedFileSyncLaunchUsesSyncedAppDirectoryAsCurrentWorkingDirectory() async throws {
         let appsBase = try makeTempDir()
         defer { cleanup(appsBase) }

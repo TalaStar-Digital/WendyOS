@@ -190,7 +190,8 @@ struct DockerCLI: Sendable {
             "--filter", "label=\(label)",
             "--format", "{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}",
         ])
-        return output
+        return
+            output
             .split(separator: "\n")
             .compactMap { line -> ContainerInfo? in
                 let cols = line.split(separator: "\t", maxSplits: 3).map(String.init)
@@ -216,18 +217,20 @@ struct DockerCLI: Sendable {
         let resultTask = Task<String, Error> {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { p in
-                    let stdout = String(
-                        data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(),
-                        encoding: .utf8
-                    )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let stdout =
+                        String(
+                            data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(),
+                            encoding: .utf8
+                        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
                     if p.terminationStatus == 0 {
                         continuation.resume(returning: stdout)
                     } else {
-                        let stderr = String(
-                            data: stderrPipe.fileHandleForReading.readDataToEndOfFile(),
-                            encoding: .utf8
-                        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let stderr =
+                            String(
+                                data: stderrPipe.fileHandleForReading.readDataToEndOfFile(),
+                                encoding: .utf8
+                            )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                         continuation.resume(
                             throwing: DockerError.commandFailed(
                                 executable: self.executable,

@@ -1,8 +1,8 @@
-import AppKit
 import AVFoundation
+import AppKit
 import CoreBluetooth
-import Observation
 import OSLog
+import Observation
 import ServiceManagement
 
 @MainActor
@@ -150,7 +150,9 @@ final class WelcomeAndPermissions: NSObject, CBCentralManagerDelegate {
         }
 
         guard NSWorkspace.shared.open(settingsURL) else {
-            self.logger.error("Failed to open System Settings for permission: \(String(describing: permission), privacy: .public)")
+            self.logger.error(
+                "Failed to open System Settings for permission: \(String(describing: permission), privacy: .public)"
+            )
             return
         }
     }
@@ -198,11 +200,17 @@ final class WelcomeAndPermissions: NSObject, CBCentralManagerDelegate {
                     case .enabled:
                         self.logger.info("Configured Wendy Agent to launch at login")
                     case .requiresApproval:
-                        self.logger.notice("Wendy Agent launch at login requires user approval in System Settings")
+                        self.logger.notice(
+                            "Wendy Agent launch at login requires user approval in System Settings"
+                        )
                     case .notRegistered, .notFound:
-                        self.logger.warning("Wendy Agent launch at login registration did not complete; status: \(String(describing: loginItemService.status), privacy: .public)")
+                        self.logger.warning(
+                            "Wendy Agent launch at login registration did not complete; status: \(String(describing: loginItemService.status), privacy: .public)"
+                        )
                     @unknown default:
-                        self.logger.warning("Wendy Agent launch at login registration returned an unknown status")
+                        self.logger.warning(
+                            "Wendy Agent launch at login registration returned an unknown status"
+                        )
                     }
                 @unknown default:
                     try loginItemService.register()
@@ -221,7 +229,9 @@ final class WelcomeAndPermissions: NSObject, CBCentralManagerDelegate {
                 }
             }
         } catch {
-            self.logger.error("Failed to configure Wendy Agent launch at login: \(String(describing: error), privacy: .public)")
+            self.logger.error(
+                "Failed to configure Wendy Agent launch at login: \(String(describing: error), privacy: .public)"
+            )
         }
     }
 

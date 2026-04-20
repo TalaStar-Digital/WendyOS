@@ -1,7 +1,7 @@
 import Foundation
 import WendyAgentCore
 
-internal extension WendyAgentStatus {
+extension WendyAgentStatus {
     var menuTitle: String {
         switch self {
         case .idle:

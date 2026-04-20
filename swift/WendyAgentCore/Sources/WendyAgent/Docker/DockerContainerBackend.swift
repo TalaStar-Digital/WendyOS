@@ -41,10 +41,13 @@ actor DockerContainerBackend {
             options += dockerOptions(from: entitlements, appName: appName)
         }
 
-        logger.info("Starting Docker container", metadata: [
-            "container": "\(containerName)",
-            "image": "\(imageName)",
-        ])
+        logger.info(
+            "Starting Docker container",
+            metadata: [
+                "container": "\(containerName)",
+                "image": "\(imageName)",
+            ]
+        )
 
         return try docker.runAttached(
             options: options,
@@ -91,7 +94,9 @@ actor DockerContainerBackend {
                     // Map explicit ports from the entitlement's ports array.
                     if let ports = entitlement.ports {
                         for port in ports {
-                            options.append(.publish(hostPort: port.host, containerPort: port.container))
+                            options.append(
+                                .publish(hostPort: port.host, containerPort: port.container)
+                            )
                         }
                     }
                 }

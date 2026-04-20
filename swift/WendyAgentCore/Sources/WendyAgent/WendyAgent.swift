@@ -91,7 +91,10 @@ public final class WendyAgent {
     public func observeStatus(
         _ handler: @escaping @isolated(any) @Sendable (WendyAgentStatus) -> Void
     ) -> WendyObservation {
-        let observationID = self.statusObservationRegistry.register(handler, initialValue: self.status)
+        let observationID = self.statusObservationRegistry.register(
+            handler,
+            initialValue: self.status
+        )
         self.scheduleStatusObservation(for: observationID)
 
         return WendyObservation { [self] in
@@ -143,10 +146,16 @@ public final class WendyAgent {
     private var monitorTask: Task<Void, Never>?
     private var runIdentifier: UInt64 = 0
     private var handlingUnexpectedRuntimeExit = false
-    private var statusObservationRegistry = WendyObservationRegistry<WendyAgentStatus>(areEquivalent: ==)
-    private var statusObservationTasks: [WendyObservationRegistry<WendyAgentStatus>.ObservationID: Task<Void, Never>] = [:]
-    private var appsObservationRegistry = WendyObservationRegistry<[WendyAppInfo]>(areEquivalent: ==)
-    private var appsObservationTasks: [WendyObservationRegistry<[WendyAppInfo]>.ObservationID: Task<Void, Never>] = [:]
+    private var statusObservationRegistry = WendyObservationRegistry<WendyAgentStatus>(
+        areEquivalent: ==
+    )
+    private var statusObservationTasks:
+        [WendyObservationRegistry<WendyAgentStatus>.ObservationID: Task<Void, Never>] = [:]
+    private var appsObservationRegistry = WendyObservationRegistry<[WendyAppInfo]>(
+        areEquivalent: ==
+    )
+    private var appsObservationTasks:
+        [WendyObservationRegistry<[WendyAppInfo]>.ObservationID: Task<Void, Never>] = [:]
 
     private func prepareDockerIfNeeded() async -> Bool {
         let docker = DockerCLI()
@@ -303,8 +312,8 @@ public final class WendyAgent {
 
     private func startMonitorTask(runIdentifier: UInt64) {
         guard let mainServerTask = self.mainServerTask,
-              let otelServerTask = self.otelServerTask,
-              let bonjourTask = self.bonjourTask
+            let otelServerTask = self.otelServerTask,
+            let bonjourTask = self.bonjourTask
         else {
             return
         }
@@ -406,9 +415,9 @@ public final class WendyAgent {
         runIdentifier: UInt64
     ) async {
         guard !Task.isCancelled,
-              !self.handlingUnexpectedRuntimeExit,
-              self.runIdentifier == runIdentifier,
-              case .running = self.status
+            !self.handlingUnexpectedRuntimeExit,
+            self.runIdentifier == runIdentifier,
+            case .running = self.status
         else {
             return
         }
@@ -557,8 +566,8 @@ public final class WendyAgent {
 
     private static func errorMessage(for error: any Error) -> String {
         if let localizedError = error as? LocalizedError,
-           let description = localizedError.errorDescription,
-           !description.isEmpty
+            let description = localizedError.errorDescription,
+            !description.isEmpty
         {
             return description
         }

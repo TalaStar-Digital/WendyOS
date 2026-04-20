@@ -5,12 +5,14 @@ enum AppDisplayName {
 
     static func resolve(from bundle: Bundle) -> String {
         if let displayName = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String,
-           !displayName.isEmpty {
+            !displayName.isEmpty
+        {
             return displayName
         }
 
         if let bundleName = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String,
-           !bundleName.isEmpty {
+            !bundleName.isEmpty
+        {
             return bundleName
         }
 

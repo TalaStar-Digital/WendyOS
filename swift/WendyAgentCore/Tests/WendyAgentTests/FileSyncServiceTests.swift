@@ -18,9 +18,14 @@ struct BuildManifestTests {
         let content = Data("hello world".utf8)
         let fileURL = URL(fileURLWithPath: temporaryDirectory).appendingPathComponent("app.bin")
         try content.write(to: fileURL)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fileURL.path)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: fileURL.path
+        )
 
-        let entries = try FileSyncService.buildManifest(at: URL(fileURLWithPath: temporaryDirectory))
+        let entries = try FileSyncService.buildManifest(
+            at: URL(fileURLWithPath: temporaryDirectory)
+        )
         #expect(entries.count == 1)
         let entry = entries[0]
         #expect(entry.path == "app.bin")
@@ -172,13 +177,27 @@ struct RunSessionTests {
         let chunk2 = Data("world".utf8)
         let fullContent = chunk1 + chunk2
         let finalDigest = sha256Digest(fullContent)
-        let manifest = [entry(path: "MyApp", size: Int64(fullContent.count), sha256: finalDigest, mode: 0o755)]
+        let manifest = [
+            entry(path: "MyApp", size: Int64(fullContent.count), sha256: finalDigest, mode: 0o755)
+        ]
 
         let responses = try await runSession(
             messages: [
                 startRequest(appID: appID, manifest: manifest),
-                chunkRequest(path: "MyApp", data: chunk1, sequence: 0, cumulativeSize: Int64(chunk1.count), sha256: sha256Digest(chunk1)),
-                chunkRequest(path: "MyApp", data: chunk2, sequence: 1, cumulativeSize: Int64(fullContent.count), sha256: finalDigest),
+                chunkRequest(
+                    path: "MyApp",
+                    data: chunk1,
+                    sequence: 0,
+                    cumulativeSize: Int64(chunk1.count),
+                    sha256: sha256Digest(chunk1)
+                ),
+                chunkRequest(
+                    path: "MyApp",
+                    data: chunk2,
+                    sequence: 1,
+                    cumulativeSize: Int64(fullContent.count),
+                    sha256: finalDigest
+                ),
                 commitRequest(path: "MyApp", size: Int64(fullContent.count), sha256: finalDigest),
             ],
             appsBase: appsBaseURL
@@ -191,7 +210,9 @@ struct RunSessionTests {
             Issue.record("Expected ack as second response")
         }
 
-        let destinationURL = appsBaseURL.appendingPathComponent(appID).appendingPathComponent("MyApp")
+        let destinationURL = appsBaseURL.appendingPathComponent(appID).appendingPathComponent(
+            "MyApp"
+        )
         #expect(try Data(contentsOf: destinationURL) == fullContent)
         #expect(try permissions(of: destinationURL) == 0o755)
     }
@@ -204,18 +225,27 @@ struct RunSessionTests {
         let appsBaseURL = URL(fileURLWithPath: appsBase)
         let content = Data("config data".utf8)
         let digest = sha256Digest(content)
-        let manifest = [entry(path: "config/app.json", size: Int64(content.count), sha256: digest, mode: 0o644)]
+        let manifest = [
+            entry(path: "config/app.json", size: Int64(content.count), sha256: digest, mode: 0o644)
+        ]
 
         _ = try await runSession(
             messages: [
                 startRequest(appID: appID, manifest: manifest),
-                chunkRequest(path: "config/app.json", data: content, sequence: 0, cumulativeSize: Int64(content.count), sha256: digest),
+                chunkRequest(
+                    path: "config/app.json",
+                    data: content,
+                    sequence: 0,
+                    cumulativeSize: Int64(content.count),
+                    sha256: digest
+                ),
                 commitRequest(path: "config/app.json", size: Int64(content.count), sha256: digest),
             ],
             appsBase: appsBaseURL
         )
 
-        let destinationURL = appsBaseURL
+        let destinationURL =
+            appsBaseURL
             .appendingPathComponent(appID)
             .appendingPathComponent("config/app.json")
         #expect(try Data(contentsOf: destinationURL) == content)
@@ -290,8 +320,20 @@ struct RunSessionTests {
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: "sh.wendy.TestApp", manifest: manifest),
-                chunkRequest(path: "app", data: first, sequence: 0, cumulativeSize: Int64(first.count), sha256: sha256Digest(first)),
-                chunkRequest(path: "app", data: second, sequence: 2, cumulativeSize: Int64(content.count), sha256: sha256Digest(content)),
+                chunkRequest(
+                    path: "app",
+                    data: first,
+                    sequence: 0,
+                    cumulativeSize: Int64(first.count),
+                    sha256: sha256Digest(first)
+                ),
+                chunkRequest(
+                    path: "app",
+                    data: second,
+                    sequence: 2,
+                    cumulativeSize: Int64(content.count),
+                    sha256: sha256Digest(content)
+                ),
             ],
             appsBase: URL(fileURLWithPath: appsBase)
         )
@@ -301,13 +343,21 @@ struct RunSessionTests {
     func cumulativeSizeExceedingManifestSizeFailsEarly() async throws {
         let appsBase = try makeTempDir()
         defer { cleanup(appsBase) }
-        let manifest = [entry(path: "app", size: 3, sha256: sha256Digest(Data("hey".utf8)), mode: 0o644)]
+        let manifest = [
+            entry(path: "app", size: 3, sha256: sha256Digest(Data("hey".utf8)), mode: 0o644)
+        ]
         let content = Data("hello".utf8)
 
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: "sh.wendy.TestApp", manifest: manifest),
-                chunkRequest(path: "app", data: content, sequence: 0, cumulativeSize: Int64(content.count), sha256: sha256Digest(content)),
+                chunkRequest(
+                    path: "app",
+                    data: content,
+                    sequence: 0,
+                    cumulativeSize: Int64(content.count),
+                    sha256: sha256Digest(content)
+                ),
             ],
             appsBase: URL(fileURLWithPath: appsBase)
         )
@@ -323,7 +373,13 @@ struct RunSessionTests {
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: "sh.wendy.TestApp", manifest: manifest),
-                chunkRequest(path: "app", data: Data(), sequence: 0, cumulativeSize: 0, sha256: sha256Digest(Data())),
+                chunkRequest(
+                    path: "app",
+                    data: Data(),
+                    sequence: 0,
+                    cumulativeSize: 0,
+                    sha256: sha256Digest(Data())
+                ),
             ],
             appsBase: URL(fileURLWithPath: appsBase)
         )
@@ -338,7 +394,13 @@ struct RunSessionTests {
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: "sh.wendy.TestApp", manifest: manifest),
-                chunkRequest(path: "other", data: Data("hello".utf8), sequence: 0, cumulativeSize: 5, sha256: sha256Digest(Data("hello".utf8))),
+                chunkRequest(
+                    path: "other",
+                    data: Data("hello".utf8),
+                    sequence: 0,
+                    cumulativeSize: 5,
+                    sha256: sha256Digest(Data("hello".utf8))
+                ),
             ],
             appsBase: URL(fileURLWithPath: appsBase)
         )
@@ -358,8 +420,20 @@ struct RunSessionTests {
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: "sh.wendy.TestApp", manifest: manifest),
-                chunkRequest(path: "a", data: contentA.prefixData(2), sequence: 0, cumulativeSize: 2, sha256: sha256Digest(contentA.prefixData(2))),
-                chunkRequest(path: "b", data: contentB, sequence: 0, cumulativeSize: Int64(contentB.count), sha256: sha256Digest(contentB)),
+                chunkRequest(
+                    path: "a",
+                    data: contentA.prefixData(2),
+                    sequence: 0,
+                    cumulativeSize: 2,
+                    sha256: sha256Digest(contentA.prefixData(2))
+                ),
+                chunkRequest(
+                    path: "b",
+                    data: contentB,
+                    sequence: 0,
+                    cumulativeSize: Int64(contentB.count),
+                    sha256: sha256Digest(contentB)
+                ),
             ],
             appsBase: URL(fileURLWithPath: appsBase)
         )
@@ -382,7 +456,13 @@ struct RunSessionTests {
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: appID, manifest: manifest),
-                chunkRequest(path: "app", data: content, sequence: 0, cumulativeSize: 5, sha256: sha256Digest(content)),
+                chunkRequest(
+                    path: "app",
+                    data: content,
+                    sequence: 0,
+                    cumulativeSize: 5,
+                    sha256: sha256Digest(content)
+                ),
                 commitRequest(path: "app", size: 5, sha256: Data(repeating: 0xBB, count: 32)),
             ],
             appsBase: URL(fileURLWithPath: appsBase)
@@ -406,7 +486,13 @@ struct RunSessionTests {
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: appID, manifest: manifest),
-                chunkRequest(path: "app", data: transferredContent, sequence: 0, cumulativeSize: 5, sha256: sha256Digest(transferredContent)),
+                chunkRequest(
+                    path: "app",
+                    data: transferredContent,
+                    sequence: 0,
+                    cumulativeSize: 5,
+                    sha256: sha256Digest(transferredContent)
+                ),
                 commitRequest(path: "app", size: 5, sha256: manifest[0].sha256),
             ],
             appsBase: URL(fileURLWithPath: appsBase)
@@ -426,7 +512,13 @@ struct RunSessionTests {
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: "sh.wendy.TestApp", manifest: manifest),
-                chunkRequest(path: "app", data: content, sequence: 0, cumulativeSize: 5, sha256: digest),
+                chunkRequest(
+                    path: "app",
+                    data: content,
+                    sequence: 0,
+                    cumulativeSize: 5,
+                    sha256: digest
+                ),
                 commitRequest(path: "app", size: 5, sha256: digest),
                 commitRequest(path: "app", size: 5, sha256: digest),
             ],
@@ -460,9 +552,20 @@ struct RunSessionTests {
         }
 
         continuation.yield(startRequest(appID: appID, manifest: manifest))
-        continuation.yield(chunkRequest(path: "app", data: content, sequence: 0, cumulativeSize: Int64(content.count), sha256: digest))
+        continuation.yield(
+            chunkRequest(
+                path: "app",
+                data: content,
+                sequence: 0,
+                cumulativeSize: Int64(content.count),
+                sha256: digest
+            )
+        )
         try await waitForFile(at: tempURL)
-        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: tempURL.path)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o000],
+            ofItemAtPath: tempURL.path
+        )
         continuation.yield(commitRequest(path: "app", size: Int64(content.count), sha256: digest))
         continuation.finish()
 
@@ -485,14 +588,21 @@ struct RunSessionTests {
         let responses = try await runSession(
             messages: [
                 startRequest(appID: appID, manifest: manifest),
-                chunkRequest(path: "Models/.gitkeep", data: Data(), sequence: 0, cumulativeSize: 0, sha256: digest),
+                chunkRequest(
+                    path: "Models/.gitkeep",
+                    data: Data(),
+                    sequence: 0,
+                    cumulativeSize: 0,
+                    sha256: digest
+                ),
                 commitRequest(path: "Models/.gitkeep", size: 0, sha256: digest),
             ],
             appsBase: appsBaseURL
         )
 
         #expect(responses.count == 3)
-        let destinationURL = appsBaseURL
+        let destinationURL =
+            appsBaseURL
             .appendingPathComponent(appID)
             .appendingPathComponent("Models/.gitkeep")
         #expect(try Data(contentsOf: destinationURL).isEmpty)
@@ -510,13 +620,28 @@ struct RunSessionTests {
         let content = Data("config".utf8)
         let fileURL = appDir.appendingPathComponent("config.json")
         try content.write(to: fileURL)
-        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: fileURL.path)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: fileURL.path
+        )
 
-        let manifest = [entry(path: "config.json", size: Int64(content.count), sha256: sha256Digest(content), mode: 0o755)]
+        let manifest = [
+            entry(
+                path: "config.json",
+                size: Int64(content.count),
+                sha256: sha256Digest(content),
+                mode: 0o755
+            )
+        ]
         let responses = try await runSession(
             messages: [
                 startRequest(appID: appID, manifest: manifest),
-                chmodRequest(path: "config.json", mode: 0o755, size: Int64(content.count), sha256: sha256Digest(content)),
+                chmodRequest(
+                    path: "config.json",
+                    mode: 0o755,
+                    size: Int64(content.count),
+                    sha256: sha256Digest(content)
+                ),
             ],
             appsBase: appsBaseURL
         )
@@ -537,12 +662,19 @@ struct RunSessionTests {
         defer { cleanup(appsBase) }
         let content = Data("config".utf8)
         let digest = sha256Digest(content)
-        let manifest = [entry(path: "config.json", size: Int64(content.count), sha256: digest, mode: 0o755)]
+        let manifest = [
+            entry(path: "config.json", size: Int64(content.count), sha256: digest, mode: 0o755)
+        ]
 
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: "sh.wendy.TestApp", manifest: manifest),
-                chmodRequest(path: "config.json", mode: 0o755, size: Int64(content.count), sha256: digest),
+                chmodRequest(
+                    path: "config.json",
+                    mode: 0o755,
+                    size: Int64(content.count),
+                    sha256: digest
+                ),
             ],
             appsBase: URL(fileURLWithPath: appsBase)
         )
@@ -562,7 +694,13 @@ struct RunSessionTests {
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: "sh.wendy.TestApp", manifest: manifest),
-                chunkRequest(path: "a", data: contentA, sequence: 0, cumulativeSize: 5, sha256: sha256Digest(contentA)),
+                chunkRequest(
+                    path: "a",
+                    data: contentA,
+                    sequence: 0,
+                    cumulativeSize: 5,
+                    sha256: sha256Digest(contentA)
+                ),
                 chmodRequest(path: "b", mode: 0o755, size: 5, sha256: sha256Digest(contentB)),
             ],
             appsBase: URL(fileURLWithPath: appsBase)
@@ -583,13 +721,25 @@ struct RunSessionTests {
         try content.write(to: fileURL)
 
         let digest = sha256Digest(content)
-        let manifest = [entry(path: "config.json", size: Int64(content.count), sha256: digest, mode: 0o755)]
+        let manifest = [
+            entry(path: "config.json", size: Int64(content.count), sha256: digest, mode: 0o755)
+        ]
 
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: appID, manifest: manifest),
-                chmodRequest(path: "config.json", mode: 0o755, size: Int64(content.count), sha256: digest),
-                chmodRequest(path: "config.json", mode: 0o755, size: Int64(content.count), sha256: digest),
+                chmodRequest(
+                    path: "config.json",
+                    mode: 0o755,
+                    size: Int64(content.count),
+                    sha256: digest
+                ),
+                chmodRequest(
+                    path: "config.json",
+                    mode: 0o755,
+                    size: Int64(content.count),
+                    sha256: digest
+                ),
             ],
             appsBase: appsBaseURL
         )
@@ -663,7 +813,13 @@ struct RunSessionTests {
         await expectRunSessionFailure(
             messages: [
                 startRequest(appID: "sh.wendy.TestApp", manifest: manifest),
-                chunkRequest(path: "app", data: content, sequence: 0, cumulativeSize: 5, sha256: sha256Digest(content)),
+                chunkRequest(
+                    path: "app",
+                    data: content,
+                    sequence: 0,
+                    cumulativeSize: 5,
+                    sha256: sha256Digest(content)
+                ),
                 deleteRequest(paths: ["old.bin"]),
             ],
             appsBase: URL(fileURLWithPath: appsBase)
@@ -749,7 +905,10 @@ struct ValidatedDestinationTests {
 
         let workDir = URL(fileURLWithPath: temporaryDirectory)
         let symlinkURL = workDir.appendingPathComponent("escape")
-        try FileManager.default.createSymbolicLink(atPath: symlinkURL.path, withDestinationPath: "/tmp")
+        try FileManager.default.createSymbolicLink(
+            atPath: symlinkURL.path,
+            withDestinationPath: "/tmp"
+        )
 
         #expect(throws: (any Error).self) {
             try FileSyncService.validatedDestination(for: "escape/passwd", in: workDir)
@@ -870,7 +1029,11 @@ private func deleteRequest(paths: [String]) -> Wendy_Agent_Services_V1_FileSyncR
     return request
 }
 
-private func manifestEntry(path: String, content: Data, mode: UInt32) -> Wendy_Agent_Services_V1_FileSyncEntry {
+private func manifestEntry(
+    path: String,
+    content: Data,
+    mode: UInt32
+) -> Wendy_Agent_Services_V1_FileSyncEntry {
     entry(path: path, size: Int64(content.count), sha256: sha256Digest(content), mode: mode)
 }
 
@@ -902,7 +1065,11 @@ private func waitForFile(at url: URL, timeoutNanoseconds: UInt64 = 1_000_000_000
         }
         try await Task.sleep(nanoseconds: 10_000_000)
     }
-    throw NSError(domain: "FileSyncServiceTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for \(url.path)"])
+    throw NSError(
+        domain: "FileSyncServiceTests",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for \(url.path)"]
+    )
 }
 
 private func permissions(of url: URL) throws -> Int {
@@ -939,8 +1106,8 @@ private func hexString(_ data: Data) -> String {
     data.map { String(format: "%02x", $0) }.joined()
 }
 
-private extension Data {
-    func prefixData(_ count: Int) -> Data {
+extension Data {
+    fileprivate func prefixData(_ count: Int) -> Data {
         Data(prefix(count))
     }
 }

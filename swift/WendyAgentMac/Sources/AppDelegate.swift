@@ -4,7 +4,9 @@ import SwiftUI
 import WendyAgentCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, StatusMenuControllerDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
+    StatusMenuControllerDelegate
+{
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier!,
         category: "AppDelegate"
@@ -33,7 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Stat
             do {
                 try await self.wendyAgent.start()
             } catch {
-                self.logger.error("Failed to start WendyAgent: \(String(describing: error), privacy: .public)")
+                self.logger.error(
+                    "Failed to start WendyAgent: \(String(describing: error), privacy: .public)"
+                )
             }
         }
 
@@ -61,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Stat
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
-              window === self.welcomeAndPermissionsWindow
+            window === self.welcomeAndPermissionsWindow
         else {
             return
         }
@@ -145,8 +149,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Stat
                 try? await Task.sleep(nanoseconds: delay)
 
                 guard !Task.isCancelled,
-                      let self,
-                      let window = self.welcomeAndPermissionsWindow
+                    let self,
+                    let window = self.welcomeAndPermissionsWindow
                 else {
                     return
                 }

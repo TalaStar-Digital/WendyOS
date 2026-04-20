@@ -9,9 +9,11 @@ struct WelcomeAndPermissionsView: View {
         VStack(alignment: .leading, spacing: 24) {
             self.header
 
-            Text("To finish setting up Wendy Agent, allow access to the hardware features below. Wendy apps can use Bluetooth, camera, and microphone once access is granted.")
-                .font(.body)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                "To finish setting up Wendy Agent, allow access to the hardware features below. Wendy apps can use Bluetooth, camera, and microphone once access is granted."
+            )
+            .font(.body)
+            .fixedSize(horizontal: false, vertical: true)
 
             self.permissionsSection
 
@@ -25,7 +27,9 @@ struct WelcomeAndPermissionsView: View {
         }
         .padding(28)
         .frame(width: 620, alignment: .topLeading)
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in
             self.welcomeAndPermissions.refresh()
         }
     }

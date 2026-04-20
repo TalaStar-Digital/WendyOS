@@ -242,7 +242,9 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             status: .stopped,
             pid: nil
         )
-        guard app.info != stoppedInfo || app.process != nil || app.launchToken != nil else { return }
+        guard app.info != stoppedInfo || app.process != nil || app.launchToken != nil else {
+            return
+        }
 
         app.info = stoppedInfo
         app.process = nil
@@ -284,9 +286,9 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
     @discardableResult
     private func stopTrackedAppIfRunning(id: String) async throws -> Bool {
         guard let app = self.appsByID[id],
-              let process = app.process,
-              let launchToken = app.launchToken,
-              app.info.status == .running
+            let process = app.process,
+            let launchToken = app.launchToken,
+            app.info.status == .running
         else {
             return false
         }

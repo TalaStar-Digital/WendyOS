@@ -176,7 +176,10 @@ final class StatusMenuController: NSObject {
         return image == nil ? "W" : ""
     }
 
-    private func buttonImagePosition(for status: WendyAgentStatus, image: NSImage?) -> NSControl.ImagePosition {
+    private func buttonImagePosition(
+        for status: WendyAgentStatus,
+        image: NSImage?
+    ) -> NSControl.ImagePosition {
         guard image != nil else {
             return .noImage
         }
@@ -200,7 +203,8 @@ final class StatusMenuController: NSObject {
     }
 
     private func makeStatusImage(for status: WendyAgentStatus) -> NSImage? {
-        guard let image = NSImage(named: NSImage.Name(status.menuImageName))?.copy() as? NSImage else {
+        guard let image = NSImage(named: NSImage.Name(status.menuImageName))?.copy() as? NSImage
+        else {
             return nil
         }
 

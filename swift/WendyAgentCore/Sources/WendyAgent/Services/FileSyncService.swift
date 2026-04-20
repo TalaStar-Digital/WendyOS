@@ -66,7 +66,9 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
         logger: Logger
     ) async throws where S.Element == Wendy_Agent_Services_V1_FileSyncRequest {
         var messageIterator = messages.makeAsyncIterator()
-        guard let first = try await messageIterator.next(), case .start(let startMsg) = first.requestType else {
+        guard let first = try await messageIterator.next(),
+            case .start(let startMsg) = first.requestType
+        else {
             throw RPCError(code: .invalidArgument, message: "First message must be FileSyncStart")
         }
 
@@ -146,7 +148,8 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
                     guard !(chunk.data.isEmpty && entry.size > 0) else {
                         throw RPCError(
                             code: .invalidArgument,
-                            message: "Zero-length chunk is not allowed for non-empty file \(chunk.path)"
+                            message:
+                                "Zero-length chunk is not allowed for non-empty file \(chunk.path)"
                         )
                     }
 
@@ -154,17 +157,22 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
                         guard transfer.path == chunk.path else {
                             throw RPCError(
                                 code: .invalidArgument,
-                                message: "Cannot switch paths mid-transfer from \(transfer.path) to \(chunk.path)"
+                                message:
+                                    "Cannot switch paths mid-transfer from \(transfer.path) to \(chunk.path)"
                             )
                         }
                     } else {
-                        let temporaryURL = try temporaryURL(for: destinationURL, digest: entry.sha256)
+                        let temporaryURL = try temporaryURL(
+                            for: destinationURL,
+                            digest: entry.sha256
+                        )
                         try FileManager.default.createDirectory(
                             at: temporaryURL.deletingLastPathComponent(),
                             withIntermediateDirectories: true
                         )
                         FileManager.default.createFile(atPath: temporaryURL.path, contents: nil)
-                        guard let fileHandle = FileHandle(forWritingAtPath: temporaryURL.path) else {
+                        guard let fileHandle = FileHandle(forWritingAtPath: temporaryURL.path)
+                        else {
                             throw RPCError(
                                 code: .internalError,
                                 message: "Cannot open temporary file at \(temporaryURL.path)"
@@ -180,17 +188,22 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
                     }
 
                     guard var transfer = activeTransfer else {
-                        throw RPCError(code: .internalError, message: "Missing active transfer state")
+                        throw RPCError(
+                            code: .internalError,
+                            message: "Missing active transfer state"
+                        )
                     }
 
                     let isFirstEmptyChunk =
                         transfer.bytesReceived == 0
                         && transfer.manifestEntry.size == 0
                         && transfer.nextExpectedSequence == 0
-                    guard transfer.bytesReceived < transfer.manifestEntry.size || isFirstEmptyChunk else {
+                    guard transfer.bytesReceived < transfer.manifestEntry.size || isFirstEmptyChunk
+                    else {
                         throw RPCError(
                             code: .invalidArgument,
-                            message: "Received extra chunk after reaching declared size for \(chunk.path)"
+                            message:
+                                "Received extra chunk after reaching declared size for \(chunk.path)"
                         )
                     }
                     guard chunk.sequence == transfer.nextExpectedSequence else {
@@ -451,7 +464,10 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
             throw RPCError(code: .invalidArgument, message: "File path must not be empty")
         }
         guard !relativePath.hasPrefix("/") else {
-            throw RPCError(code: .invalidArgument, message: "File path must be relative: \(relativePath)")
+            throw RPCError(
+                code: .invalidArgument,
+                message: "File path must be relative: \(relativePath)"
+            )
         }
         let components = relativePath.split(separator: "/").map(String.init)
         guard !components.contains(".."), !components.contains(".") else {
@@ -476,8 +492,9 @@ actor FileSyncService: Wendy_Agent_Services_V1_WendyFileSyncService.ServiceProto
         }
         let resolvedAncestor = ancestor.resolvingSymlinksInPath()
 
-        guard resolvedAncestor.path == resolvedWorkDir.path
-            || resolvedAncestor.path.hasPrefix(resolvedWorkDir.path + "/")
+        guard
+            resolvedAncestor.path == resolvedWorkDir.path
+                || resolvedAncestor.path.hasPrefix(resolvedWorkDir.path + "/")
         else {
             throw RPCError(
                 code: .invalidArgument,

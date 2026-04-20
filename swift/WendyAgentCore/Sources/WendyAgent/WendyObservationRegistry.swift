@@ -13,7 +13,10 @@ internal struct WendyObservationRegistry<Value: Sendable> {
         self.areEquivalent = areEquivalent
     }
 
-    mutating func register(_ handler: @escaping ObservationHandler, initialValue: Value) -> ObservationID {
+    mutating func register(
+        _ handler: @escaping ObservationHandler,
+        initialValue: Value
+    ) -> ObservationID {
         let observationID = ObservationID()
         self.observations[observationID] = .init(handler: handler)
         _ = self.enqueue(initialValue, for: observationID)
