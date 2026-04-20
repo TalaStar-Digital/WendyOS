@@ -121,5 +121,5 @@ A: Push to `main` to create a new pre-release, then promote it using the workflo
 **Q: Can I delete old pre-releases?**
 A: Yes, but keep at least the last few in case you need to reference or promote them.
 
-**Q: How do I update the Homebrew formula for a semver release?**
-A: Manually create a PR in [homebrew-tap](https://github.com/wendylabsinc/homebrew-tap) or wait for the next pre-release to auto-update it, then manually adjust the version.
+**Q: How do I update Homebrew for a semver release?**
+A: The release workflow now opens a PR in [homebrew-tap](https://github.com/wendylabsinc/homebrew-tap) automatically for the stable CLI formula and macOS agent cask. Review that PR, wait for the tap checks to pass, and merge it.
