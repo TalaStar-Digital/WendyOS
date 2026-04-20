@@ -570,18 +570,14 @@ func renderAndWriteTemplate(files map[string][]byte, destDir, appID, templateNam
 }
 
 // renderTemplateContent evaluates content as a Go text/template against vals.
-// If the file cannot be parsed as a Go template (e.g. it contains literal `{{`
-// for non-template purposes), it falls back to literal {{.VAR}} substitution so
-// existing simple templates keep working.
+// Parse errors are surfaced (scoped to path) so template-authoring mistakes
+// like a broken {{if}} don't silently produce files with unrendered actions.
+// missingkey=error causes references to undeclared variables to fail rather
+// than render as "<no value>".
 func renderTemplateContent(path string, content []byte, vals map[string]interface{}) ([]byte, error) {
-	tmpl, err := template.New(path).Parse(string(content))
+	tmpl, err := template.New(path).Option("missingkey=error").Parse(string(content))
 	if err != nil {
-		rendered := string(content)
-		for key, val := range vals {
-			token := fmt.Sprintf("{{.%s}}", key)
-			rendered = strings.ReplaceAll(rendered, token, fmt.Sprintf("%v", val))
-		}
-		return []byte(rendered), nil
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 
 	var buf bytes.Buffer

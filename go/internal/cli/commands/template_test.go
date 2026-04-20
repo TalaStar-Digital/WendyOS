@@ -497,13 +497,6 @@ func TestRenderTemplateContent(t *testing.T) {
 			want: `FROM python:3.11-slim-bookworm
 `,
 		},
-		{
-			name:    "unparseable template falls back to literal substitution",
-			path:    "weird.txt",
-			content: "{{ not valid go template }} but {{.PORT}} should still work",
-			vals:    map[string]interface{}{"PORT": 8080},
-			want:    "{{ not valid go template }} but 8080 should still work",
-		},
 	}
 
 	for _, tc := range cases {
@@ -516,6 +509,38 @@ func TestRenderTemplateContent(t *testing.T) {
 				t.Errorf("got %q, want %q", string(got), tc.want)
 			}
 		})
+	}
+}
+
+func TestRenderTemplateContentParseError(t *testing.T) {
+	// An invalid template action must surface a path-scoped parse error rather
+	// than silently producing a file with unrendered actions.
+	_, err := renderTemplateContent(
+		"weird.txt",
+		[]byte("{{ not valid go template }} but {{.PORT}} should still work"),
+		map[string]interface{}{"PORT": 8080},
+	)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "weird.txt") {
+		t.Errorf("error should mention the file path, got: %v", err)
+	}
+}
+
+func TestRenderTemplateContentMissingKeyError(t *testing.T) {
+	// Referencing an undeclared variable must surface an error rather than
+	// silently rendering as "<no value>".
+	_, err := renderTemplateContent(
+		"Dockerfile",
+		[]byte("EXPOSE {{.MISSING}}\n"),
+		map[string]interface{}{"PORT": 3005},
+	)
+	if err == nil {
+		t.Fatal("expected error for missing key, got nil")
+	}
+	if !strings.Contains(err.Error(), "Dockerfile") {
+		t.Errorf("error should mention the file path, got: %v", err)
 	}
 }
 
