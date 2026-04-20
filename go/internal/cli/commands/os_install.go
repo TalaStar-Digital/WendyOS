@@ -733,6 +733,10 @@ func resolveOSImage(deviceKey string, img *imageInfo) (string, error) {
 // on the device's config partition. If flagSSID is provided, it uses that; if
 // stdin is not a terminal and no flag is set, it skips WiFi setup silently.
 func resolveWiFiCredentials(flagSSID, flagPassword string) (ssid, password string, err error) {
+	if flagPassword != "" && flagSSID == "" {
+		return "", "", fmt.Errorf("--wifi-password requires --wifi-ssid")
+	}
+
 	if flagSSID != "" {
 		ssid = flagSSID
 		if flagPassword != "" {
@@ -741,6 +745,9 @@ func resolveWiFiCredentials(flagSSID, flagPassword string) (ssid, password strin
 		// SSID provided but no password — try keychain then prompt.
 		if pw, kerr := lookupKeychainPassword(ssid); kerr == nil && pw != "" {
 			return ssid, pw, nil
+		}
+		if !isInteractiveTerminal() {
+			return ssid, "", nil
 		}
 		fmt.Print("WiFi password (leave empty for open network): ")
 		pwBytes, readErr := term.ReadPassword(int(os.Stdin.Fd()))
@@ -751,7 +758,7 @@ func resolveWiFiCredentials(flagSSID, flagPassword string) (ssid, password strin
 		return ssid, strings.TrimSpace(string(pwBytes)), nil
 	}
 
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
+	if !isInteractiveTerminal() {
 		return "", "", nil
 	}
 

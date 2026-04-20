@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -176,6 +177,10 @@ func applyWiFiConfig(logger *zap.Logger, cfgDir string) {
 	if err != nil {
 		logger.Error("Failed to read wendy.conf from config partition",
 			zap.String("path", confPath), zap.Error(err))
+		if err := os.Remove(confPath); err != nil {
+			logger.Warn("Failed to remove wendy.conf after read error",
+				zap.String("path", confPath), zap.Error(err))
+		}
 		return
 	}
 
@@ -204,7 +209,13 @@ func applyWiFiConfig(logger *zap.Logger, cfgDir string) {
 // applying them in order. If a binary update is installed, the process exits
 // so systemd can restart it with the new binary.
 func Apply(logger *zap.Logger) {
-	if applyBinaryUpdate(logger, configDir, defaultInstallPath) {
+	installPath := defaultInstallPath
+	if exe, err := os.Executable(); err == nil {
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			installPath = real
+		}
+	}
+	if applyBinaryUpdate(logger, configDir, installPath) {
 		os.Exit(0)
 	}
 	applyWiFiConfig(logger, configDir)

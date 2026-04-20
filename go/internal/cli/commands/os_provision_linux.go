@@ -48,7 +48,7 @@ func findConfigPartition(diskDev string) (string, error) {
 
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[1] == "config" {
+		if len(fields) == 2 && strings.EqualFold(fields[1], "config") {
 			return "/dev/" + fields[0], nil
 		}
 	}
