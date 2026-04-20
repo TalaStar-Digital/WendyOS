@@ -1,0 +1,113 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SWIFT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$SWIFT_DIR"
+
+: "${VERSION:?VERSION is required}"
+
+APP_NAME="WendyAgentMac.app"
+OUTPUT_DIR="${OUTPUT_DIR:-$SWIFT_DIR/dist}"
+PACKAGE_CACHE_DIR="${PACKAGE_CACHE_DIR:-$SWIFT_DIR/.ci/PackageCache}"
+SOURCE_PACKAGES_DIR="${SOURCE_PACKAGES_DIR:-$SWIFT_DIR/.ci/SourcePackages}"
+TEMP_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+ARCHIVE_PATH="${TEMP_DIR}/WendyAgentMac.xcarchive"
+EXPORT_DIR="${TEMP_DIR}/WendyAgentMac-export"
+APP_PATH="${EXPORT_DIR}/${APP_NAME}"
+NOTARY_ZIP="${TEMP_DIR}/WendyAgentMac-notary.zip"
+ARTIFACT_NAME="wendy-agent-macos-universal-${VERSION}.zip"
+ARTIFACT_PATH="${OUTPUT_DIR}/${ARTIFACT_NAME}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-wendy-notary-profile}"
+
+find_signing_identity() {
+  if [ -n "${KEYCHAIN_PATH:-}" ]; then
+    security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+  else
+    security find-identity -v -p codesigning
+  fi
+}
+
+if [ -z "${SIGNING_IDENTITY:-}" ]; then
+  SIGNING_IDENTITY=$(find_signing_identity | awk -F '"' '/Developer ID Application/ { print $2; exit }')
+fi
+
+if [ -z "${SIGNING_IDENTITY:-}" ]; then
+  echo "Missing SIGNING_IDENTITY and could not auto-detect a Developer ID Application identity" >&2
+  exit 1
+fi
+
+sign_path() {
+  local path="$1"
+  local command=(
+    codesign
+    --force
+    --sign "$SIGNING_IDENTITY"
+  )
+
+  if [ -n "${KEYCHAIN_PATH:-}" ]; then
+    command+=(--keychain "$KEYCHAIN_PATH")
+  fi
+
+  command+=(
+    --options runtime
+    --timestamp
+    "$path"
+  )
+
+  "${command[@]}"
+}
+
+mkdir -p "$OUTPUT_DIR" "$PACKAGE_CACHE_DIR" "$SOURCE_PACKAGES_DIR"
+rm -rf "$ARCHIVE_PATH" "$EXPORT_DIR" "$NOTARY_ZIP"
+rm -f "$ARTIFACT_PATH"
+
+xcodebuild archive \
+  -workspace WendyAgent.xcworkspace \
+  -scheme WendyAgentMac \
+  -configuration Release \
+  -destination 'generic/platform=macOS' \
+  -archivePath "$ARCHIVE_PATH" \
+  -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
+  -packageCachePath "$PACKAGE_CACHE_DIR" \
+  ARCHS="arm64 x86_64" \
+  ONLY_ACTIVE_ARCH=NO \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  -skipMacroValidation
+
+mkdir -p "$EXPORT_DIR"
+ditto "$ARCHIVE_PATH/Products/Applications/$APP_NAME" "$APP_PATH"
+
+while IFS= read -r nested_code; do
+  sign_path "$nested_code"
+done < <(find "$APP_PATH/Contents" \
+  \( -name "*.app" -o -name "*.framework" -o -name "*.xpc" -o -name "*.appex" -o -name "*.dylib" \) \
+  -print | sort -r)
+
+sign_path "$APP_PATH"
+
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+spctl -a -vv --type exec "$APP_PATH"
+
+ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$NOTARY_ZIP"
+
+xcrun notarytool submit "$NOTARY_ZIP" \
+  --keychain-profile "$NOTARY_PROFILE" \
+  --wait
+
+xcrun stapler staple -v "$APP_PATH"
+xcrun stapler validate "$APP_PATH"
+
+ditto -c -k --sequesterRsrc --keepParent \
+  "$APP_PATH" \
+  "$ARTIFACT_PATH"
+
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  {
+    echo "artifact_name=$ARTIFACT_NAME"
+    echo "artifact_path=$ARTIFACT_PATH"
+  } >> "$GITHUB_OUTPUT"
+fi
+
+echo "Created macOS app artifact: $ARTIFACT_PATH"
