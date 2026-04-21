@@ -25,7 +25,6 @@ const (
 
 	// Currently supported SDK for WASI on Wendy Lite.
 	// This also works for older projects that expected to build for wasm32-unknown-none-wasm
-	microWendySwiftVersion = "6.3.1"
 	microWendyEmbeddedSDK  = "-embedded"
 	microWendySwiftTarget  = "wasm32-unknown-wasip1"
 	microWendyInstallGrace = 3 * time.Second
@@ -121,7 +120,7 @@ func (p *MicroWendyProvider) Build(ctx context.Context, device models.ExternalDe
 	}
 
 	binArgs := []string{
-		"run", "+" + microWendySwiftVersion, "swift", "build",
+		"build",
 		"--swift-sdk", sdk,
 		"--triple", microWendySwiftTarget,
 		"--product", product,
@@ -130,7 +129,7 @@ func (p *MicroWendyProvider) Build(ctx context.Context, device models.ExternalDe
 	if !debug {
 		binArgs = append(binArgs, "-c", "release")
 	}
-	binCmd := exec.CommandContext(ctx, "swiftly", binArgs...)
+	binCmd := swifttoolchain.SwiftCommandContext(ctx, binArgs...)
 	binCmd.Dir = projectPath
 	binCmd.Stderr = os.Stderr
 	out, err := binCmd.Output()
