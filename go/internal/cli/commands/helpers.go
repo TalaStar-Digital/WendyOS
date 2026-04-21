@@ -63,7 +63,8 @@ var runAgentConnectionSpinner = func(ctx context.Context, label string, fn func(
 	go func() {
 		defer close(doneCh)
 		conn, runErr = fn(ctx)
-		prog.Send(tui.SpinnerDoneMsg{Err: runErr})
+		// Keep spinner teardown quiet; callers handle the returned error.
+		prog.Send(tui.SpinnerDoneMsg{})
 	}()
 
 	finalModel, err := prog.Run()
@@ -360,9 +361,10 @@ func defaultDeviceSearchLabel(hostname string) string {
 }
 
 func formatElapsedSeconds(elapsed time.Duration) string {
-	seconds := elapsed.Seconds()
+	roundedElapsed := elapsed.Round(10 * time.Millisecond)
+	seconds := roundedElapsed.Seconds()
 	unit := "seconds"
-	if seconds == 1 {
+	if roundedElapsed == time.Second {
 		unit = "second"
 	}
 	return fmt.Sprintf("%.2f %s", seconds, unit)

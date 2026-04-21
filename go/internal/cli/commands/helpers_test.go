@@ -371,6 +371,7 @@ func TestFormatElapsedSeconds(t *testing.T) {
 		{name: "fractional seconds", elapsed: 3420 * time.Millisecond, want: "3.42 seconds"},
 		{name: "rounding", elapsed: 3449 * time.Millisecond, want: "3.45 seconds"},
 		{name: "singular", elapsed: time.Second, want: "1.00 second"},
+		{name: "rounds to singular", elapsed: 1004 * time.Millisecond, want: "1.00 second"},
 	}
 
 	for _, tt := range tests {
