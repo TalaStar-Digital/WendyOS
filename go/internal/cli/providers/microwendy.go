@@ -142,12 +142,7 @@ func (p *MicroWendyProvider) Build(ctx context.Context, device models.ExternalDe
 		return nil, fmt.Errorf("swift build --show-bin-path returned an empty path for %s", product)
 	}
 
-	config := "debug"
-	if !debug {
-		config = "release"
-	}
-
-	wasmPath := filepath.Join(projectPath, ".build", microWendySwiftTarget, config, product+".wasm")
+	wasmPath := filepath.Join(binDir, product+".wasm")
 	if _, err := os.Stat(wasmPath); err != nil {
 		return nil, fmt.Errorf("expected WASM output at %s: %w", wasmPath, err)
 	}

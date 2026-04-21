@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	DefaultVersion   = "6.3.1"
-	WendySDKRelease  = "6.3.1-RELEASE"
-	WasmTargetTriple = "wasm32-unknown-none-wasm"
-	wasmSDKChecksum  = "bd47baa20771f366d8beed7970afaa30742b2210097afd15f85427226d8f4cf2"
+	DefaultVersion  = "6.3.1"
+	WendySDKRelease = "6.3.1-RELEASE"
+	wasmSDKChecksum = "bd47baa20771f366d8beed7970afaa30742b2210097afd15f85427226d8f4cf2"
 )
 
 var wendySDKChecksums = map[string]string{
