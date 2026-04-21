@@ -455,11 +455,17 @@ func installWasmSwiftSDK() error {
 // `swift package dump-package`. Returns an error with a suggestion when
 // no executable product can be determined.
 func findSwiftProduct(dir string) (string, error) {
+	var stderr bytes.Buffer
 	cmd := exec.Command("swiftly", "run", "+"+defaultSwiftVersion, "swift", "package", "dump-package")
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("swift package dump-package failed: %s: %w", strings.TrimSpace(string(out)), err)
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = strings.TrimSpace(string(out))
+		}
+		return "", fmt.Errorf("swift package dump-package failed: %s: %w", errMsg, err)
 	}
 
 	var manifest struct {
@@ -594,7 +600,7 @@ func ensurePlaintextBuilder(ctx context.Context, configDir, registryAddr string)
 		builderName = "wendy"
 	}
 
-	appliedPath := filepath.Join(configDir, "buildkitd.applied")
+	appliedPath := filepath.Join(configDir, builderName+".applied")
 
 	fullConfig := buildkitRegistryConfig(registryAddr, true, nil)
 
