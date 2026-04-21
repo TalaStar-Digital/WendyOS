@@ -8,13 +8,12 @@ cd "$SWIFT_DIR"
 : "${VERSION:?VERSION is required}"
 
 APP_NAME="WendyAgentMac.app"
-OUTPUT_DIR="${OUTPUT_DIR:-$SWIFT_DIR/dist}"
+OUTPUT_DIR="${OUTPUT_DIR:-$SWIFT_DIR/Build}"
 PACKAGE_CACHE_DIR="${PACKAGE_CACHE_DIR:-$SWIFT_DIR/.ci/PackageCache}"
 SOURCE_PACKAGES_DIR="${SOURCE_PACKAGES_DIR:-$SWIFT_DIR/.ci/SourcePackages}"
 TEMP_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 ARCHIVE_PATH="${TEMP_DIR}/WendyAgentMac.xcarchive"
-EXPORT_DIR="${TEMP_DIR}/WendyAgentMac-export"
-APP_PATH="${EXPORT_DIR}/${APP_NAME}"
+APP_PATH="${OUTPUT_DIR}/${APP_NAME}"
 NOTARY_ZIP="${TEMP_DIR}/WendyAgentMac-notary.zip"
 ARTIFACT_NAME="wendy-agent-macos-universal-${VERSION}.zip"
 ARTIFACT_PATH="${OUTPUT_DIR}/${ARTIFACT_NAME}"
@@ -71,7 +70,7 @@ sign_path() {
 }
 
 mkdir -p "$OUTPUT_DIR" "$PACKAGE_CACHE_DIR" "$SOURCE_PACKAGES_DIR"
-rm -rf "$ARCHIVE_PATH" "$EXPORT_DIR" "$NOTARY_ZIP"
+rm -rf "$ARCHIVE_PATH" "$APP_PATH" "$NOTARY_ZIP"
 rm -f "$ARTIFACT_PATH"
 
 xcodebuild archive \
@@ -88,7 +87,6 @@ xcodebuild archive \
   CODE_SIGNING_REQUIRED=NO \
   -skipMacroValidation
 
-mkdir -p "$EXPORT_DIR"
 ditto "$ARCHIVE_PATH/Products/Applications/$APP_NAME" "$APP_PATH"
 
 while IFS= read -r nested_code; do
@@ -117,6 +115,8 @@ ditto -c -k --sequesterRsrc --keepParent \
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
+    echo "app_name=$APP_NAME"
+    echo "app_path=$APP_PATH"
     echo "artifact_name=$ARTIFACT_NAME"
     echo "artifact_path=$ARTIFACT_PATH"
   } >> "$GITHUB_OUTPUT"

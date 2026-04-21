@@ -226,13 +226,22 @@ jobs:
         working-directory: swift
         env:
           VERSION: ${{ needs.determine-version.outputs.version }}
+          OUTPUT_DIR: ${{ github.workspace }}/swift/Build
           KEYCHAIN_PATH: ${{ steps.signing.outputs.keychain_path }}
           SIGNING_IDENTITY: ${{ steps.signing.outputs.signing_identity }}
           NOTARY_PROFILE: ${{ steps.signing.outputs.notary_profile }}
         shell: bash
         run: bash ./Scripts/ReleaseMacApp.sh
 
-      - name: Upload artifact
+      - name: Upload notarized app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: wendy-agent-macos-app-${{ needs.determine-version.outputs.version }}
+          path: ${{ steps.release_mac_app.outputs.app_path }}
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload release zip
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.release_mac_app.outputs.artifact_name }}
