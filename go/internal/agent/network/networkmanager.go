@@ -293,6 +293,155 @@ func Connect(ctx context.Context, ssid, password string) error {
 	return runNMCLIConnect(ctx, path, ssid, password, false)
 }
 
+// SavedCredential describes a WiFi profile that the agent should persist via
+// nmcli without necessarily activating it. Used by the config-partition
+// provisioning path on first boot.
+type SavedCredential struct {
+	SSID     string
+	Password string
+	Priority int32
+	Hidden   bool
+	Security string // "wpa2" / "wpa3" / "open" / "" (autodetect)
+}
+
+// AddOrUpdateProfile adds or updates a NetworkManager profile for the given
+// credential without activating it. If a profile with the same SSID already
+// exists, its password / priority / hidden flag are updated in place.
+func AddOrUpdateProfile(ctx context.Context, c SavedCredential) error {
+	path := resolveNMCLIPath()
+	if path == "" {
+		return fmt.Errorf("nmcli not found")
+	}
+	return addOrUpdateProfile(ctx, path, c)
+}
+
+func addOrUpdateProfile(ctx context.Context, nmcliPath string, c SavedCredential) error {
+	uuid, _ := existingProfileUUID(ctx, nmcliPath, c.SSID)
+	if uuid != "" {
+		return modifyProfile(ctx, nmcliPath, uuid, c)
+	}
+	return addProfile(ctx, nmcliPath, c)
+}
+
+func existingProfileUUID(ctx context.Context, nmcliPath, ssid string) (string, error) {
+	cmd := exec.CommandContext(ctx, nmcliPath, "-t",
+		"-f", "NAME,UUID,TYPE", "connection", "show")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		fields := splitNMCLI(scanner.Text(), 3)
+		if len(fields) < 3 || fields[2] != "802-11-wireless" {
+			continue
+		}
+		// Profile name isn't always the SSID — look up the ssid field.
+		dout, derr := exec.CommandContext(ctx, nmcliPath, "-t", "-g",
+			"802-11-wireless.ssid", "connection", "show", fields[1]).Output()
+		if derr != nil {
+			continue
+		}
+		if unescapeNMCLI(strings.TrimRight(string(dout), "\n")) == ssid {
+			return fields[1], nil
+		}
+	}
+	return "", fmt.Errorf("no saved profile for SSID %q", ssid)
+}
+
+func addProfile(ctx context.Context, nmcliPath string, c SavedCredential) error {
+	args := []string{"connection", "add", "type", "wifi",
+		"con-name", c.SSID,
+		"ssid", c.SSID,
+		"autoconnect", "yes",
+	}
+	if c.Priority != 0 {
+		args = append(args, "connection.autoconnect-priority", strconv.Itoa(int(c.Priority)))
+	}
+	if c.Hidden {
+		args = append(args, "802-11-wireless.hidden", "yes")
+	}
+	keyMgmt := keyMgmtFromHint(c.Security, c.Password)
+	if keyMgmt != "" {
+		args = append(args, "802-11-wireless-security.key-mgmt", keyMgmt)
+		if c.Password != "" {
+			args = append(args, "802-11-wireless-security.psk", c.Password)
+		}
+	}
+	cmd := exec.CommandContext(ctx, nmcliPath, args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("nmcli connection add %s: %s: %w", c.SSID, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func modifyProfile(ctx context.Context, nmcliPath, uuid string, c SavedCredential) error {
+	args := []string{"connection", "modify", uuid}
+	if c.Priority != 0 {
+		args = append(args, "connection.autoconnect-priority", strconv.Itoa(int(c.Priority)))
+	}
+	if c.Hidden {
+		args = append(args, "802-11-wireless.hidden", "yes")
+	}
+	if c.Password != "" {
+		km := keyMgmtFromHint(c.Security, c.Password)
+		if km == "" {
+			km = "wpa-psk"
+		}
+		args = append(args, "802-11-wireless-security.key-mgmt", km)
+		args = append(args, "802-11-wireless-security.psk", c.Password)
+	}
+	if len(args) == 3 {
+		// Nothing to change beyond the existing profile — still fine.
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, nmcliPath, args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("nmcli connection modify %s: %s: %w", c.SSID, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// ActivateProfile brings up a saved profile (the equivalent of `nmcli
+// connection up`). It is a no-op when the profile is already active.
+func ActivateProfile(ctx context.Context, ssid string) error {
+	path := resolveNMCLIPath()
+	if path == "" {
+		return fmt.Errorf("nmcli not found")
+	}
+	uuid, err := existingProfileUUID(ctx, path, ssid)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, path, "connection", "up", uuid)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("nmcli connection up %s: %s: %w", ssid, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// keyMgmtFromHint picks the nmcli `802-11-wireless-security.key-mgmt` value
+// for a given security hint. When the hint is empty and a password is
+// provided, defaults to wpa-psk (the most common case on consumer APs).
+func keyMgmtFromHint(hint, password string) string {
+	switch strings.ToLower(strings.TrimSpace(hint)) {
+	case "open", "none":
+		return ""
+	case "wep":
+		return "none" // nmcli uses "none" + wep-key-type for WEP
+	case "wpa", "wpa-psk", "wpa2", "wpa2-psk":
+		return "wpa-psk"
+	case "wpa3", "sae":
+		return "sae"
+	case "wpa-eap", "wpa2-enterprise", "enterprise":
+		return "wpa-eap"
+	}
+	if password != "" {
+		return "wpa-psk"
+	}
+	return ""
+}
+
 // ConnectToWiFi connects to a WiFi network.
 func (n *NMCLINetworkManager) ConnectToWiFi(ctx context.Context, req *agentpb.ConnectToWiFiRequest) error {
 	hidden := req.GetHidden()

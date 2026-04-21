@@ -5,30 +5,32 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/wendylabsinc/wendy/internal/shared/wendyconf"
 )
 
-// writeConfigFiles writes the agent binary and optional wendy.conf to mountPoint.
-// agentBinary is the raw binary content. ssid/password are written to wendy.conf
-// only if ssid is non-empty.
-func writeConfigFiles(mountPoint string, agentBinary []byte, ssid, password string) error {
+// writeConfigFiles writes the agent binary and optional wendy.conf to
+// mountPoint. agentBinary is the raw binary content. When creds is empty no
+// wendy.conf is produced; otherwise a multi-network INI is written.
+func writeConfigFiles(mountPoint string, agentBinary []byte, creds []wendyconf.WifiCredential) error {
 	binPath := filepath.Join(mountPoint, "wendy-agent")
 	if err := os.WriteFile(binPath, agentBinary, 0o755); err != nil {
 		return fmt.Errorf("writing wendy-agent to config partition: %w", err)
 	}
 
-	if ssid == "" {
+	if len(creds) == 0 {
 		return nil
 	}
 
-	if strings.ContainsAny(ssid, "\n\r") || strings.ContainsAny(password, "\n\r") {
-		return fmt.Errorf("WiFi SSID and password must not contain newline characters")
+	for _, c := range creds {
+		if strings.ContainsAny(c.SSID, "\n\r") || strings.ContainsAny(c.Password, "\n\r") {
+			return fmt.Errorf("WiFi SSID and password must not contain newline characters")
+		}
 	}
 
-	conf := fmt.Sprintf("[wifi]\nssid = %s\npassword = %s\n", ssid, password)
 	confPath := filepath.Join(mountPoint, "wendy.conf")
-	if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil {
+	if err := os.WriteFile(confPath, wendyconf.Marshal(creds), 0o644); err != nil {
 		return fmt.Errorf("writing wendy.conf to config partition: %w", err)
 	}
-
 	return nil
 }

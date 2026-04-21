@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/wendylabsinc/wendy/internal/agent/network"
+	"github.com/wendylabsinc/wendy/internal/shared/wendyconf"
 )
 
 // elfMachineByArch maps GOARCH values to ELF e_machine field values (little-endian uint16).
@@ -165,9 +166,10 @@ func applyBinaryUpdate(logger *zap.Logger, cfgDir, installPath string) bool {
 	return true
 }
 
-// applyWiFiConfig reads /config/wendy.conf, connects to WiFi if [wifi] section
-// is present, then deletes the file regardless of outcome (bad creds should not
-// be retried on every boot).
+// applyWiFiConfig reads /config/wendy.conf, registers every `[wifi]` /
+// `[wifi.N]` profile via NetworkManager, activates the highest-priority one
+// that is in range, then deletes the file regardless of outcome (bad creds
+// should not be retried on every boot).
 func applyWiFiConfig(logger *zap.Logger, cfgDir string) {
 	confPath := cfgDir + "/wendy.conf"
 	data, err := os.ReadFile(confPath)
@@ -185,20 +187,42 @@ func applyWiFiConfig(logger *zap.Logger, cfgDir string) {
 	}
 
 	sections := parseINI(data)
-	wifi := sections["wifi"]
-	ssid := wifi["ssid"]
-	if ssid == "" {
-		logger.Warn("wendy.conf [wifi] section has no ssid, skipping WiFi provisioning")
+	creds := wendyconf.UnmarshalWiFi(sections)
+	if len(creds) == 0 {
+		logger.Warn("wendy.conf has no usable WiFi credentials, skipping WiFi provisioning")
 	} else {
-		if err := network.Connect(context.Background(), ssid, wifi["password"]); err != nil {
-			logger.Error("Failed to connect to WiFi from config partition",
-				zap.String("ssid", ssid), zap.Error(err))
-		} else {
-			logger.Info("Connected to WiFi from config partition", zap.String("ssid", ssid))
+		ctx := context.Background()
+		for _, c := range creds {
+			err := network.AddOrUpdateProfile(ctx, network.SavedCredential{
+				SSID:     c.SSID,
+				Password: c.Password,
+				Priority: c.Priority,
+				Hidden:   c.Hidden,
+				Security: c.Security,
+			})
+			if err != nil {
+				logger.Error("Failed to register WiFi profile from config partition",
+					zap.String("ssid", c.SSID), zap.Error(err))
+				continue
+			}
+			logger.Info("Registered WiFi profile from config partition",
+				zap.String("ssid", c.SSID),
+				zap.Int32("priority", c.Priority))
+		}
+		// Try to bring up the first (highest-priority) credential so the
+		// device is online immediately when it's in range. Lower-priority
+		// profiles stay saved for future locations.
+		for _, c := range creds {
+			if err := network.ActivateProfile(ctx, c.SSID); err != nil {
+				logger.Warn("Could not activate WiFi profile",
+					zap.String("ssid", c.SSID), zap.Error(err))
+				continue
+			}
+			logger.Info("Activated WiFi profile from config partition", zap.String("ssid", c.SSID))
+			break
 		}
 	}
 
-	// Always delete so we don't retry on the next boot.
 	if err := os.Remove(confPath); err != nil {
 		logger.Warn("Failed to remove wendy.conf after applying",
 			zap.String("path", confPath), zap.Error(err))
