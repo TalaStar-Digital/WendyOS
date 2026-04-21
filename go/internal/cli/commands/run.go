@@ -713,15 +713,18 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	buildArgs := map[string]string{
 		"WENDY_PLATFORM": wendyPlatform(deviceType),
 		"WENDY_DEBUG":    fmt.Sprintf("%t", opts.debug),
-		"WENDY_HAS_GPU":  fmt.Sprintf("%t", versionResp.GetHasGpu()),
 	}
-	// Only set WENDY_DEVICE_TYPE when the agent reports it, so Dockerfiles can
-	// apply their own default on older agents where the field is empty.
+	// Only set WENDY_DEVICE_TYPE / GPU args when the agent reports them so
+	// Dockerfiles can apply their own defaults on older agents.
 	if deviceType != "" {
 		buildArgs["WENDY_DEVICE_TYPE"] = deviceType
 	}
-	// GPU build args — only set when the agent reports them so Dockerfiles can
-	// apply their own defaults on older agents.
+	// WENDY_HAS_GPU is only set when the optional field is present; omitting it
+	// on older agents preserves any Dockerfile ARG default.
+	if versionResp.HasGpu != nil {
+		buildArgs["WENDY_HAS_GPU"] = fmt.Sprintf("%t", versionResp.GetHasGpu())
+	}
+	// Remaining GPU build args — only set when the agent reports them.
 	if vendor := versionResp.GetGpuVendor(); vendor != "" {
 		buildArgs["WENDY_GPU_VENDOR"] = vendor
 	}

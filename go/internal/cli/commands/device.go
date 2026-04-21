@@ -99,8 +99,8 @@ func newDeviceVersionCmd() *cobra.Command {
 					"cliVersion":      version.Version,
 					"hasGpu":          resp.GetHasGpu(),
 				}
-				if resp.GetHasGpu() {
-					out["gpuVendor"] = resp.GetGpuVendor()
+				if v := resp.GetGpuVendor(); v != "" {
+					out["gpuVendor"] = v
 				}
 				if jv := resp.GetJetpackVersion(); jv != "" {
 					out["jetpackVersion"] = jv

@@ -77,7 +77,7 @@ func (s *AgentService) GetAgentVersion(_ context.Context, _ *agentpb.GetAgentVer
 	// Detect GPU presence and details.
 	gpuInfo := detectGPUInfo()
 	resp.HasGpu = &gpuInfo.hasGPU
-	if gpuInfo.hasGPU {
+	if gpuInfo.vendor != "" {
 		resp.GpuVendor = &gpuInfo.vendor
 	}
 	if gpuInfo.jetpackVersion != "" {
@@ -189,9 +189,11 @@ func detectCUDAVersion() string {
 		}
 	}
 
-	// Fall back to nvcc --version.
+	// Fall back to nvcc --version with a timeout so detection cannot block an RPC handler.
 	if nvcc, err := exec.LookPath("nvcc"); err == nil {
-		out, err := exec.Command(nvcc, "--version").Output()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, nvcc, "--version").Output()
 		if err == nil {
 			if m := cudaVersionFileRe.FindSubmatch(out); len(m) > 1 {
 				return string(m[1])
