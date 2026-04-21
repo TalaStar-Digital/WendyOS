@@ -102,8 +102,8 @@ func newDeviceVersionCmd() *cobra.Command {
 				if resp.GetHasGpu() {
 					out["gpuVendor"] = resp.GetGpuVendor()
 				}
-				if t := resp.GetNvidiaTegraRelease(); t != "" {
-					out["nvidiaTegraRelease"] = t
+				if jv := resp.GetJetpackVersion(); jv != "" {
+					out["jetpackVersion"] = jv
 				}
 				if cv := resp.GetCudaVersion(); cv != "" {
 					out["cudaVersion"] = cv
@@ -132,11 +132,11 @@ func newDeviceVersionCmd() *cobra.Command {
 					vendor = "unknown"
 				}
 				fmt.Printf("GPU: %s\n", vendor)
-				if t := resp.GetNvidiaTegraRelease(); t != "" {
-					fmt.Printf("Tegra Release: %s\n", t)
+				if jv := resp.GetJetpackVersion(); jv != "" {
+					fmt.Printf("JetPack: %s\n", jv)
 				}
 				if cv := resp.GetCudaVersion(); cv != "" {
-					fmt.Printf("CUDA Version: %s\n", cv)
+					fmt.Printf("CUDA: %s\n", cv)
 				}
 			}
 			fmt.Printf("CLI Version: %s\n", version.Version)

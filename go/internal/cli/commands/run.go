@@ -725,8 +725,8 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	if vendor := versionResp.GetGpuVendor(); vendor != "" {
 		buildArgs["WENDY_GPU_VENDOR"] = vendor
 	}
-	if t := versionResp.GetNvidiaTegraRelease(); t != "" {
-		buildArgs["WENDY_TEGRA_RELEASE"] = t
+	if jv := versionResp.GetJetpackVersion(); jv != "" {
+		buildArgs["WENDY_JETPACK_VERSION"] = jv
 	}
 	if cv := versionResp.GetCudaVersion(); cv != "" {
 		buildArgs["WENDY_CUDA_VERSION"] = cv

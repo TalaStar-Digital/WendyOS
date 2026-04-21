@@ -517,8 +517,8 @@ type GetAgentVersionResponse struct {
 	HasGpu *bool `protobuf:"varint,8,opt,name=has_gpu,json=hasGpu,proto3,oneof" json:"has_gpu,omitempty"`
 	// GPU vendor identifier (e.g. "nvidia"). Only present when has_gpu is true.
 	GpuVendor *string `protobuf:"bytes,9,opt,name=gpu_vendor,json=gpuVendor,proto3,oneof" json:"gpu_vendor,omitempty"`
-	// Raw content of /etc/nv_tegra_release. Only present on NVIDIA Tegra/Jetson devices.
-	NvidiaTegraRelease *string `protobuf:"bytes,10,opt,name=nvidia_tegra_release,json=nvidiaTegraRelease,proto3,oneof" json:"nvidia_tegra_release,omitempty"`
+	// JetPack version (e.g. "6.2"). Only present on NVIDIA Jetson devices.
+	JetpackVersion *string `protobuf:"bytes,10,opt,name=jetpack_version,json=jetpackVersion,proto3,oneof" json:"jetpack_version,omitempty"`
 	// CUDA version string (e.g. "12.2.0"). Only present when CUDA is installed.
 	CudaVersion   *string `protobuf:"bytes,11,opt,name=cuda_version,json=cudaVersion,proto3,oneof" json:"cuda_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -618,9 +618,9 @@ func (x *GetAgentVersionResponse) GetGpuVendor() string {
 	return ""
 }
 
-func (x *GetAgentVersionResponse) GetNvidiaTegraRelease() string {
-	if x != nil && x.NvidiaTegraRelease != nil {
-		return *x.NvidiaTegraRelease
+func (x *GetAgentVersionResponse) GetJetpackVersion() string {
+	if x != nil && x.JetpackVersion != nil {
+		return *x.JetpackVersion
 	}
 	return ""
 }
@@ -2525,7 +2525,7 @@ const file_wendy_agent_services_v1_wendy_agent_v1_service_proto_rawDesc = "" +
 	"\aupdated\x18\x01 \x01(\v24.wendy.agent.services.v1.UpdateAgentResponse.UpdatedH\x00R\aupdated\x1a\t\n" +
 	"\aUpdatedB\x0f\n" +
 	"\rresponse_type\"\x18\n" +
-	"\x16GetAgentVersionRequest\"\x90\x04\n" +
+	"\x16GetAgentVersionRequest\"\x82\x04\n" +
 	"\x17GetAgentVersionResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\"\n" +
 	"\n" +
@@ -2541,17 +2541,17 @@ const file_wendy_agent_services_v1_wendy_agent_v1_service_proto_rawDesc = "" +
 	"deviceType\x88\x01\x01\x12\x1c\n" +
 	"\ahas_gpu\x18\b \x01(\bH\x03R\x06hasGpu\x88\x01\x01\x12\"\n" +
 	"\n" +
-	"gpu_vendor\x18\t \x01(\tH\x04R\tgpuVendor\x88\x01\x01\x125\n" +
-	"\x14nvidia_tegra_release\x18\n" +
-	" \x01(\tH\x05R\x12nvidiaTegraRelease\x88\x01\x01\x12&\n" +
+	"gpu_vendor\x18\t \x01(\tH\x04R\tgpuVendor\x88\x01\x01\x12,\n" +
+	"\x0fjetpack_version\x18\n" +
+	" \x01(\tH\x05R\x0ejetpackVersion\x88\x01\x01\x12&\n" +
 	"\fcuda_version\x18\v \x01(\tH\x06R\vcudaVersion\x88\x01\x01B\r\n" +
 	"\v_os_versionB\r\n" +
 	"\v_public_keyB\x0e\n" +
 	"\f_device_typeB\n" +
 	"\n" +
 	"\b_has_gpuB\r\n" +
-	"\v_gpu_vendorB\x17\n" +
-	"\x15_nvidia_tegra_releaseB\x0f\n" +
+	"\v_gpu_vendorB\x12\n" +
+	"\x10_jetpack_versionB\x0f\n" +
 	"\r_cuda_version\"\x19\n" +
 	"\x17ListWiFiNetworksRequest\"\xda\x01\n" +
 	"\x18ListWiFiNetworksResponse\x12Y\n" +

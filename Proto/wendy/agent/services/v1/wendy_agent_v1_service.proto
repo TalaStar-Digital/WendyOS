@@ -160,8 +160,8 @@ message GetAgentVersionResponse {
     optional bool has_gpu = 8;
     // GPU vendor identifier (e.g. "nvidia"). Only present when has_gpu is true.
     optional string gpu_vendor = 9;
-    // Raw content of /etc/nv_tegra_release. Only present on NVIDIA Tegra/Jetson devices.
-    optional string nvidia_tegra_release = 10;
+    // JetPack version (e.g. "6.2"). Only present on NVIDIA Jetson devices.
+    optional string jetpack_version = 10;
     // CUDA version string (e.g. "12.2.0"). Only present when CUDA is installed.
     optional string cuda_version = 11;
 }
