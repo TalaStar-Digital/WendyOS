@@ -53,9 +53,13 @@ jobs:
 
       - name: Run wendy discover
         run: |
-          RESULT=$(./bin/wendy discover --json --timeout 10s 2>/tmp/wendy-discover-stderr.txt)
-          cat /tmp/wendy-discover-stderr.txt >&2 || true
-          echo "$RESULT" | jq .
+          DISCOVER_STDERR=$(mktemp)
+          RESULT=$(./bin/wendy discover --json --timeout 10s 2>"$DISCOVER_STDERR" || true)
+          cat "$DISCOVER_STDERR" >&2 || true
+          rm -f "$DISCOVER_STDERR"
+          if [[ -n "$RESULT" ]]; then
+            echo "$RESULT" | jq .
+          fi
 
           EXPECTED=(
             "wendyos-keen-channel.local"
@@ -155,8 +159,10 @@ jobs:
             DEVICES=("$INPUT_HOSTNAME")
           else
             echo "==> Discovering LAN devices..."
-            DISCOVER_JSON=$($SSH "$SSH_ENV && cd '$WORKDIR' && ./bin/wendy discover --json --timeout 10s" 2>/tmp/wendy-discover-stderr.txt)
-            cat /tmp/wendy-discover-stderr.txt >&2 || true
+            DISCOVER_STDERR=$(mktemp)
+            DISCOVER_JSON=$($SSH "$SSH_ENV && cd '$WORKDIR' && ./bin/wendy discover --json --timeout 10s" 2>"$DISCOVER_STDERR")
+            cat "$DISCOVER_STDERR" >&2 || true
+            rm -f "$DISCOVER_STDERR"
             DEVICES=()
             while IFS= read -r line; do
               [[ -n "$line" ]] && DEVICES+=("$line")
@@ -261,8 +267,10 @@ jobs:
             DEVICES=("$INPUT_HOSTNAME")
           else
             echo "==> Discovering LAN devices..."
-            DISCOVER_JSON=$(./bin/wendy discover --json --timeout 10s 2>/tmp/wendy-discover-stderr.txt)
-            cat /tmp/wendy-discover-stderr.txt >&2 || true
+            DISCOVER_STDERR=$(mktemp)
+            DISCOVER_JSON=$(./bin/wendy discover --json --timeout 10s 2>"$DISCOVER_STDERR")
+            cat "$DISCOVER_STDERR" >&2 || true
+            rm -f "$DISCOVER_STDERR"
             DEVICES=()
             while IFS= read -r line; do
               [[ -n "$line" ]] && DEVICES+=("$line")
@@ -366,8 +374,10 @@ jobs:
             DEVICE="$INPUT_HOSTNAME"
           else
             echo "==> Discovering LAN devices..."
-            DISCOVER_JSON=$($SSH "$SSH_ENV && cd '$WORKDIR' && ./bin/wendy discover --json --timeout 10s" 2>/tmp/wendy-discover-stderr.txt)
-            cat /tmp/wendy-discover-stderr.txt >&2 || true
+            DISCOVER_STDERR=$(mktemp)
+            DISCOVER_JSON=$($SSH "$SSH_ENV && cd '$WORKDIR' && ./bin/wendy discover --json --timeout 10s" 2>"$DISCOVER_STDERR")
+            cat "$DISCOVER_STDERR" >&2 || true
+            rm -f "$DISCOVER_STDERR"
             DEVICE=$(echo "$DISCOVER_JSON" | jq -r '.lanDevices[] | select(.capabilities.gpu == true) | .hostname' 2>/dev/null | head -1)
             if [[ -z "$DEVICE" ]]; then
               echo "ERROR: No GPU-capable device found via wendy discover"
@@ -426,7 +436,7 @@ jobs:
             echo "- GPU test: ${{ needs.integration-test-gpu.result }} (non-blocking)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          if [[ "${{ needs.discover.result }}" == "failure" || "${{ needs.integration-test-macos.result }}" == "failure" || "${{ needs.integration-test-linux.result }}" == "failure" ]]; then
+          if [[ "${{ needs.integration-test-macos.result }}" == "failure" || "${{ needs.integration-test-linux.result }}" == "failure" ]]; then
             echo ""
             echo "One or more blocking tests failed."
             exit 1

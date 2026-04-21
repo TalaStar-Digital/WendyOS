@@ -59,8 +59,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Add .local suffix if hostname was explicitly provided and missing it.
-if [[ "$HOSTNAME_PROVIDED" == true ]] && [[ "$HOSTNAME" != *.local ]]; then
+# Add .local suffix only for bare mDNS hostnames (no dots or colons).
+# Leave IPs (e.g. 192.168.1.1), FQDNs (device.example.com), and IPv6 alone.
+if [[ "$HOSTNAME_PROVIDED" == true ]] && [[ "$HOSTNAME" != *.local ]] && [[ "$HOSTNAME" != *.* ]] && [[ "$HOSTNAME" != *:* ]]; then
     HOSTNAME="${HOSTNAME}.local"
 fi
 
@@ -130,8 +131,10 @@ echo ""
 
 if [[ -z "$HOSTNAME" ]]; then
     echo -e "${BOLD}==> Auto-discovering device...${RESET}"
-    DISCOVER_JSON=$("$WENDY" discover --json --timeout 5s 2>/tmp/wendy-discover-stderr.txt)
-    cat /tmp/wendy-discover-stderr.txt >&2 || true
+    DISCOVER_STDERR=$(mktemp -t wendy-discover-stderr.XXXXXX)
+    trap 'rm -f "$DISCOVER_STDERR"' EXIT
+    DISCOVER_JSON=$("$WENDY" discover --json --timeout 5s 2>"$DISCOVER_STDERR")
+    cat "$DISCOVER_STDERR" >&2 || true
     DISCOVERED_HOST=$(echo "$DISCOVER_JSON" | jq -r '.lanDevices[0].hostname // empty' 2>/dev/null)
     if [[ -z "$DISCOVERED_HOST" ]]; then
         echo -e "${RED}ERROR: No LAN device found via 'wendy discover --json --timeout 5s'${RESET}"
@@ -221,8 +224,9 @@ for test_name in "${TESTS[@]}"; do
     "$WENDY" apps remove "$app_id" --device "$HOSTNAME" --force &>/dev/null || true
 
     # Deploy and run
-    run_test "$test_name" \
-        bash -c "cd '$test_dir' && '$WENDY' run --device '$HOSTNAME'"
+    pushd "$test_dir" > /dev/null
+    run_test "$test_name" "$WENDY" run --device "$HOSTNAME"
+    popd > /dev/null
 
     # Post-cleanup: stop and remove
     "$WENDY" apps stop "$app_id" --device "$HOSTNAME" &>/dev/null || true
