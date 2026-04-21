@@ -8,8 +8,10 @@ import (
 )
 
 // Network is a CLI-side view of a WiFi network merged across scan results and
-// saved profiles. It is intentionally UI-friendly (no protobuf types in fields)
-// so the TUI and sorting logic can be unit-tested without talking to gRPC.
+// saved profiles. Fields are plain values (plus the WiFiSecurityType enum,
+// which we reuse from the generated protobuf package so we don't duplicate the
+// enum definition) so the TUI and sorting logic can be unit-tested without a
+// gRPC transport.
 type Network struct {
 	SSID      string
 	Known     bool

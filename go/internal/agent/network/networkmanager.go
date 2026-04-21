@@ -103,8 +103,10 @@ type knownProfile struct {
 }
 
 // listKnownProfiles returns one entry per saved 802-11-wireless connection.
+// It fetches per-profile SSID + key-mgmt details in a single nmcli invocation
+// so the cost is O(1) exec calls regardless of how many profiles exist.
 func (n *NMCLINetworkManager) listKnownProfiles(ctx context.Context) ([]knownProfile, error) {
-	// Ask nmcli for all wifi connection profiles.
+	// First pass: list wifi connections and their priorities.
 	cmd := exec.CommandContext(ctx, n.nmcliPath, "-t",
 		"-f", "NAME,UUID,TYPE,AUTOCONNECT-PRIORITY",
 		"connection", "show")
@@ -127,26 +129,47 @@ func (n *NMCLINetworkManager) listKnownProfiles(ctx context.Context) ([]knownPro
 		if p, err := strconv.Atoi(fields[3]); err == nil {
 			prio = int32(p)
 		}
-		kp := knownProfile{Name: fields[0], UUID: fields[1], Priority: prio}
+		result = append(result, knownProfile{Name: fields[0], UUID: fields[1], Priority: prio})
+	}
 
-		// Fetch the SSID + key-mgmt for this profile.
-		dcmd := exec.CommandContext(ctx, n.nmcliPath, "-t", "-g",
-			"802-11-wireless.ssid,802-11-wireless-security.key-mgmt",
-			"connection", "show", kp.UUID)
-		dout, derr := dcmd.Output()
-		if derr == nil {
-			lines := strings.Split(strings.TrimRight(string(dout), "\n"), "\n")
-			if len(lines) >= 1 {
-				kp.SSID = unescapeNMCLI(lines[0])
-			}
-			if len(lines) >= 2 {
-				kp.Security = classifyKeyMgmt(lines[1])
+	if len(result) == 0 {
+		return result, nil
+	}
+
+	// Second pass: fetch ssid + key-mgmt for every wifi profile in a single
+	// `nmcli connection show UUID1 UUID2 ...` call. With `-g`, nmcli prints
+	// one field value per line per connection in the order it received the
+	// UUIDs, so 2 lines per profile (ssid, key-mgmt).
+	args := []string{"-t", "-g",
+		"802-11-wireless.ssid,802-11-wireless-security.key-mgmt",
+		"connection", "show"}
+	for _, p := range result {
+		args = append(args, p.UUID)
+	}
+	dcmd := exec.CommandContext(ctx, n.nmcliPath, args...)
+	dout, derr := dcmd.Output()
+	if derr != nil {
+		// Fall back to name-as-ssid if the detail fetch fails so callers
+		// still get a usable list.
+		for i := range result {
+			if result[i].SSID == "" {
+				result[i].SSID = result[i].Name
 			}
 		}
-		if kp.SSID == "" {
-			kp.SSID = kp.Name
+		return result, nil
+	}
+	lines := strings.Split(strings.TrimRight(string(dout), "\n"), "\n")
+	for i := range result {
+		base := i * 2
+		if base < len(lines) {
+			result[i].SSID = unescapeNMCLI(lines[base])
 		}
-		result = append(result, kp)
+		if base+1 < len(lines) {
+			result[i].Security = classifyKeyMgmt(lines[base+1])
+		}
+		if result[i].SSID == "" {
+			result[i].SSID = result[i].Name
+		}
 	}
 	return result, nil
 }
@@ -192,7 +215,13 @@ func (n *NMCLINetworkManager) ListWiFiNetworks(ctx context.Context) ([]*agentpb.
 		return nil, fmt.Errorf("nmcli wifi list: %w", err)
 	}
 
-	known, _ := n.listKnownProfiles(ctx)
+	known, knownErr := n.listKnownProfiles(ctx)
+	if knownErr != nil {
+		// Don't fail the whole scan — just surface a warning and emit
+		// scan-only results. The TUI will still render, but known/priority
+		// columns will be blank.
+		n.logger.Warn("Failed to list saved WiFi profiles; continuing with scan-only results", zap.Error(knownErr))
+	}
 	knownBySSID := make(map[string]knownProfile, len(known))
 	for _, k := range known {
 		knownBySSID[k.SSID] = k

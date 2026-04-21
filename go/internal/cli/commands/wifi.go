@@ -517,6 +517,9 @@ Examples:
 			if order != "" && ssid != "" {
 				return errors.New("--order and --ssid are mutually exclusive")
 			}
+			if ssid != "" && !cmd.Flags().Changed("priority") {
+				return errors.New("--priority is required when --ssid is set")
+			}
 
 			target, err := resolveTarget(ctx, ExcludeProviders("local", "docker"))
 			if err != nil {
