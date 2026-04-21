@@ -713,11 +713,23 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	buildArgs := map[string]string{
 		"WENDY_PLATFORM": wendyPlatform(deviceType),
 		"WENDY_DEBUG":    fmt.Sprintf("%t", opts.debug),
+		"WENDY_HAS_GPU":  fmt.Sprintf("%t", versionResp.GetHasGpu()),
 	}
 	// Only set WENDY_DEVICE_TYPE when the agent reports it, so Dockerfiles can
 	// apply their own default on older agents where the field is empty.
 	if deviceType != "" {
 		buildArgs["WENDY_DEVICE_TYPE"] = deviceType
+	}
+	// GPU build args — only set when the agent reports them so Dockerfiles can
+	// apply their own defaults on older agents.
+	if vendor := versionResp.GetGpuVendor(); vendor != "" {
+		buildArgs["WENDY_GPU_VENDOR"] = vendor
+	}
+	if t := versionResp.GetNvidiaTegraRelease(); t != "" {
+		buildArgs["WENDY_TEGRA_RELEASE"] = t
+	}
+	if cv := versionResp.GetCudaVersion(); cv != "" {
+		buildArgs["WENDY_CUDA_VERSION"] = cv
 	}
 
 	// Verify auth certs are available if the device's registry requires mTLS.

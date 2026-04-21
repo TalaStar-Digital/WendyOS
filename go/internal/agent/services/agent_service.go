@@ -74,7 +74,89 @@ func (s *AgentService) GetAgentVersion(_ context.Context, _ *agentpb.GetAgentVer
 		resp.DeviceType = &v
 	}
 
+	// Detect GPU presence and details.
+	gpuInfo := detectGPUInfo()
+	resp.HasGpu = &gpuInfo.hasGPU
+	if gpuInfo.hasGPU {
+		resp.GpuVendor = &gpuInfo.vendor
+	}
+	if gpuInfo.tegraRelease != "" {
+		resp.NvidiaTegraRelease = &gpuInfo.tegraRelease
+	}
+	if gpuInfo.cudaVersion != "" {
+		resp.CudaVersion = &gpuInfo.cudaVersion
+	}
+
 	return resp, nil
+}
+
+type gpuInfo struct {
+	hasGPU       bool
+	vendor       string
+	tegraRelease string
+	cudaVersion  string
+}
+
+// detectGPUInfo probes the system for GPU presence and NVIDIA-specific details.
+func detectGPUInfo() gpuInfo {
+	info := gpuInfo{}
+
+	// Check for NVIDIA GPU via device node.
+	if _, err := os.Stat("/dev/nvidia0"); err == nil {
+		info.hasGPU = true
+		info.vendor = "nvidia"
+	} else if entries, _ := os.ReadDir("/dev/dri"); len(entries) > 0 {
+		info.hasGPU = true
+	}
+
+	if !info.hasGPU {
+		return info
+	}
+
+	if info.vendor != "nvidia" {
+		return info
+	}
+
+	// Read NVIDIA Tegra release info.
+	if data, err := os.ReadFile("/etc/nv_tegra_release"); err == nil {
+		info.tegraRelease = strings.TrimSpace(string(data))
+	}
+
+	// Detect CUDA version from the version file or nvcc.
+	info.cudaVersion = detectCUDAVersion()
+
+	return info
+}
+
+var cudaVersionFileRe = regexp.MustCompile(`(?i)CUDA[^0-9]*([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
+
+// detectCUDAVersion reads the CUDA version from well-known paths or nvcc.
+func detectCUDAVersion() string {
+	// Try /usr/local/cuda/version.txt: "CUDA Version 12.2.0"
+	if data, err := os.ReadFile("/usr/local/cuda/version.txt"); err == nil {
+		if m := cudaVersionFileRe.FindSubmatch(data); len(m) > 1 {
+			return string(m[1])
+		}
+	}
+
+	// Try /usr/local/cuda/version.json: {"cuda": {"version": "12.2.0"}}
+	if data, err := os.ReadFile("/usr/local/cuda/version.json"); err == nil {
+		if m := cudaVersionFileRe.FindSubmatch(data); len(m) > 1 {
+			return string(m[1])
+		}
+	}
+
+	// Fall back to nvcc --version.
+	if nvcc, err := exec.LookPath("nvcc"); err == nil {
+		out, err := exec.Command(nvcc, "--version").Output()
+		if err == nil {
+			if m := cudaVersionFileRe.FindSubmatch(out); len(m) > 1 {
+				return string(m[1])
+			}
+		}
+	}
+
+	return ""
 }
 
 // detectFeatureset probes the system for available hardware capabilities.
