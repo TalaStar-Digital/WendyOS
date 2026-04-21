@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 )
@@ -27,15 +26,15 @@ var wendySDKChecksums = map[string]string{
 var execCommandContext = exec.CommandContext
 var execCommand = exec.Command
 
+func flushWriter(writer io.Writer) {
+	if flusher, ok := writer.(interface{ Flush() }); ok {
+		flusher.Flush()
+	}
+}
+
 func EnsureSwiftVersion(ctx context.Context, stdout, stderr io.Writer) error {
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if stdout == nil {
-		stdout = io.Discard
-	}
-	if stderr == nil {
-		stderr = io.Discard
 	}
 
 	checkCmd := execCommandContext(ctx, "swiftly", "which", DefaultVersion)
@@ -60,9 +59,7 @@ func EnsureSwiftVersion(ctx context.Context, stdout, stderr io.Writer) error {
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	err := cmd.Run()
-	if flusher, ok := stdout.(interface{ Flush() }); ok {
-		flusher.Flush()
-	}
+	flushWriter(stdout)
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return fmt.Errorf("swiftly is required but not installed; see https://swiftlang.github.io/swiftly for installation instructions")
@@ -80,7 +77,7 @@ func SwiftCommand(args ...string) *exec.Cmd {
 	return execCommand("swiftly", append([]string{"run", "+" + DefaultVersion, "swift"}, args...)...)
 }
 
-func FindSwiftSDK(ctx context.Context, architecture string) (string, error) {
+func FindSwiftSDK(ctx context.Context, architecture string, stdout, stderr io.Writer) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -104,11 +101,11 @@ func FindSwiftSDK(ctx context.Context, architecture string) (string, error) {
 	}
 
 	if isWasm {
-		if err := installWasmSwiftSDK(ctx); err != nil {
+		if err := installWasmSwiftSDK(ctx, stdout, stderr); err != nil {
 			return "", err
 		}
 	} else {
-		if err := installWendySwiftSDK(ctx, sdkArch); err != nil {
+		if err := installWendySwiftSDK(ctx, sdkArch, stdout, stderr); err != nil {
 			return "", err
 		}
 	}
@@ -162,7 +159,7 @@ func lookupSwiftSDK(ctx context.Context, sdkArch string, isWasm bool) (string, e
 	return "", nil
 }
 
-func installWendySwiftSDK(ctx context.Context, sdkArch string) error {
+func installWendySwiftSDK(ctx context.Context, sdkArch string, stdout, stderr io.Writer) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -173,7 +170,7 @@ func installWendySwiftSDK(ctx context.Context, sdkArch string) error {
 		WendySDKRelease, sdkName,
 	)
 
-	fmt.Printf("Installing WendyOS Swift SDK (%s)...\n", sdkName)
+	fmt.Fprintf(stdout, "Installing WendyOS Swift SDK (%s)...\n", sdkName)
 
 	checksum, ok := wendySDKChecksums[sdkArch]
 	if !ok {
@@ -181,22 +178,26 @@ func installWendySwiftSDK(ctx context.Context, sdkArch string) error {
 	}
 
 	cmd := SwiftCommandContext(ctx, "sdk", "install", url, "--checksum", checksum)
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = stdout
 	var stderrBuf bytes.Buffer
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+	cmd.Stderr = io.MultiWriter(stderr, &stderrBuf)
 
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	flushWriter(stdout)
+	flushWriter(stderr)
+	if err != nil {
 		if out := strings.TrimSpace(stderrBuf.String()); out != "" {
 			return fmt.Errorf("installing Swift SDK from %s: %w\n%s", url, err, out)
 		}
 		return fmt.Errorf("installing Swift SDK from %s: %w", url, err)
 	}
 
-	fmt.Println("Swift SDK installed.")
+	fmt.Fprintln(stdout, "Swift SDK installed.")
+	flushWriter(stdout)
 	return nil
 }
 
-func installWasmSwiftSDK(ctx context.Context) error {
+func installWasmSwiftSDK(ctx context.Context, stdout, stderr io.Writer) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -207,21 +208,25 @@ func installWasmSwiftSDK(ctx context.Context) error {
 		DefaultVersion, sdkName, sdkName,
 	)
 
-	fmt.Printf("Installing Swift WASM SDK (%s)...\n", sdkName)
+	fmt.Fprintf(stdout, "Installing Swift WASM SDK (%s)...\n", sdkName)
 
 	cmd := SwiftCommandContext(ctx, "sdk", "install", url, "--checksum", wasmSDKChecksum)
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = stdout
 	var stderrBuf bytes.Buffer
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+	cmd.Stderr = io.MultiWriter(stderr, &stderrBuf)
 
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	flushWriter(stdout)
+	flushWriter(stderr)
+	if err != nil {
 		if out := strings.TrimSpace(stderrBuf.String()); out != "" {
 			return fmt.Errorf("installing Swift WASM SDK from %s: %w\n%s", url, err, out)
 		}
 		return fmt.Errorf("installing Swift WASM SDK from %s: %w", url, err)
 	}
 
-	fmt.Println("Swift SDK installed.")
+	fmt.Fprintln(stdout, "Swift SDK installed.")
+	flushWriter(stdout)
 	return nil
 }
 

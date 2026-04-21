@@ -495,7 +495,7 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 	defer proxyCleanup()
 
 	cliLogln("Building Swift container image for %s (%s)...", product, architecture)
-	if err := buildSwiftContainerImage(ctx, cwd, product, registryAddr, architecture, conn.IsMTLS); err != nil {
+	if err := buildSwiftContainerImage(ctx, cwd, product, registryAddr, architecture, conn.IsMTLS, &dimWriter{}, os.Stderr); err != nil {
 		return fmt.Errorf("building Swift container image: %w", err)
 	}
 	cliLogln("Build and push completed.")
@@ -592,7 +592,7 @@ func runWithProvider(ctx context.Context, p providers.DeviceProvider, device mod
 	if projectType == "swift" {
 		if ib, ok := p.(providers.ImageBuilder); ok {
 			cliLogln("Building Swift project for %s...", p.DisplayName())
-			imageName, err := buildSwiftDockerImage(ctx, projectPath, product)
+			imageName, err := buildSwiftDockerImage(ctx, projectPath, product, &dimWriter{}, os.Stderr)
 			if err != nil {
 				return fmt.Errorf("building Swift Docker image: %w", err)
 			}

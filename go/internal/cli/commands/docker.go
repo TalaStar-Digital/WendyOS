@@ -176,12 +176,12 @@ func generatePythonDockerfile(dir string) (string, error) {
 // directly to the device's registry using swift-container-plugin.
 // registryAddr is a pre-resolved host:port (e.g. "192.168.1.5:5000" or
 // "host.docker.internal:12345" when proxying).
-func buildSwiftContainerImage(ctx context.Context, dir, product, registryAddr, architecture string, useMTLS bool) error {
+func buildSwiftContainerImage(ctx context.Context, dir, product, registryAddr, architecture string, useMTLS bool, toolchainStdout, toolchainStderr io.Writer) error {
 	if err := ensureContainerPlugin(dir); err != nil {
 		return err
 	}
 
-	sdk, err := swifttoolchain.FindSwiftSDK(ctx, architecture)
+	sdk, err := swifttoolchain.FindSwiftSDK(ctx, architecture, toolchainStdout, toolchainStderr)
 	if err != nil {
 		return err
 	}
@@ -1023,9 +1023,9 @@ func findIPv4NeighborLinux(ctx context.Context, ipv6LinkLocal string) string {
 // This is used by the Docker Desktop provider for Swift projects that do not
 // have a Dockerfile, as an alternative to swift-container-plugin (which only
 // supports pushing to registries).
-func buildSwiftDockerImage(ctx context.Context, dir, product string) (string, error) {
+func buildSwiftDockerImage(ctx context.Context, dir, product string, toolchainStdout, toolchainStderr io.Writer) (string, error) {
 	arch := runtime.GOARCH
-	sdk, err := swifttoolchain.FindSwiftSDK(ctx, arch)
+	sdk, err := swifttoolchain.FindSwiftSDK(ctx, arch, toolchainStdout, toolchainStderr)
 	if err != nil {
 		return "", fmt.Errorf("finding Swift SDK: %w", err)
 	}
