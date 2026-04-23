@@ -140,7 +140,7 @@ func diffManifests(local, remote *agentpb.FileSyncManifest) manifestDiff {
 //  1. Builds the combined local manifest from all entries.
 //  2. Exchanges it with the agent (agent replies with its own manifest).
 //  3. Diffs the two manifests.
-//  4. Transfers only what changed, streaming in 256 KiB chunks.
+//  4. Transfers only what changed, streaming in 4 MiB chunks.
 //  5. Waits for FileSyncComplete.
 //
 // Progress is printed to stdout when there is something to transfer.
@@ -227,7 +227,7 @@ func syncFiles(
 	}
 
 	// Transfer each file.
-	const chunkSize = 256 * 1024
+	const chunkSize = 4 * 1024 * 1024
 	for _, agentPath := range diff.contentTransfers {
 		localPath, ok := localFiles[agentPath]
 		if !ok {
