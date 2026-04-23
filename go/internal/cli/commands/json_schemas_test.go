@@ -240,18 +240,28 @@ func TestWifiNetworksJSON_Schema(t *testing.T) {
 	}
 
 	// Capture stdout from printNetworksJSON to validate the real output.
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+
 	old := os.Stdout
 	os.Stdout = w
+	defer func() { os.Stdout = old }()
+
 	if err := printNetworksJSON(networks); err != nil {
-		os.Stdout = old
-		w.Close()
+		_ = w.Close()
 		t.Fatalf("printNetworksJSON: %v", err)
 	}
-	w.Close()
-	os.Stdout = old
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
 
-	data, _ := io.ReadAll(r)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("io.ReadAll: %v", err)
+	}
 
 	var parsed []map[string]interface{}
 	if err := json.Unmarshal(data, &parsed); err != nil {

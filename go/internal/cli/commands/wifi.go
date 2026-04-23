@@ -135,7 +135,7 @@ type wifiClient struct {
 	ctx context.Context
 
 	// Exactly one of these is set per instance.
-	agent *agentpb.WendyAgentServiceClient
+	agent agentpb.WendyAgentServiceClient
 	ble   *ble.AgentClient
 
 	// shared
@@ -153,8 +153,7 @@ func newWifiClient(target *SelectedDevice) (*wifiClient, error) {
 	case target.Bluetooth != nil:
 		return nil, fmt.Errorf("the interactive WiFi table requires a WendyOS agent; Wendy Lite is not supported here")
 	case target.Agent != nil:
-		c := target.Agent.AgentService
-		return &wifiClient{target: target, agent: &c}, nil
+		return &wifiClient{target: target, agent: target.Agent.AgentService}, nil
 	}
 	return nil, fmt.Errorf("selected device does not support WiFi management")
 }
@@ -167,7 +166,7 @@ func (c *wifiClient) Close() {
 
 func (c *wifiClient) List(ctx context.Context) ([]*agentpb.ListWiFiNetworksResponse_WiFiNetwork, error) {
 	if c.agent != nil {
-		resp, err := (*c.agent).ListWiFiNetworks(ctx, &agentpb.ListWiFiNetworksRequest{})
+		resp, err := c.agent.ListWiFiNetworks(ctx, &agentpb.ListWiFiNetworksRequest{})
 		if err != nil {
 			return nil, fmt.Errorf("listing WiFi networks: %w", err)
 		}
@@ -194,7 +193,7 @@ func (c *wifiClient) List(ctx context.Context) ([]*agentpb.ListWiFiNetworksRespo
 
 func (c *wifiClient) Connect(ctx context.Context, req *agentpb.ConnectToWiFiRequest) error {
 	if c.agent != nil {
-		resp, err := (*c.agent).ConnectToWiFi(ctx, req)
+		resp, err := c.agent.ConnectToWiFi(ctx, req)
 		if err != nil {
 			return fmt.Errorf("connecting to WiFi: %w", err)
 		}
@@ -216,7 +215,7 @@ func (c *wifiClient) Connect(ctx context.Context, req *agentpb.ConnectToWiFiRequ
 
 func (c *wifiClient) Reorder(ctx context.Context, order []string) error {
 	if c.agent != nil {
-		resp, err := (*c.agent).ReorderKnownWiFiNetworks(ctx, &agentpb.ReorderKnownWiFiNetworksRequest{OrderSsids: order})
+		resp, err := c.agent.ReorderKnownWiFiNetworks(ctx, &agentpb.ReorderKnownWiFiNetworksRequest{OrderSsids: order})
 		if err != nil {
 			return fmt.Errorf("reordering WiFi networks: %w", err)
 		}
@@ -230,7 +229,7 @@ func (c *wifiClient) Reorder(ctx context.Context, order []string) error {
 
 func (c *wifiClient) SetPriority(ctx context.Context, ssid string, priority int32) error {
 	if c.agent != nil {
-		resp, err := (*c.agent).SetWiFiNetworkPriority(ctx, &agentpb.SetWiFiNetworkPriorityRequest{Ssid: ssid, Priority: priority})
+		resp, err := c.agent.SetWiFiNetworkPriority(ctx, &agentpb.SetWiFiNetworkPriorityRequest{Ssid: ssid, Priority: priority})
 		if err != nil {
 			return fmt.Errorf("setting priority: %w", err)
 		}
@@ -244,7 +243,7 @@ func (c *wifiClient) SetPriority(ctx context.Context, ssid string, priority int3
 
 func (c *wifiClient) Forget(ctx context.Context, ssid string) error {
 	if c.agent != nil {
-		resp, err := (*c.agent).ForgetWiFiNetwork(ctx, &agentpb.ForgetWiFiNetworkRequest{Ssid: ssid})
+		resp, err := c.agent.ForgetWiFiNetwork(ctx, &agentpb.ForgetWiFiNetworkRequest{Ssid: ssid})
 		if err != nil {
 			return fmt.Errorf("forgetting network: %w", err)
 		}

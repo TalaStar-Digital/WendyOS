@@ -316,37 +316,50 @@ func AddOrUpdateProfile(ctx context.Context, c SavedCredential) error {
 }
 
 func addOrUpdateProfile(ctx context.Context, nmcliPath string, c SavedCredential) error {
-	uuid, _ := existingProfileUUID(ctx, nmcliPath, c.SSID)
+	uuid, err := existingProfileUUID(ctx, nmcliPath, c.SSID)
+	if err != nil {
+		return err
+	}
 	if uuid != "" {
 		return modifyProfile(ctx, nmcliPath, uuid, c)
 	}
 	return addProfile(ctx, nmcliPath, c)
 }
 
+// existingProfileUUID returns the UUID of the saved 802-11-wireless profile
+// whose ssid field equals ssid. Returns ("", nil) when no such profile
+// exists. Uses a single batched `nmcli connection show UUID1 UUID2 …` call
+// so the cost is O(1) exec calls in the number of saved profiles.
 func existingProfileUUID(ctx context.Context, nmcliPath, ssid string) (string, error) {
-	cmd := exec.CommandContext(ctx, nmcliPath, "-t",
-		"-f", "NAME,UUID,TYPE", "connection", "show")
-	out, err := cmd.Output()
+	out, err := exec.CommandContext(ctx, nmcliPath, "-t",
+		"-f", "NAME,UUID,TYPE", "connection", "show").Output()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("nmcli connection show: %w", err)
 	}
+	var uuids []string
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
 	for scanner.Scan() {
 		fields := splitNMCLI(scanner.Text(), 3)
 		if len(fields) < 3 || fields[2] != "802-11-wireless" {
 			continue
 		}
-		// Profile name isn't always the SSID — look up the ssid field.
-		dout, derr := exec.CommandContext(ctx, nmcliPath, "-t", "-g",
-			"802-11-wireless.ssid", "connection", "show", fields[1]).Output()
-		if derr != nil {
-			continue
-		}
-		if unescapeNMCLI(strings.TrimRight(string(dout), "\n")) == ssid {
-			return fields[1], nil
+		uuids = append(uuids, fields[1])
+	}
+	if len(uuids) == 0 {
+		return "", nil
+	}
+	args := append([]string{"-t", "-g", "802-11-wireless.ssid", "connection", "show"}, uuids...)
+	dout, derr := exec.CommandContext(ctx, nmcliPath, args...).Output()
+	if derr != nil {
+		return "", fmt.Errorf("nmcli connection show (ssids): %w", derr)
+	}
+	lines := strings.Split(strings.TrimRight(string(dout), "\n"), "\n")
+	for i, uuid := range uuids {
+		if i < len(lines) && unescapeNMCLI(lines[i]) == ssid {
+			return uuid, nil
 		}
 	}
-	return "", fmt.Errorf("no saved profile for SSID %q", ssid)
+	return "", nil
 }
 
 func addProfile(ctx context.Context, nmcliPath string, c SavedCredential) error {
@@ -409,11 +422,18 @@ func ActivateProfile(ctx context.Context, ssid string) error {
 	if path == "" {
 		return fmt.Errorf("nmcli not found")
 	}
-	uuid, err := existingProfileUUID(ctx, path, ssid)
+	return activateProfile(ctx, path, ssid)
+}
+
+func activateProfile(ctx context.Context, nmcliPath, ssid string) error {
+	uuid, err := existingProfileUUID(ctx, nmcliPath, ssid)
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, path, "connection", "up", uuid)
+	if uuid == "" {
+		return fmt.Errorf("no saved profile for SSID %q", ssid)
+	}
+	cmd := exec.CommandContext(ctx, nmcliPath, "connection", "up", uuid)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("nmcli connection up %s: %s: %w", ssid, strings.TrimSpace(string(out)), err)
 	}
@@ -443,13 +463,63 @@ func keyMgmtFromHint(hint, password string) string {
 }
 
 // ConnectToWiFi connects to a WiFi network.
+//
+// For visible networks we let `nmcli device wifi connect` auto-detect the
+// security from the scan. For hidden networks or when the caller supplied an
+// explicit security hint (both are cases where autodetection can't be trusted
+// — `device wifi connect` has no way to express key-mgmt), we create/update a
+// profile with the requested key-mgmt and activate it.
 func (n *NMCLINetworkManager) ConnectToWiFi(ctx context.Context, req *agentpb.ConnectToWiFiRequest) error {
+	ssid := req.GetSsid()
 	hidden := req.GetHidden()
-	if err := runNMCLIConnect(ctx, n.nmcliPath, req.GetSsid(), req.GetPassword(), hidden); err != nil {
+	secHint := securityHintFromProto(req.GetSecurity())
+
+	if hidden || secHint != "" {
+		cred := SavedCredential{
+			SSID:     ssid,
+			Password: req.GetPassword(),
+			Hidden:   hidden,
+			Security: secHint,
+		}
+		if err := addOrUpdateProfile(ctx, n.nmcliPath, cred); err != nil {
+			return fmt.Errorf("preparing WiFi profile: %w", err)
+		}
+		if err := activateProfile(ctx, n.nmcliPath, ssid); err != nil {
+			return err
+		}
+		n.logger.Info("Connected to WiFi via profile",
+			zap.String("ssid", ssid),
+			zap.Bool("hidden", hidden),
+			zap.String("security", secHint))
+		return nil
+	}
+
+	if err := runNMCLIConnect(ctx, n.nmcliPath, ssid, req.GetPassword(), hidden); err != nil {
 		return err
 	}
-	n.logger.Info("Connected to WiFi", zap.String("ssid", req.GetSsid()))
+	n.logger.Info("Connected to WiFi", zap.String("ssid", ssid))
 	return nil
+}
+
+// securityHintFromProto maps the proto enum to the free-form string consumed
+// by keyMgmtFromHint. Returns "" for UNSPECIFIED so callers can treat that as
+// "no hint, use scan autodetect".
+func securityHintFromProto(t agentpb.WiFiSecurityType) string {
+	switch t {
+	case agentpb.WiFiSecurityType_WIFI_SECURITY_TYPE_OPEN:
+		return "open"
+	case agentpb.WiFiSecurityType_WIFI_SECURITY_TYPE_WEP:
+		return "wep"
+	case agentpb.WiFiSecurityType_WIFI_SECURITY_TYPE_WPA_PSK:
+		return "wpa-psk"
+	case agentpb.WiFiSecurityType_WIFI_SECURITY_TYPE_WPA2_PSK:
+		return "wpa2-psk"
+	case agentpb.WiFiSecurityType_WIFI_SECURITY_TYPE_WPA3_SAE:
+		return "sae"
+	case agentpb.WiFiSecurityType_WIFI_SECURITY_TYPE_WPA2_ENTERPRISE:
+		return "wpa2-enterprise"
+	}
+	return ""
 }
 
 func runNMCLIConnect(ctx context.Context, nmcliPath, ssid, password string, hidden bool) error {
