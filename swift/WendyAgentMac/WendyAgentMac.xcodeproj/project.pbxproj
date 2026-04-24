@@ -14,6 +14,19 @@
 		B00000000000000000000004 /* WendyAgentMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WendyAgentMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B373D09C2F9B5A5400C31493 /* Exceptions for "Configuration" folder in "WendyAgentMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Debug.xcconfig,
+				Default.xcconfig,
+				Release.xcconfig,
+				WendyAgentMac.xcconfig,
+			);
+			target = B00000000000000000000003 /* WendyAgentMac */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B00000000000000000000005 /* Sources */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -42,6 +55,9 @@
 		};
 		B373D0972F9B594D00C31493 /* Configuration */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B373D09C2F9B5A5400C31493 /* Exceptions for "Configuration" folder in "WendyAgentMac" target */,
+			);
 			path = Configuration;
 			sourceTree = "<group>";
 		};
@@ -119,7 +135,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2630;
-				LastUpgradeCheck = 2630;
+				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					B00000000000000000000003 = {
 						CreatedOnToolsVersion = 26.3;
@@ -131,6 +147,7 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				Base,
 			);
 			mainGroup = B00000000000000000000006;
 			minimizedProjectReferenceProxies = 1;
@@ -173,6 +190,7 @@
 			baseConfigurationReferenceAnchor = B373D0972F9B594D00C31493 /* Configuration */;
 			baseConfigurationReferenceRelativePath = Debug.xcconfig;
 			buildSettings = {
+				DEVELOPMENT_TEAM = 3YVC792H3S;
 			};
 			name = Debug;
 		};
@@ -181,6 +199,7 @@
 			baseConfigurationReferenceAnchor = B373D0972F9B594D00C31493 /* Configuration */;
 			baseConfigurationReferenceRelativePath = Release.xcconfig;
 			buildSettings = {
+				DEVELOPMENT_TEAM = 3YVC792H3S;
 			};
 			name = Release;
 		};
@@ -189,6 +208,7 @@
 			baseConfigurationReferenceAnchor = B373D0972F9B594D00C31493 /* Configuration */;
 			baseConfigurationReferenceRelativePath = WendyAgentMac.xcconfig;
 			buildSettings = {
+				DEAD_CODE_STRIPPING = YES;
 			};
 			name = Debug;
 		};
@@ -197,6 +217,7 @@
 			baseConfigurationReferenceAnchor = B373D0972F9B594D00C31493 /* Configuration */;
 			baseConfigurationReferenceRelativePath = WendyAgentMac.xcconfig;
 			buildSettings = {
+				DEAD_CODE_STRIPPING = YES;
 			};
 			name = Release;
 		};
