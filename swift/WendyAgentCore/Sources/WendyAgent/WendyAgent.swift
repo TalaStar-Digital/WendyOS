@@ -38,10 +38,10 @@ public final class WendyAgent {
         let broadcaster = TelemetryBroadcaster()
 
         do {
-            let dockerAvailable = await self.prepareDockerIfNeeded()
+            let dockerAvailability = await self.prepareDockerIfNeeded()
 
             try await self.startMainServer(
-                dockerAvailable: dockerAvailable,
+                dockerAvailability: dockerAvailability,
                 broadcaster: broadcaster
             )
             try await self.startOTelServer(broadcaster: broadcaster)
@@ -157,10 +157,10 @@ public final class WendyAgent {
     private var appsObservationTasks:
         [WendyObservationRegistry<[WendyAppInfo]>.ObservationID: Task<Void, Never>] = [:]
 
-    private func prepareDockerIfNeeded() async -> Bool {
+    private func prepareDockerIfNeeded() async -> DockerCLI.AvailabilityCheckResult {
         let docker = DockerCLI()
-        let dockerAvailable = await docker.checkAvailable()
-        if dockerAvailable {
+        let availability = await docker.checkAvailability()
+        if availability.isAvailable {
             do {
                 try await docker.ensureRegistry()
             } catch {
@@ -168,15 +168,20 @@ public final class WendyAgent {
                     "Failed to start Docker registry: \(String(describing: error)). Linux container support disabled."
                 )
             }
+        } else if let failureMessage = availability.failureMessage {
+            self.logger.warning(
+                "Docker not available, Linux container support disabled",
+                metadata: ["reason": "\(failureMessage)"]
+            )
         } else {
             self.logger.info("Docker not available, Linux container support disabled")
         }
 
-        return dockerAvailable
+        return availability
     }
 
     private func startMainServer(
-        dockerAvailable: Bool,
+        dockerAvailability: DockerCLI.AvailabilityCheckResult,
         broadcaster: TelemetryBroadcaster
     ) async throws {
         let stateDirectory = FileManager.default.homeDirectoryForCurrentUser
@@ -191,7 +196,8 @@ public final class WendyAgent {
                 : self.configuration.sandboxProfile,
             stateDirectory: stateDirectory,
             appsBase: appsBase,
-            dockerAvailable: dockerAvailable,
+            dockerAvailable: dockerAvailability.isAvailable,
+            dockerUnavailableMessage: dockerAvailability.failureMessage,
             onAppsChanged: { [weak self] apps in
                 await self?.updateApps(apps)
             }

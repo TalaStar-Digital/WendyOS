@@ -22,6 +22,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
 
     /// Docker backend for Linux containers. Nil when Docker is not available.
     private let dockerBackend: DockerContainerBackend?
+    private let dockerUnavailableMessage: String?
 
     init(
         broadcaster: TelemetryBroadcaster,
@@ -30,6 +31,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         stateDirectory: URL? = nil,
         appsBase: URL? = nil,
         dockerAvailable: Bool = false,
+        dockerUnavailableMessage: String? = nil,
         onAppsChanged: @escaping @Sendable ([WendyAppInfo]) async -> Void = { _ in }
     ) {
         self.broadcaster = broadcaster
@@ -37,6 +39,7 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
         self.executablePath = executablePath
         self.sandboxProfilePath = sandboxProfilePath
         self.dockerBackend = dockerAvailable ? DockerContainerBackend() : nil
+        self.dockerUnavailableMessage = dockerUnavailableMessage
 
         let defaultStateDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/wendy-agent")
@@ -408,8 +411,8 @@ actor ContainerService: Wendy_Agent_Services_V1_WendyContainerService.ServicePro
             guard let dockerBackend else {
                 throw RPCError(
                     code: .failedPrecondition,
-                    message:
-                        "Docker is required for Linux containers but was not found. Install Docker Desktop, Colima, or OrbStack."
+                    message: self.dockerUnavailableMessage
+                        ?? "Docker is required for Linux containers but was not found. Install Docker Desktop, Colima, or OrbStack."
                 )
             }
 

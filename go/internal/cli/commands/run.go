@@ -218,7 +218,7 @@ func createContainerWithoutProgress(ctx context.Context, svc agentpb.WendyContai
 }
 
 func fallbackCreateContainerWithoutProgress(ctx context.Context, svc agentpb.WendyContainerServiceClient, req *agentpb.CreateContainerRequest) error {
-	cliNotice("Notice: image pull progress is not supported by this agent; continuing without progress")
+	cliLogln("Info: progress reporting is currently not available on this agent; continuing without progress")
 	return createContainerWithoutProgress(ctx, svc, req)
 }
 
@@ -228,7 +228,7 @@ func progressModelUserCancelled(model tea.Model) bool {
 }
 
 func createContainerWithProgressTUI(cancel context.CancelFunc, stream agentpb.WendyContainerService_CreateContainerWithProgressClient) error {
-	prog := tea.NewProgram(tui.NewProgress("Pulling image on device..."))
+	prog := tea.NewProgram(tui.NewProgress("Pulling image on device...").WithoutErrorView())
 
 	var (
 		createErr error
