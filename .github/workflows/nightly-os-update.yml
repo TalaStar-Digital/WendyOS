@@ -1,0 +1,94 @@
+name: Nightly OS Update
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 02:00 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  discover:
+    name: Discover devices
+    runs-on:
+      group: wendy-developer
+      labels: [self-hosted, macOS, ARM64]
+    outputs:
+      matrix: ${{ steps.scan.outputs.matrix }}
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Build CLI
+        run: make build-cli
+
+      - name: Clear OS image cache
+        run: ./bin/wendy os cache clear
+
+      - name: Scan for WendyOS devices
+        id: scan
+        run: |
+          RESULT=$(./bin/wendy discover --json --type lan --timeout 10s)
+          echo "$RESULT" | jq '[.lanDevices[] | select(.isWendyDevice) | {name: .displayName, address: (.hostname // .ipAddress)}]'
+
+          MATRIX=$(echo "$RESULT" | jq -c \
+            '[.lanDevices[] | select(.isWendyDevice and (.hostname // .ipAddress)) | .hostname // .ipAddress]')
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+          COUNT=$(echo "$MATRIX" | jq 'length')
+          echo "Found $COUNT device(s)."
+          [ "$COUNT" -gt 0 ] || { echo "No WendyOS devices found — nothing to update."; }
+
+  update:
+    name: ${{ matrix.hostname }}
+    needs: discover
+    if: needs.discover.outputs.matrix != '[]'
+    runs-on:
+      group: wendy-developer
+      labels: [self-hosted, macOS, ARM64]
+    concurrency:
+      group: update-${{ matrix.hostname }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        hostname: ${{ fromJson(needs.discover.outputs.matrix) }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Build CLI
+        run: make build-cli
+
+      - name: Current version
+        run: |
+          ./bin/wendy device version --json --device ${{ matrix.hostname }} \
+            | jq '{osVersion, agentVersion: .version, deviceType}' || true
+
+      - name: Flash OS update
+        run: ./bin/wendy os update --device ${{ matrix.hostname }}
+        # wendy os update blocks until the device reboots and comes back online,
+        # with a 5-minute internal timeout. The step fails if it doesn't recover.
+
+      - name: Confirm device online
+        run: |
+          ./bin/wendy device version --json --device ${{ matrix.hostname }} \
+            | jq '{osVersion, agentVersion: .version}'
+
+      - name: Template tests
+        run: scripts/test-templates.sh -w ./bin/wendy -h ${{ matrix.hostname }}
