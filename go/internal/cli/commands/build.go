@@ -13,6 +13,7 @@ import (
 	"github.com/wendylabsinc/wendy/internal/cli/providers"
 	"github.com/wendylabsinc/wendy/internal/cli/swifttoolchain"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
 	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
 	"golang.org/x/term"
 )
@@ -95,14 +96,25 @@ func newBuildCmd() *cobra.Command {
 				return err
 			}
 
-			// Query the device architecture when an agent connection is available.
+			// Query the device OS and architecture when an agent connection is
+			// available and determine the target platform.
+			var cfgPlatform string
+			if cfgErr == nil {
+				cfgPlatform = appCfg.Platform
+			}
 			platform := "linux/arm64"
 			if target != nil && target.Agent != nil {
 				versionResp, err := target.Agent.AgentService.GetAgentVersion(cmd.Context(), &agentpb.GetAgentVersionRequest{})
 				if err == nil {
-					if arch := versionResp.GetCpuArchitecture(); arch != "" {
-						platform = "linux/" + arch
+					agentOS := versionResp.GetOs()
+					if agentOS == "" {
+						agentOS = "linux"
 					}
+					arch := versionResp.GetCpuArchitecture()
+					if arch == "" {
+						arch = "arm64"
+					}
+					platform = resolveAgentPlatform(cfgPlatform, agentOS, arch)
 				}
 			}
 
@@ -295,7 +307,8 @@ func detectProjectTypeWithLanguage(dir, language string) string {
 	case "swift":
 		return "swift"
 	}
-	return detectProjectType(dir)
+	t, _ := detectProjectType(dir) // ignore multiple-xcodeproj error for picker pre-filtering
+	return t
 }
 
 func buildProject(ctx context.Context, dir string, option *BuildOption, appID, platform string) error {
@@ -308,6 +321,8 @@ func buildProject(ctx context.Context, dir string, option *BuildOption, appID, p
 		return buildPythonProject(dir, imageName, platform)
 	case "swift":
 		return buildSwiftProject(dir, appID, platform)
+	case "xcode":
+		return buildXcodeProject(ctx, dir, option.File)
 	default:
 		return fmt.Errorf("unknown project type; add a Dockerfile, Package.swift, or requirements.txt")
 	}
@@ -378,6 +393,33 @@ func buildPythonProject(dir, imageName, platform string) error {
 	}
 
 	return err
+}
+
+func buildXcodeProject(ctx context.Context, dir, xcodeproj string) error {
+	// Resolve scheme: honour wendy.json override, then auto-detect.
+	scheme := ""
+	if cfg, err := appconfig.LoadFromFile(filepath.Join(dir, "wendy.json")); err == nil && cfg.Xcode != nil {
+		scheme = cfg.Xcode.Scheme
+	}
+	if scheme == "" {
+		var err error
+		scheme, err = findXcodeScheme(ctx, dir)
+		if err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("Building Xcode project %s (scheme: %s)...\n", xcodeproj, scheme)
+	if err := runXcodebuild(ctx, dir,
+		"-project", xcodeproj,
+		"-scheme", scheme,
+		"-configuration", "Release",
+		"-derivedDataPath", ".xcode/",
+	); err != nil {
+		return err
+	}
+	fmt.Println("Build completed successfully.")
+	return nil
 }
 
 func buildSwiftProject(dir, appID, platform string) error {
