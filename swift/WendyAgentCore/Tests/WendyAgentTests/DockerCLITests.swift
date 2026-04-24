@@ -63,9 +63,15 @@ struct DockerCLITests {
         let resolution = docker.resolveExecutableForTesting()
 
         #expect(availability.isAvailable == false)
-        #expect(availability.failureMessage?.contains("Could not find \(executable) executable") == true)
+        #expect(
+            availability.failureMessage?.contains("Could not find \(executable) executable") == true
+        )
         #expect(availability.failureMessage?.contains("/tmp/\(executable)") == true)
-        #expect(availability.failureMessage?.contains("/Applications/Docker.app/Contents/Resources/bin/\(executable)") == true)
+        #expect(
+            availability.failureMessage?.contains(
+                "/Applications/Docker.app/Contents/Resources/bin/\(executable)"
+            ) == true
+        )
         #expect(resolution.resolvedPath == nil)
         #expect(resolution.searchedPaths.contains("/tmp/\(executable)"))
         #expect(

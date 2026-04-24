@@ -346,7 +346,8 @@ struct DockerCLI: Sendable {
 
     private func resolveExecutable() -> ExecutableResolution {
         if self.executable.contains("/") {
-            let resolvedPath = FileManager.default.isExecutableFile(atPath: self.executable)
+            let resolvedPath =
+                FileManager.default.isExecutableFile(atPath: self.executable)
                 ? self.executable : nil
             return ExecutableResolution(
                 requested: self.executable,
@@ -370,7 +371,10 @@ struct DockerCLI: Sendable {
             .map(String.init)
             .filter { !$0.isEmpty }
 
-        let candidates = pathEntries.map { URL(fileURLWithPath: $0).appendingPathComponent(self.executable).path }
+        let candidates =
+            pathEntries.map {
+                URL(fileURLWithPath: $0).appendingPathComponent(self.executable).path
+            }
             + Self.fallbackExecutablePaths(for: self.executable)
 
         var seen = Set<String>()
