@@ -19,6 +19,24 @@ on:
         description: 'Platform to run integration tests on: all, macos, linux (default: all)'
         required: false
         default: 'all'
+  workflow_call:
+    inputs:
+      hostname:
+        type: string
+        required: false
+        default: ''
+      tests:
+        type: string
+        required: false
+        default: ''
+      jobs:
+        type: string
+        required: false
+        default: 'all'
+      platform:
+        type: string
+        required: false
+        default: 'all'
 
 jobs:
   discover:
