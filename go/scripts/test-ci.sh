@@ -23,7 +23,8 @@ Tests:
   python-bluetooth      Python with bluetooth entitlement
   python-no-network     Verify network is blocked WITHOUT entitlement
   python-no-bluetooth   Verify bluetooth is blocked WITHOUT entitlement
-  compose-hello         docker-compose multi-service deployment (two services)
+  compose-hello         docker-compose multi-service deployment with build: Dockerfiles
+  compose-images        docker-compose multi-service deployment using public images
 
 Device Selection:
   If --hostname is not provided, the script auto-discovers a device on the
@@ -184,6 +185,7 @@ ALL_TESTS=(
     python-no-network
     python-no-bluetooth
     compose-hello
+    compose-images
 )
 
 # If specific tests were requested via -t, filter the list.
@@ -228,22 +230,21 @@ for test_name in "${TESTS[@]}"; do
         continue
     fi
 
-    # ── Compose tests (docker-compose.yml, no wendy.json) ──────────────
-    if [[ -f "$test_dir/docker-compose.yml" || -f "$test_dir/compose.yml" ]]; then
-        compose_file="$test_dir/docker-compose.yml"
-        [[ -f "$test_dir/compose.yml" ]] && compose_file="$test_dir/compose.yml"
-
+    # ── Compose tests (docker-compose.{yml,yaml}, compose.{yml,yaml}, no wendy.json) ──
+    compose_file=""
+    for cand in docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do
+        if [[ -f "$test_dir/$cand" ]]; then
+            compose_file="$test_dir/$cand"
+            break
+        fi
+    done
+    if [[ -n "$compose_file" ]]; then
         # Derive project name from directory name (mirrors CLI logic).
         project_name="$(basename "$test_dir")"
 
-        # Extract service names using Python (available on all supported platforms).
-        service_names=$(python3 - <<'PYEOF' "$compose_file"
-import sys, yaml
-with open(sys.argv[1]) as f:
-    cfg = yaml.safe_load(f)
-print(' '.join((cfg.get('services') or {}).keys()))
-PYEOF
-        )
+        # Use docker compose itself to enumerate services so we don't depend
+        # on PyYAML (not in stdlib and not installed on most CI hosts).
+        service_names=$(docker compose -f "$compose_file" config --services 2>/dev/null | tr '\n' ' ')
 
         # Pre-cleanup: remove leftover service containers.
         for svc in $service_names; do

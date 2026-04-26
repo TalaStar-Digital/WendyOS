@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,8 +88,32 @@ func (p *DockerProvider) CanBuild(projectPath string) bool {
 }
 
 func (p *DockerProvider) Build(ctx context.Context, device models.ExternalDevice, projectPath, product string, debug bool) (*BuiltApp, error) {
-	if cf := composeFile(projectPath); cf != "" {
-		cmd := exec.CommandContext(ctx, "docker", "compose", "build")
+	return p.BuildWithType(ctx, device, projectPath, product, "", debug)
+}
+
+// BuildWithType is the typed-build entry point. When buildType is "compose" or
+// empty (auto), it uses the compose file if one is present. When buildType is
+// "docker", it builds the Dockerfile directly even if a compose file also
+// exists in the project root.
+func (p *DockerProvider) BuildWithType(ctx context.Context, device models.ExternalDevice, projectPath, product, buildType string, debug bool) (*BuiltApp, error) {
+	useCompose := false
+	cf := composeFile(projectPath)
+	switch buildType {
+	case "compose":
+		useCompose = true
+	case "docker":
+		useCompose = false
+	default:
+		// Auto: prefer compose when a compose file is present.
+		useCompose = cf != ""
+	}
+
+	if useCompose {
+		if cf == "" {
+			return nil, fmt.Errorf("no Compose file found in %s", projectPath)
+		}
+		args := []string{"compose", "-f", cf, "build"}
+		cmd := exec.CommandContext(ctx, "docker", args...)
 		cmd.Dir = projectPath
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -137,8 +162,36 @@ func (p *DockerProvider) BuildFromImage(device models.ExternalDevice, product, i
 	}
 }
 
+// composeArgs returns docker-compose CLI arguments with -f set to the project's
+// compose file when known. Pinning the file makes execution deterministic when
+// multiple compose markers exist in the directory.
+func composeArgs(cc *dockerComposeBuildContext, sub ...string) []string {
+	args := []string{"compose"}
+	if cc.ComposeFile != "" {
+		args = append(args, "-f", cc.ComposeFile)
+	}
+	return append(args, sub...)
+}
+
+// scanLines pumps a reader through a Scanner and emits one RunOutput per line.
+// Each emitted slice is a fresh copy of the scanner's buffer, because Scanner
+// reuses its internal buffer between scans and reusing it across the channel
+// would corrupt earlier lines.
+func scanLines(r io.Reader, output chan<- RunOutput, kind RunOutputType, done chan<- struct{}) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 64*1024), 64*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		buf := make([]byte, len(line)+1)
+		copy(buf, line)
+		buf[len(line)] = '\n'
+		output <- RunOutput{Type: kind, Data: buf}
+	}
+	done <- struct{}{}
+}
+
 func (p *DockerProvider) runCompose(ctx context.Context, cc *dockerComposeBuildContext, detach bool, output chan<- RunOutput) error {
-	args := []string{"compose", "up", "--remove-orphans"}
+	args := composeArgs(cc, "up", "--remove-orphans")
 	if detach {
 		args = append(args, "-d")
 	}
@@ -172,22 +225,8 @@ func (p *DockerProvider) runCompose(ctx context.Context, cc *dockerComposeBuildC
 	output <- RunOutput{Type: RunOutputStarted}
 
 	done := make(chan struct{})
-	go func() {
-		scanner := bufio.NewScanner(stdoutPipe)
-		scanner.Buffer(make([]byte, 64*1024), 64*1024)
-		for scanner.Scan() {
-			output <- RunOutput{Type: RunOutputStdout, Data: append(scanner.Bytes(), '\n')}
-		}
-		done <- struct{}{}
-	}()
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		scanner.Buffer(make([]byte, 64*1024), 64*1024)
-		for scanner.Scan() {
-			output <- RunOutput{Type: RunOutputStderr, Data: append(scanner.Bytes(), '\n')}
-		}
-		done <- struct{}{}
-	}()
+	go scanLines(stdoutPipe, output, RunOutputStdout, done)
+	go scanLines(stderrPipe, output, RunOutputStderr, done)
 
 	<-done
 	<-done
@@ -265,22 +304,8 @@ func (p *DockerProvider) Run(ctx context.Context, app *BuiltApp, detach bool, ou
 	output <- RunOutput{Type: RunOutputStarted}
 
 	done := make(chan struct{})
-	go func() {
-		scanner := bufio.NewScanner(stdoutPipe)
-		scanner.Buffer(make([]byte, 64*1024), 64*1024)
-		for scanner.Scan() {
-			output <- RunOutput{Type: RunOutputStdout, Data: append(scanner.Bytes(), '\n')}
-		}
-		done <- struct{}{}
-	}()
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		scanner.Buffer(make([]byte, 64*1024), 64*1024)
-		for scanner.Scan() {
-			output <- RunOutput{Type: RunOutputStderr, Data: append(scanner.Bytes(), '\n')}
-		}
-		done <- struct{}{}
-	}()
+	go scanLines(stdoutPipe, output, RunOutputStdout, done)
+	go scanLines(stderrPipe, output, RunOutputStderr, done)
 
 	<-done
 	<-done
@@ -289,7 +314,7 @@ func (p *DockerProvider) Run(ctx context.Context, app *BuiltApp, detach bool, ou
 
 func (p *DockerProvider) Stop(ctx context.Context, app *BuiltApp) error {
 	if cc, ok := app.Context.(*dockerComposeBuildContext); ok {
-		cmd := exec.CommandContext(ctx, "docker", "compose", "down")
+		cmd := exec.CommandContext(ctx, "docker", composeArgs(cc, "down")...)
 		cmd.Dir = cc.ProjectDir
 		return cmd.Run()
 	}

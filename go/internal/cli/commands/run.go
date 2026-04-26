@@ -408,8 +408,14 @@ func runCommand(ctx context.Context, opts runOptions) error {
 	}
 
 	// Compose projects don't use wendy.json — each service carries its own config.
-	// Detect this early so we don't prompt to create an unneeded file.
-	if projectType, _ := resolveRunProjectType(cwd, opts.buildType); projectType == "compose" {
+	// Detect this early so we don't prompt to create an unneeded file. Surfacing
+	// resolveRunProjectType errors here also catches invalid --build-type values
+	// before we try to load wendy.json.
+	projectType, err := resolveRunProjectType(cwd, opts.buildType)
+	if err != nil {
+		return err
+	}
+	if projectType == "compose" {
 		return runComposeCommand(ctx, cwd, opts)
 	}
 
@@ -860,7 +866,13 @@ func runWithProvider(ctx context.Context, p providers.DeviceProvider, device mod
 	if app == nil {
 		cliLogln("Building with %s provider...", p.DisplayName())
 		var err error
-		app, err = p.Build(ctx, device, projectPath, product, opts.debug)
+		// Pass the resolved project type to providers that can disambiguate
+		// between buildable markers (e.g. Docker vs Compose).
+		if tb, ok := p.(providers.TypedBuilder); ok {
+			app, err = tb.BuildWithType(ctx, device, projectPath, product, projectType, opts.debug)
+		} else {
+			app, err = p.Build(ctx, device, projectPath, product, opts.debug)
+		}
 		if err != nil {
 			return fmt.Errorf("provider build: %w", err)
 		}

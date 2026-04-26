@@ -326,7 +326,7 @@ func buildProject(ctx context.Context, dir string, option *BuildOption, appID, p
 	case "xcode":
 		return buildXcodeProject(ctx, dir, option.File)
 	default:
-		return fmt.Errorf("unknown project type; add a Dockerfile, docker-compose.yml, Package.swift, or requirements.txt")
+		return fmt.Errorf("unknown project type; add a Dockerfile, a Compose file (docker-compose.yml, docker-compose.yaml, compose.yml, or compose.yaml), Package.swift, or requirements.txt")
 	}
 }
 

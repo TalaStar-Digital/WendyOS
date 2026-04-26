@@ -11,12 +11,28 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/distribution/reference"
 	"gopkg.in/yaml.v3"
 
 	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
 	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
 	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
 )
+
+// normalizeImageRef canonicalises a Docker short reference (e.g.
+// "python:3.11-slim", "nginx") to a fully-qualified form
+// ("docker.io/library/python:3.11-slim") that the agent's containerd
+// reference parser accepts. References that already include a registry,
+// digest, or tag pass through unchanged. When parsing fails (malformed
+// reference), the original input is returned and the agent surfaces the
+// resulting error.
+func normalizeImageRef(ref string) string {
+	named, err := reference.ParseNormalizedNamed(strings.TrimSpace(ref))
+	if err != nil {
+		return ref
+	}
+	return reference.TagNameOnly(named).String()
+}
 
 // composeConfig is a minimal representation of a docker-compose file.
 type composeConfig struct {
@@ -87,17 +103,19 @@ func composeBuildContext(svc composeService, projectDir string) (ctxDir, dockerf
 		return ctxDir, df, bc.Args, nil
 	}
 
-	return "", "", nil, nil
+	return "", "", nil, fmt.Errorf("unsupported build directive (yaml kind %d); expected a path string or a mapping", svc.Build.Kind)
 }
 
-// composeCommand returns the command for a service as a slice.
+// composeCommand returns the command for a service as a slice. Sequence form
+// preserves each argv element verbatim. Scalar form is shell-split into argv
+// tokens, matching docker-compose's documented behaviour.
 func composeCommand(svc composeService) []string {
 	if svc.Command.IsZero() {
 		return nil
 	}
 	switch svc.Command.Kind {
 	case yaml.ScalarNode:
-		return []string{svc.Command.Value}
+		return shellSplit(svc.Command.Value)
 	case yaml.SequenceNode:
 		var parts []string
 		_ = svc.Command.Decode(&parts)
@@ -106,7 +124,63 @@ func composeCommand(svc composeService) []string {
 	return nil
 }
 
+// composeArgv splits a service's command into a (cmd, extraArgs) pair suitable
+// for CreateContainerRequest.Cmd / UserArgs. cmd is guaranteed to be a single
+// shell-safe token (no whitespace) so the agent's strings.Fields(cmd) split is
+// a no-op; the remaining argv tokens flow through UserArgs unchanged so
+// arguments containing whitespace (e.g. a `-c <script>` body) are preserved.
+func composeArgv(svc composeService) (string, []string) {
+	parts := composeCommand(svc)
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return parts[0], parts[1:]
+}
+
+// shellSplit performs minimal POSIX-style splitting on a string command:
+// whitespace separates tokens, and pairs of single or double quotes group a
+// run of characters into one token. Backslash escapes are not interpreted —
+// callers needing those should use the YAML sequence form.
+func shellSplit(s string) []string {
+	var (
+		tokens []string
+		cur    strings.Builder
+		quote  rune
+		inTok  bool
+	)
+	flush := func() {
+		if inTok {
+			tokens = append(tokens, cur.String())
+			cur.Reset()
+			inTok = false
+		}
+	}
+	for _, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+				continue
+			}
+			cur.WriteRune(r)
+			inTok = true
+		case r == '\'' || r == '"':
+			quote = r
+			inTok = true
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			flush()
+		default:
+			cur.WriteRune(r)
+			inTok = true
+		}
+	}
+	flush()
+	return tokens
+}
+
 // composeEnv returns environment variables for a service as KEY=VALUE strings.
+// Mapping values may be strings, numbers, bools, or null (inherit from process env).
+// Sequence entries may be "KEY=VALUE" or bare "KEY" (inherit from process env).
 func composeEnv(svc composeService) []string {
 	if svc.Environment.IsZero() {
 		return nil
@@ -114,16 +188,30 @@ func composeEnv(svc composeService) []string {
 	var result []string
 	switch svc.Environment.Kind {
 	case yaml.MappingNode:
-		var m map[string]string
+		var m map[string]any
 		if err := svc.Environment.Decode(&m); err == nil {
 			for k, v := range m {
-				result = append(result, k+"="+v)
+				if v == nil {
+					if inherited, ok := os.LookupEnv(k); ok {
+						result = append(result, k+"="+inherited)
+					}
+					continue
+				}
+				result = append(result, k+"="+fmt.Sprint(v))
 			}
 		}
 	case yaml.SequenceNode:
 		var list []string
 		if err := svc.Environment.Decode(&list); err == nil {
-			result = list
+			for _, entry := range list {
+				if strings.Contains(entry, "=") {
+					result = append(result, entry)
+					continue
+				}
+				if inherited, ok := os.LookupEnv(entry); ok {
+					result = append(result, entry+"="+inherited)
+				}
+			}
 		}
 	}
 	return result
@@ -140,6 +228,37 @@ func composeRestartPolicy(restart string) *agentpb.RestartPolicy {
 		return &agentpb.RestartPolicy{Mode: agentpb.RestartPolicyMode_NO}
 	default:
 		return &agentpb.RestartPolicy{Mode: agentpb.RestartPolicyMode_DEFAULT}
+	}
+}
+
+// parseComposeVolume parses a docker-compose short volume spec into its
+// (source, target, mode) parts. Handles three forms:
+//
+//	target                       — anonymous volume
+//	source:target                — named volume or bind mount
+//	source:target:options        — with options like "ro" or "rw"
+//
+// Windows-style absolute paths (e.g. "C:\\data:/in") are detected when the
+// first segment is a single drive letter and merged back with the second.
+// Returns empty strings when the input cannot be parsed.
+func parseComposeVolume(v string) (source, target, mode string) {
+	parts := strings.Split(v, ":")
+	// Re-merge a leading "<letter>:<path>" Windows-style drive prefix.
+	if len(parts) >= 2 && len(parts[0]) == 1 {
+		c := parts[0][0]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+			parts = append([]string{parts[0] + ":" + parts[1]}, parts[2:]...)
+		}
+	}
+	switch len(parts) {
+	case 1:
+		return "", parts[0], ""
+	case 2:
+		return parts[0], parts[1], ""
+	case 3:
+		return parts[0], parts[1], parts[2]
+	default:
+		return "", "", ""
 	}
 }
 
@@ -184,20 +303,23 @@ func composeAppConfig(projectName, serviceName string, svc composeService) *appc
 
 	// Persist entitlements from named volumes (skip host-bind mounts ./path:).
 	for _, v := range svc.Volumes {
-		parts := strings.SplitN(v, ":", 2)
-		if len(parts) < 2 {
+		source, target, _ := parseComposeVolume(v)
+		if source == "" || target == "" {
 			continue
 		}
-		hostPart := parts[0]
-		containerPath := parts[1]
 		// Named volumes start with a letter; bind mounts start with . or /
-		if strings.HasPrefix(hostPart, ".") || strings.HasPrefix(hostPart, "/") {
+		// (or, on Windows, a drive letter like "C:\\…" — already merged into source).
+		if strings.HasPrefix(source, ".") || strings.HasPrefix(source, "/") {
+			continue
+		}
+		if len(source) >= 2 && source[1] == ':' {
+			// Windows-style absolute path bind mount.
 			continue
 		}
 		entitlements = append(entitlements, appconfig.Entitlement{
 			Type: appconfig.EntitlementPersist,
-			Name: hostPart,
-			Path: containerPath,
+			Name: source,
+			Path: target,
 		})
 	}
 
@@ -208,10 +330,11 @@ func composeAppConfig(projectName, serviceName string, svc composeService) *appc
 }
 
 // serviceOrder returns service names sorted by depends_on so dependencies
-// start before dependents. Cycles are ignored; any remaining services are
+// start before dependents. It returns an error if any depends_on entry
+// references an undefined service. Cycles are ignored; remaining services are
 // appended at the end.
-func serviceOrder(cfg *composeConfig) []string {
-	// Build dependency map.
+func serviceOrder(cfg *composeConfig) ([]string, error) {
+	// Build dependency map and validate that every dependency is a defined service.
 	deps := make(map[string][]string, len(cfg.Services))
 	for name, svc := range cfg.Services {
 		var depends []string
@@ -224,6 +347,11 @@ func serviceOrder(cfg *composeConfig) []string {
 				for k := range m {
 					depends = append(depends, k)
 				}
+			}
+		}
+		for _, dep := range depends {
+			if _, ok := cfg.Services[dep]; !ok {
+				return nil, fmt.Errorf("service %q depends on unknown service %q", name, dep)
 			}
 		}
 		deps[name] = depends
@@ -247,7 +375,7 @@ func serviceOrder(cfg *composeConfig) []string {
 	for name := range cfg.Services {
 		visit(name)
 	}
-	return ordered
+	return ordered, nil
 }
 
 // runComposeWithAgent orchestrates a docker-compose project on a WendyOS device:
@@ -302,6 +430,23 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			"WENDY_PLATFORM": wendyPlatform(versionResp.GetDeviceType()),
 			"WENDY_DEBUG":    fmt.Sprintf("%t", opts.debug),
 		}
+		// Mirror the single-container build path so compose-built Dockerfiles
+		// see the same WendyOS device hints (e.g. for GPU base-image selection).
+		if deviceType := versionResp.GetDeviceType(); deviceType != "" {
+			allBuildArgs["WENDY_DEVICE_TYPE"] = deviceType
+		}
+		if versionResp.HasGpu != nil {
+			allBuildArgs["WENDY_HAS_GPU"] = fmt.Sprintf("%t", versionResp.GetHasGpu())
+		}
+		if vendor := versionResp.GetGpuVendor(); vendor != "" {
+			allBuildArgs["WENDY_GPU_VENDOR"] = vendor
+		}
+		if jv := versionResp.GetJetpackVersion(); jv != "" {
+			allBuildArgs["WENDY_JETPACK_VERSION"] = jv
+		}
+		if cv := versionResp.GetCudaVersion(); cv != "" {
+			allBuildArgs["WENDY_CUDA_VERSION"] = cv
+		}
 		for k, v := range buildArgs {
 			allBuildArgs[k] = v
 		}
@@ -328,21 +473,27 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 		cliLogln("Service %s image built and pushed.", name)
 	}
 
-	restartPolicy := resolveRestartPolicy(opts)
+	cliRestartPolicy := resolveRestartPolicy(opts)
 
 	// Create all containers in dependency order.
-	ordered := serviceOrder(cfg)
+	ordered, err := serviceOrder(cfg)
+	if err != nil {
+		return err
+	}
 	for _, name := range ordered {
 		svc := cfg.Services[name]
 		appCfg := composeAppConfig(projectName, name, svc)
 
-		// Determine image: built image or declared image.
+		// Determine image: built image or declared image. Public image refs
+		// like "python:3.11-slim" must be canonicalised to "docker.io/library/…"
+		// because the agent's containerd reference parser only accepts
+		// fully-qualified names.
 		ctxDir, _, _, _ := composeBuildContext(svc, projectDir)
 		var imageName string
 		if ctxDir != "" {
 			imageName = fmt.Sprintf("localhost:%d/%s-%s:latest", regPort, projectName, name)
 		} else if svc.Image != "" {
-			imageName = svc.Image
+			imageName = normalizeImageRef(svc.Image)
 		} else {
 			return fmt.Errorf("service %s: no image or build directive", name)
 		}
@@ -352,12 +503,23 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			return fmt.Errorf("marshaling config for service %s: %w", name, err)
 		}
 
-		cmd := ""
-		if parts := composeCommand(svc); len(parts) > 0 {
-			cmd = strings.Join(parts, " ")
+		// Split the compose command into argv: the first token becomes Cmd
+		// (the agent runs strings.Fields on it, so it must contain no
+		// whitespace) and the rest are passed verbatim through UserArgs so
+		// arguments like a multi-line `python3 -c <script>` survive intact.
+		cmd, extraArgs := composeArgv(svc)
+
+		// CLI flags take precedence over per-service compose restart policies;
+		// when the CLI didn't specify one (DEFAULT), honour the service's restart.
+		restartPolicy := cliRestartPolicy
+		if restartPolicy.GetMode() == agentpb.RestartPolicyMode_DEFAULT && svc.Restart != "" {
+			restartPolicy = composeRestartPolicy(svc.Restart)
 		}
 
-		envArgs := composeEnv(svc)
+		// TODO: compose `environment:` values aren't sent to the device yet.
+		// CreateContainerRequest has no env field, and stuffing env strings
+		// into UserArgs (the previous behaviour) appended them to argv. Add a
+		// proto env field and plumb composeEnv(svc) through it.
 
 		createReq := &agentpb.CreateContainerRequest{
 			ImageName:     imageName,
@@ -365,7 +527,7 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			AppConfig:     appConfigData,
 			Cmd:           cmd,
 			RestartPolicy: restartPolicy,
-			UserArgs:      envArgs,
+			UserArgs:      extraArgs,
 		}
 
 		cliLogln("Creating container for service %s (%s)...", name, appCfg.AppID)
@@ -386,8 +548,13 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
 	go func() {
-		<-sigCh
+		select {
+		case <-sigCh:
+		case <-runCtx.Done():
+			return
+		}
 		cliLogln("\nStopping all services...")
 		stopCtx := context.Background()
 		for _, name := range ordered {
