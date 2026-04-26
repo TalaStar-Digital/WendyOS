@@ -47,6 +47,7 @@ type ContainerdClient interface {
 	DeleteContainer(ctx context.Context, appName string, deleteImage bool) error
 	ListContainers(ctx context.Context) ([]*agentpb.AppContainer, error)
 	GetContainerStats(ctx context.Context) ([]*agentpb.ContainerStats, error)
+	GetContainerMetrics(ctx context.Context, appName string) (ContainerMetrics, error)
 }
 
 // ContainerOutput represents a chunk of output from a running container.
@@ -54,4 +55,11 @@ type ContainerOutput struct {
 	Stdout []byte
 	Stderr []byte
 	Done   bool
+}
+
+// ContainerMetrics holds a point-in-time CPU and memory snapshot for a container.
+type ContainerMetrics struct {
+	UserCPUNanos int64 // cumulative user-mode CPU time in nanoseconds
+	SysCPUNanos  int64 // cumulative kernel-mode CPU time in nanoseconds
+	MemBytes     int64 // current memory usage in bytes
 }

@@ -3,10 +3,12 @@ package services
 import (
 	"fmt"
 	"math"
+	"os"
 	"time"
 
 	"go.uber.org/zap/zapcore"
 
+	"github.com/wendylabsinc/wendy/internal/shared/version"
 	otelpb "github.com/wendylabsinc/wendy/proto/gen/otelpb"
 )
 
@@ -18,13 +20,31 @@ type TelemetryCore struct {
 	broadcaster *TelemetryBroadcaster
 	level       zapcore.Level
 	fields      []zapcore.Field
+	resource    *otelpb.Resource
 }
 
 // NewTelemetryCore creates a new TelemetryCore that publishes to the given broadcaster.
 func NewTelemetryCore(broadcaster *TelemetryBroadcaster, level zapcore.Level) *TelemetryCore {
+	hostname, _ := os.Hostname()
+	attrs := []*otelpb.KeyValue{
+		stringKV("service.name", "wendy-agent"),
+		stringKV("service.namespace", "wendy"),
+		stringKV("service.version", version.Version),
+	}
+	if hostname != "" {
+		attrs = append(attrs, stringKV("service.instance.id", hostname))
+	}
 	return &TelemetryCore{
 		broadcaster: broadcaster,
 		level:       level,
+		resource:    &otelpb.Resource{Attributes: attrs},
+	}
+}
+
+func stringKV(key, val string) *otelpb.KeyValue {
+	return &otelpb.KeyValue{
+		Key:   key,
+		Value: &otelpb.AnyValue{Value: &otelpb.AnyValue_StringValue{StringValue: val}},
 	}
 }
 
@@ -40,6 +60,7 @@ func (c *TelemetryCore) With(fields []zapcore.Field) zapcore.Core {
 		broadcaster: c.broadcaster,
 		level:       c.level,
 		fields:      combined,
+		resource:    c.resource,
 	}
 }
 
@@ -87,14 +108,7 @@ func (c *TelemetryCore) Write(entry zapcore.Entry, fields []zapcore.Field) error
 	c.broadcaster.PublishLogs(&otelpb.ExportLogsServiceRequest{
 		ResourceLogs: []*otelpb.ResourceLogs{
 			{
-				Resource: &otelpb.Resource{
-					Attributes: []*otelpb.KeyValue{
-						{
-							Key:   "service.name",
-							Value: &otelpb.AnyValue{Value: &otelpb.AnyValue_StringValue{StringValue: "wendy-agent"}},
-						},
-					},
-				},
+				Resource: c.resource,
 				ScopeLogs: []*otelpb.ScopeLogs{
 					{
 						Scope:      &otelpb.InstrumentationScope{Name: "wendy.agent"},

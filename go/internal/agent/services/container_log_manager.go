@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -18,15 +19,29 @@ type ContainerLogManager struct {
 	mu          sync.Mutex
 	subscribers map[string]map[string]chan ContainerOutput // appName -> subID -> channel
 	nextID      uint64
+	hostname    string
+	resources   map[string]*otelpb.Resource // appName -> pre-built OTel resource (protected by mu)
 }
 
 // NewContainerLogManager creates a new ContainerLogManager.
 func NewContainerLogManager(logger *zap.Logger, broadcaster *TelemetryBroadcaster) *ContainerLogManager {
+	hostname, _ := os.Hostname()
 	return &ContainerLogManager{
 		logger:      logger,
 		broadcaster: broadcaster,
 		subscribers: make(map[string]map[string]chan ContainerOutput),
+		resources:   make(map[string]*otelpb.Resource),
+		hostname:    hostname,
 	}
+}
+
+// RegisterApp caches the OTel resource for an app so that its stdout/stderr logs
+// carry service.namespace, service.version, and service.instance.id.
+func (m *ContainerLogManager) RegisterApp(appName, version string) {
+	resource := containerResource(appName, version, m.hostname)
+	m.mu.Lock()
+	m.resources[appName] = resource
+	m.mu.Unlock()
 }
 
 // Subscribe creates a new subscription for a container's output.
@@ -160,24 +175,20 @@ func (m *ContainerLogManager) publishToTelemetry(appName string, output Containe
 		return
 	}
 
+	m.mu.Lock()
+	resource := m.resources[appName]
+	m.mu.Unlock()
+	if resource == nil {
+		resource = containerResource(appName, "", m.hostname)
+	}
+
 	m.broadcaster.PublishLogs(&otelpb.ExportLogsServiceRequest{
 		ResourceLogs: []*otelpb.ResourceLogs{
 			{
-				Resource: &otelpb.Resource{
-					Attributes: []*otelpb.KeyValue{
-						{
-							Key: "service.name",
-							Value: &otelpb.AnyValue{
-								Value: &otelpb.AnyValue_StringValue{StringValue: appName},
-							},
-						},
-					},
-				},
+				Resource: resource,
 				ScopeLogs: []*otelpb.ScopeLogs{
 					{
-						Scope: &otelpb.InstrumentationScope{
-							Name: "wendy.container",
-						},
+						Scope:      &otelpb.InstrumentationScope{Name: "wendy.container"},
 						LogRecords: records,
 					},
 				},
