@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -171,11 +172,74 @@ func TestBuildGStreamerArgs_VP8Encoder(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
 	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "vp8enc")
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "vp8enc") || !strings.Contains(joined, "ivfmux") {
-		t.Errorf("expected vp8enc+ivfmux pipeline segment: %v", args)
+	if !strings.Contains(joined, "vp8enc") || !strings.Contains(joined, "webmmux") {
+		t.Errorf("expected vp8enc+webmmux pipeline segment: %v", args)
 	}
 	if strings.Contains(joined, "h264") {
 		t.Errorf("VP8 pipeline should not mention h264: %v", args)
+	}
+}
+
+func TestListGSTElements_ParsesElements(t *testing.T) {
+	input := `
+matroska:  matroskamux: Matroska muxer
+matroska:  webmmux: WebM muxer
+x264:  x264enc: H264 video encoder
+vpx:  vp8enc: On2 VP8 Encoder
+bad:  h264parse: H.264 parser
+`
+	// Inject a fake gst-inspect-1.0 that prints the above.
+	tmpDir := t.TempDir()
+	script := tmpDir + "/gst-inspect-1.0"
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '"+input+"'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	elements, err := listGSTElements(script)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{"matroskamux", "webmmux", "x264enc", "vp8enc", "h264parse"} {
+		if !elements[want] {
+			t.Errorf("expected %q in element list, got %v", want, elements)
+		}
+	}
+}
+
+func TestFindGStreamerEncoder_PrefersX264WhenH264ParseAvailable(t *testing.T) {
+	tmpDir := t.TempDir()
+	script := tmpDir + "/gst-inspect-1.0"
+	listing := "bad:  h264parse: H.264 parser\nx264:  x264enc: H264 video encoder\n"
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '"+listing+"'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := findGStreamerEncoder(script)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.element != "x264enc" {
+		t.Errorf("expected x264enc, got %q", result.element)
+	}
+	if result.codec != agentpb.VideoCodec_VIDEO_CODEC_H264 {
+		t.Errorf("expected H264 codec, got %v", result.codec)
+	}
+}
+
+func TestFindGStreamerEncoder_FallsBackToVP8WhenNoH264Parse(t *testing.T) {
+	tmpDir := t.TempDir()
+	script := tmpDir + "/gst-inspect-1.0"
+	listing := "x264:  x264enc: H264 video encoder\nvpx:  vp8enc: VP8 encoder\nmatroska:  webmmux: WebM muxer\n"
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '"+listing+"'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := findGStreamerEncoder(script)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.element != "vp8enc" {
+		t.Errorf("expected vp8enc fallback, got %q", result.element)
+	}
+	if result.codec != agentpb.VideoCodec_VIDEO_CODEC_VP8 {
+		t.Errorf("expected VP8 codec, got %v", result.codec)
 	}
 }
 

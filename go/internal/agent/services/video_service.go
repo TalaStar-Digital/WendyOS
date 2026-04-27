@@ -362,17 +362,20 @@ type gstEncoderResult struct {
 	codec   agentpb.VideoCodec
 }
 
-// findGStreamerEncoder probes available encoders via gst-inspect-1.0.
-// Prefers hardware H.264 → software H.264 → VP8, returning the first available.
+// findGStreamerEncoder probes available encoders by listing all elements once via
+// gst-inspect-1.0 (no args) and building a lookup set. Per-element subprocess calls
+// are unreliable on some builds; the list command is authoritative.
 func findGStreamerEncoder(inspectPath string) (gstEncoderResult, error) {
-	hasElem := func(name string) bool {
-		return exec.Command(inspectPath, name).Run() == nil
+	available, err := listGSTElements(inspectPath)
+	if err != nil {
+		// If listing fails, attempt x264enc and let gst-launch fail with a clear message.
+		return gstEncoderResult{element: "x264enc", codec: agentpb.VideoCodec_VIDEO_CODEC_H264}, nil
 	}
 
-	// H.264 encoders in preference order; only use if h264parse is also available
-	// (h264parse is required for stream framing and is in gst-plugins-bad).
-	h264ParseOK := hasElem("h264parse")
-	if h264ParseOK {
+	hasElem := func(name string) bool { return available[name] }
+
+	// H.264 path: h264parse (gst-plugins-bad) is required for proper stream framing.
+	if hasElem("h264parse") {
 		for _, enc := range []string{
 			"v4l2h264enc",  // V4L2 M2M hardware (gst-plugins-good)
 			"omxh264enc",   // OpenMAX hardware (Broadcom, Qualcomm)
@@ -387,31 +390,47 @@ func findGStreamerEncoder(inspectPath string) (gstEncoderResult, error) {
 				return gstEncoderResult{element: enc, codec: agentpb.VideoCodec_VIDEO_CODEC_H264}, nil
 			}
 		}
-
-		// Dynamic discovery: scan all elements for any H.264 encoder.
-		if out, err := exec.Command(inspectPath).Output(); err == nil {
-			for _, line := range strings.Split(string(out), "\n") {
-				parts := strings.SplitN(line, ":", 3)
-				if len(parts) < 2 {
-					continue
-				}
-				name := strings.TrimSpace(parts[1])
-				lower := strings.ToLower(name)
-				if strings.Contains(lower, "h264") && strings.Contains(lower, "enc") && hasElem(name) {
-					return gstEncoderResult{element: name, codec: agentpb.VideoCodec_VIDEO_CODEC_H264}, nil
-				}
+		// Dynamic discovery: any element with "h264" and "enc" in the name.
+		for name := range available {
+			lower := strings.ToLower(name)
+			if strings.Contains(lower, "h264") && strings.Contains(lower, "enc") {
+				return gstEncoderResult{element: name, codec: agentpb.VideoCodec_VIDEO_CODEC_H264}, nil
 			}
 		}
 	}
 
-	// VP8 fallback: vp8enc + ivfmux are both in gst-plugins-good.
-	if hasElem("vp8enc") && hasElem("ivfmux") {
+	// VP8 fallback: vp8enc + webmmux are both in gst-plugins-good.
+	// webmmux with streamable=true produces a WebM stream parseable by matroskademux.
+	if hasElem("vp8enc") && hasElem("webmmux") {
 		return gstEncoderResult{element: "vp8enc", codec: agentpb.VideoCodec_VIDEO_CODEC_VP8}, nil
 	}
 
 	return gstEncoderResult{}, fmt.Errorf(
-		"no supported GStreamer encoder found; install gst-plugins-good (vp8enc), gst-plugins-ugly (x264enc), or gst-libav (avenc_h264)",
+		"no supported GStreamer encoder found (checked %d elements); install gst-plugins-good (vp8enc+webmmux) or gst-plugins-ugly (x264enc)",
+		len(available),
 	)
+}
+
+// listGSTElements runs gst-inspect-1.0 once and returns a set of all available element names.
+// Each output line has the form "plugin:  element: description".
+func listGSTElements(inspectPath string) (map[string]bool, error) {
+	out, err := exec.Command(inspectPath).Output()
+	if err != nil {
+		return nil, fmt.Errorf("gst-inspect-1.0: %w", err)
+	}
+	elements := make(map[string]bool)
+	for _, line := range strings.Split(string(out), "\n") {
+		// Split on ": " to get plugin and element name (first two fields).
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		name := strings.TrimSpace(parts[1])
+		if name != "" && !strings.ContainsAny(name, " \t") {
+			elements[name] = true
+		}
+	}
+	return elements, nil
 }
 
 // buildGStreamerArgs constructs the gst-launch-1.0 argument list for V4L2 encode.
@@ -446,7 +465,8 @@ func encoderSegment(encoder string) string {
 	case "openh264enc":
 		return "openh264enc ! h264parse"
 	case "vp8enc":
-		return "videoconvert ! vp8enc deadline=1 ! ivfmux"
+		// webmmux streamable=true writes headers that matroskademux can parse from a pipe.
+		return "videoconvert ! vp8enc deadline=1 ! webmmux streamable=true"
 	default:
 		return encoder + " ! h264parse"
 	}

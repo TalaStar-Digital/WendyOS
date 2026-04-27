@@ -155,9 +155,10 @@ func playVideoWithGStreamer(ctx context.Context, stream interface {
 	var gstArgs []string
 	switch first.GetCodec() {
 	case agentpb.VideoCodec_VIDEO_CODEC_VP8:
+		// Server sends VP8 in a WebM container (webmmux streamable=true).
 		gstArgs = []string{
 			"fdsrc", "fd=0",
-			"!", "ivfparse",
+			"!", "matroskademux",
 			"!", "vp8dec",
 			"!", "queue", "max-size-buffers=1", "leaky=downstream",
 			"!", "autovideosink", "sync=false",

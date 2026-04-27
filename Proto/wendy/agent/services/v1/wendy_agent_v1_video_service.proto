@@ -28,7 +28,7 @@ message StreamVideoRequest {
 
 enum VideoCodec {
     VIDEO_CODEC_H264 = 0; // raw H.264 annexb NAL units (default)
-    VIDEO_CODEC_VP8  = 1; // VP8 inside an IVF container
+    VIDEO_CODEC_VP8  = 1; // VP8 inside a WebM container (webmmux streamable=true)
 }
 
 message VideoFrame {

@@ -25,7 +25,7 @@ type VideoCodec int32
 
 const (
 	VideoCodec_VIDEO_CODEC_H264 VideoCodec = 0 // raw H.264 annexb NAL units (default)
-	VideoCodec_VIDEO_CODEC_VP8  VideoCodec = 1 // VP8 inside an IVF container
+	VideoCodec_VIDEO_CODEC_VP8  VideoCodec = 1 // VP8 inside a WebM container (webmmux streamable=true)
 )
 
 // Enum value maps for VideoCodec.
