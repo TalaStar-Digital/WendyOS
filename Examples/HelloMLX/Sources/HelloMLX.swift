@@ -49,13 +49,13 @@ struct CLIArguments: ParsableCommand {
     var prompt: String = ""
 
     @Option(name: .long, help: "Seconds of camera history to include in each inference pass.")
-    var interval: Double = 20
+    var interval: Double = 5
 
     @Option(name: .long, help: "Frames per second to sample into the buffer.")
-    var fps: Double = 0.1
+    var fps: Double = 1
 
     @Option(name: .long, help: "Square frame resolution. A value of Y produces YxY frames.")
-    var resolution: Int = 512
+    var resolution: Int = 256
 
     @Option(name: .long, help: "Local port to serve the web UI on.")
     var port: Int = 8080
