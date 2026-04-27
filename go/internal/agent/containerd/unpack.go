@@ -10,6 +10,7 @@ import (
 	"github.com/containerd/containerd/v2/core/leases"
 	"github.com/containerd/containerd/v2/core/snapshots"
 	"github.com/containerd/errdefs"
+	"github.com/google/uuid"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"go.uber.org/zap"
 )
@@ -46,27 +47,26 @@ type UnpackProgress struct {
 //
 // The unpack runs inside a containerd lease and tags each committed snapshot
 // with a `containerd.io/gc.root` label. These work as a pair: the lease pins
-// content and snapshots while the unpack is in progress, and the gc.root
-// labels keep committed chain-ID snapshots alive after the lease releases.
-// Without both, containerd's metadata GC could reap a freshly committed
-// chain-ID snapshot before the next layer's `Prepare` references it as a
-// parent — surfacing as a random-layer "parent snapshot does not exist"
-// failure.
+// content and active snapshots while the unpack is in progress, and the
+// gc.root label on each committed chain-ID snapshot keeps it alive after the
+// lease releases. Without both, containerd's metadata GC could reap a
+// freshly committed chain-ID snapshot before the next layer's `Prepare`
+// references it as a parent — surfacing as a random-layer "parent snapshot
+// does not exist" failure.
 func (c *Client) UnpackImage(ctx context.Context, imageName string, progress func(UnpackProgress)) error {
 	ctx = c.withNamespace(ctx)
+
+	// cleanupCtx is used for best-effort `Remove` calls so a cancelled caller
+	// doesn't also cancel cleanup. The namespace is required by containerd
+	// services even off the happy path.
+	cleanupCtx := c.withNamespace(context.Background())
 
 	ctx, doneLease, err := c.client.WithLease(ctx, leases.WithExpiration(unpackLeaseExpiration))
 	if err != nil {
 		return fmt.Errorf("creating unpack lease: %w", err)
 	}
 	defer func() {
-		// Release on a fresh context so a cancelled caller still tears the
-		// lease down. The namespace is preserved because containerd's lease
-		// service requires it on every request — Background() alone would
-		// fail the NamespaceRequired check and silently leave the lease
-		// pinned until expiration.
-		releaseCtx := c.withNamespace(context.Background())
-		if err := doneLease(releaseCtx); err != nil {
+		if err := doneLease(cleanupCtx); err != nil {
 			c.logger.Warn("Failed to release unpack lease; relying on expiration backstop",
 				zap.Duration("expiration", unpackLeaseExpiration),
 				zap.Error(err),
@@ -122,28 +122,26 @@ func (c *Client) UnpackImage(ctx context.Context, imageName string, progress fun
 			return fmt.Errorf("stat snapshot %q: %w", chainID, err)
 		}
 
-		gcRootOpt := snapshots.WithLabels(map[string]string{
-			labelKeyGCRoot: gcTimestamp(),
-		})
-
-		activeKey := fmt.Sprintf("extract-%s-%d", imageName, i)
-		mounts, err := sn.Prepare(ctx, activeKey, parentChainID, gcRootOpt)
-		if errdefs.IsAlreadyExists(err) {
-			// Stale active key from a prior failed attempt; remove and retry once.
-			c.removeActiveSnapshot(ctx, sn, activeKey, "stale active snapshot before retry", i)
-			mounts, err = sn.Prepare(ctx, activeKey, parentChainID, gcRootOpt)
-			if err != nil {
-				return fmt.Errorf("preparing snapshot for layer %d after retry: %w", i, err)
-			}
-		} else if err != nil {
+		// Unique per-attempt active key so concurrent unpacks of the same
+		// image (or a stale key from a crashed prior attempt) can't collide
+		// on the AlreadyExists path and clobber each other's in-progress
+		// snapshot. The lease pins the active snapshot during this loop
+		// iteration; only the committed chain-ID snapshot needs gc.root
+		// to survive lease release.
+		activeKey := fmt.Sprintf("extract-%s-%d-%s", imageName, i, uuid.NewString())
+		mounts, err := sn.Prepare(ctx, activeKey, parentChainID)
+		if err != nil {
 			return fmt.Errorf("preparing snapshot for layer %d: %w", i, err)
 		}
 
 		if _, err := c.client.DiffService().Apply(ctx, layerDesc, mounts); err != nil {
-			c.removeActiveSnapshot(ctx, sn, activeKey, "active snapshot after apply failure", i)
+			c.removeActiveSnapshot(cleanupCtx, sn, activeKey, "active snapshot after apply failure", i)
 			return fmt.Errorf("applying layer %d: %w", i, err)
 		}
 
+		gcRootOpt := snapshots.WithLabels(map[string]string{
+			labelKeyGCRoot: gcTimestamp(),
+		})
 		commitErr := sn.Commit(ctx, chainID, activeKey, gcRootOpt)
 		switch {
 		case commitErr == nil:
@@ -165,7 +163,7 @@ func (c *Client) UnpackImage(ctx context.Context, imageName string, progress fun
 			// A concurrent unpack committed the same chain ID first. Our
 			// active key still exists; clean it up and report the layer
 			// as reused rather than freshly unpacked.
-			c.removeActiveSnapshot(ctx, sn, activeKey, "active snapshot after concurrent commit", i)
+			c.removeActiveSnapshot(cleanupCtx, sn, activeKey, "active snapshot after concurrent commit", i)
 			if progress != nil {
 				progress(UnpackProgress{
 					Phase:       "layer",
