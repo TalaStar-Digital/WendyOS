@@ -158,11 +158,14 @@ func playVideoWithGStreamer(ctx context.Context, stream interface {
 	if err := gst.Start(); err != nil {
 		return fmt.Errorf("starting GStreamer: %w", err)
 	}
-	defer func() { gst.Process.Kill(); gst.Wait() }() //nolint:errcheck
+	defer func() {
+		stdin.Close()      //nolint:errcheck — signal EOF to GStreamer before killing
+		gst.Process.Kill() //nolint:errcheck
+		gst.Wait()         //nolint:errcheck
+	}()
 
 	recvErr := make(chan error, 1)
 	go func() {
-		defer stdin.Close()
 		for {
 			frame, err := stream.Recv()
 			if err != nil {
@@ -170,7 +173,7 @@ func playVideoWithGStreamer(ctx context.Context, stream interface {
 				return
 			}
 			if _, writeErr := stdin.Write(frame.GetData()); writeErr != nil {
-				recvErr <- writeErr
+				recvErr <- fmt.Errorf("writing to GStreamer: %w", writeErr)
 				return
 			}
 		}
