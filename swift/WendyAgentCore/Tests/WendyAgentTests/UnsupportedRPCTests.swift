@@ -446,39 +446,57 @@ struct UnsupportedRPCTests {
         ])
     }
 
-    @Test("agent version prefers bundle metadata before fallback sources")
-    func agentVersionPrefersBundleMetadata() {
+    @Test("agent version prefers the canonical bundle version before fallback sources")
+    func agentVersionPrefersCanonicalBundleVersion() {
+        #expect(
+            AgentVersion.resolve(
+                bundleInfo: [
+                    AgentVersion.bundleInfoKey: "1.2.3-123456",
+                    "CFBundleShortVersionString": "1.2.3",
+                    "CFBundleVersion": "123456",
+                ],
+                environment: [AgentVersion.environmentVariable: "9.9.9"]
+            ) == "1.2.3-123456"
+        )
+    }
+
+    @Test(
+        "agent version uses the environment override when the canonical bundle version is missing"
+    )
+    func agentVersionUsesEnvironmentFallback() {
         #expect(
             AgentVersion.resolve(
                 bundleInfo: [
                     "CFBundleShortVersionString": "1.2.3",
-                    "CFBundleVersion": "123",
+                    "CFBundleVersion": "123456",
                 ],
-                environment: [AgentVersion.environmentVariable: "9.9.9"]
-            ) == "1.2.3"
-        )
-    }
-
-    @Test("agent version uses environment override when bundle metadata is missing")
-    func agentVersionUsesEnvironmentFallback() {
-        #expect(
-            AgentVersion.resolve(
-                bundleInfo: nil,
                 environment: [AgentVersion.environmentVariable: "2.3.4-test"]
             ) == "2.3.4-test"
         )
     }
 
-    @Test("agent version ignores placeholder bundle values before falling back")
+    @Test("agent version ignores placeholder canonical bundle values before falling back")
     func agentVersionIgnoresPlaceholderBundleValues() {
         #expect(
             AgentVersion.resolve(
-                bundleInfo: [
-                    "CFBundleShortVersionString": "0000.00.00",
-                    "CFBundleVersion": "00000000000000",
-                ],
+                bundleInfo: [AgentVersion.bundleInfoKey: "0000.00.00"],
                 environment: [AgentVersion.environmentVariable: "3.4.5-test"]
             ) == "3.4.5-test"
+        )
+    }
+
+    @Test(
+        "agent version does not reuse Apple-facing bundle version fields as the canonical version"
+    )
+    func agentVersionIgnoresAppleFacingBundleVersionFields() {
+        #expect(
+            AgentVersion.resolve(
+                bundleInfo: [
+                    "CFBundleShortVersionString": "1.2.3",
+                    "CFBundleVersion": "123456",
+                ],
+                environment: [:]
+            ) == AgentVersion.fallback
         )
     }
 

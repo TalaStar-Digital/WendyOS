@@ -208,7 +208,6 @@
 			baseConfigurationReferenceAnchor = B373D0972F9B594D00C31493 /* Configuration */;
 			baseConfigurationReferenceRelativePath = WendyAgentMac.xcconfig;
 			buildSettings = {
-				DEAD_CODE_STRIPPING = YES;
 			};
 			name = Debug;
 		};
@@ -217,7 +216,6 @@
 			baseConfigurationReferenceAnchor = B373D0972F9B594D00C31493 /* Configuration */;
 			baseConfigurationReferenceRelativePath = WendyAgentMac.xcconfig;
 			buildSettings = {
-				DEAD_CODE_STRIPPING = YES;
 			};
 			name = Release;
 		};

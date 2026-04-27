@@ -1,6 +1,7 @@
 import Foundation
 
 enum AgentVersion {
+    static let bundleInfoKey = "WLWendyAgentVersion"
     static let environmentVariable = "WENDY_AGENT_VERSION"
     static let fallback = "0.0.0-dev"
 
@@ -16,15 +17,9 @@ enum AgentVersion {
         environment: [String: String]
     ) -> String {
         if let bundleVersion = self.usableVersion(
-            from: bundleInfo?["CFBundleShortVersionString"] as? String
+            from: bundleInfo?[self.bundleInfoKey] as? String
         ) {
             return bundleVersion
-        }
-
-        if let bundleBuildVersion = self.usableVersion(
-            from: bundleInfo?["CFBundleVersion"] as? String
-        ) {
-            return bundleBuildVersion
         }
 
         if let environmentVersion = self.usableVersion(from: environment[self.environmentVariable])
