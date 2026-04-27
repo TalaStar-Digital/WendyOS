@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"go.uber.org/zap"
 	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -258,4 +258,3 @@ func TestStreamGStreamer_MissingGStreamer(t *testing.T) {
 		t.Errorf("expected FailedPrecondition, got %v", st.Code())
 	}
 }
-

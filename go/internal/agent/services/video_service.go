@@ -34,26 +34,26 @@ const (
 	vidiocQuerybuf  = 0xC0585609
 	vidiocQbuf      = 0xC058560F
 	vidiocDqbuf     = 0xC0585611
-	vidiocStreamon   = 0x40045612
+	vidiocStreamon  = 0x40045612
 	vidiocStreamoff = 0x40045613
 )
 
 // v4l2Format matches struct v4l2_format (208 bytes) for V4L2_BUF_TYPE_VIDEO_CAPTURE.
 type v4l2Format struct {
-	Type        uint32
-	Width       uint32
-	Height      uint32
-	PixelFormat uint32
-	Field       uint32
+	Type         uint32
+	Width        uint32
+	Height       uint32
+	PixelFormat  uint32
+	Field        uint32
 	BytesPerLine uint32
-	SizeImage   uint32
-	Colorspace  uint32
-	Priv        uint32
-	Flags       uint32
-	Enc         uint32
+	SizeImage    uint32
+	Colorspace   uint32
+	Priv         uint32
+	Flags        uint32
+	Enc          uint32
 	Quantization uint32
-	XferFunc    uint32
-	_           [156]byte
+	XferFunc     uint32
+	_            [156]byte
 }
 
 // v4l2ReqBuffers matches struct v4l2_requestbuffers (20 bytes).
