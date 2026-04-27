@@ -7,28 +7,35 @@ import (
 
 	"go.uber.org/zap"
 	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
+// newTestVideoService creates a VideoService with injectable filesystem functions.
+func newTestVideoService(glob func() ([]string, error), readName func(string) (string, error)) *VideoService {
+	svc := NewVideoService(zap.NewNop())
+	if glob != nil {
+		svc.globDevices = glob
+	}
+	if readName != nil {
+		svc.readDeviceName = readName
+	}
+	return svc
+}
+
 func TestListV4L2Devices_TwoDevices(t *testing.T) {
-	origGlob := globVideoDevices
-	origRead := readDeviceName
-	defer func() {
-		globVideoDevices = origGlob
-		readDeviceName = origRead
-	}()
+	svc := newTestVideoService(
+		func() ([]string, error) { return []string{"/dev/video0", "/dev/video1"}, nil },
+		func(base string) (string, error) {
+			names := map[string]string{"video0": "USB Camera", "video1": "Integrated Camera"}
+			if name, ok := names[base]; ok {
+				return name, nil
+			}
+			return base, nil
+		},
+	)
 
-	globVideoDevices = func() ([]string, error) {
-		return []string{"/dev/video0", "/dev/video1"}, nil
-	}
-	readDeviceName = func(base string) (string, error) {
-		names := map[string]string{"video0": "USB Camera", "video1": "Integrated Camera"}
-		if name, ok := names[base]; ok {
-			return name, nil
-		}
-		return base, nil
-	}
-
-	devices, err := listV4L2Devices()
+	devices, err := svc.listV4L2Devices()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -44,12 +51,12 @@ func TestListV4L2Devices_TwoDevices(t *testing.T) {
 }
 
 func TestListV4L2Devices_NoDevices(t *testing.T) {
-	origGlob := globVideoDevices
-	defer func() { globVideoDevices = origGlob }()
+	svc := newTestVideoService(
+		func() ([]string, error) { return nil, nil },
+		nil,
+	)
 
-	globVideoDevices = func() ([]string, error) { return nil, nil }
-
-	devices, err := listV4L2Devices()
+	devices, err := svc.listV4L2Devices()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,17 +66,12 @@ func TestListV4L2Devices_NoDevices(t *testing.T) {
 }
 
 func TestListV4L2Devices_SysfsReadFailFallsBackToPath(t *testing.T) {
-	origGlob := globVideoDevices
-	origRead := readDeviceName
-	defer func() {
-		globVideoDevices = origGlob
-		readDeviceName = origRead
-	}()
+	svc := newTestVideoService(
+		func() ([]string, error) { return []string{"/dev/video0"}, nil },
+		func(base string) (string, error) { return "", fmt.Errorf("no sysfs") },
+	)
 
-	globVideoDevices = func() ([]string, error) { return []string{"/dev/video0"}, nil }
-	readDeviceName = func(base string) (string, error) { return "", fmt.Errorf("no sysfs") }
-
-	devices, err := listV4L2Devices()
+	devices, err := svc.listV4L2Devices()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,18 +83,24 @@ func TestListV4L2Devices_SysfsReadFailFallsBackToPath(t *testing.T) {
 	}
 }
 
+func TestListV4L2Devices_GlobError(t *testing.T) {
+	svc := newTestVideoService(
+		func() ([]string, error) { return nil, fmt.Errorf("permission denied") },
+		nil,
+	)
+
+	_, err := svc.listV4L2Devices()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
 func TestVideoService_ListVideoDevices(t *testing.T) {
-	origGlob := globVideoDevices
-	origRead := readDeviceName
-	defer func() {
-		globVideoDevices = origGlob
-		readDeviceName = origRead
-	}()
+	svc := newTestVideoService(
+		func() ([]string, error) { return []string{"/dev/video0"}, nil },
+		func(base string) (string, error) { return "Test Camera", nil },
+	)
 
-	globVideoDevices = func() ([]string, error) { return []string{"/dev/video0"}, nil }
-	readDeviceName = func(base string) (string, error) { return "Test Camera", nil }
-
-	svc := NewVideoService(zap.NewNop())
 	resp, err := svc.ListVideoDevices(context.Background(), &agentpb.ListVideoDevicesRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -103,5 +111,24 @@ func TestVideoService_ListVideoDevices(t *testing.T) {
 	d := resp.GetDevices()[0]
 	if d.GetId() != 0 || d.GetName() != "Test Camera" || d.GetPath() != "/dev/video0" {
 		t.Errorf("unexpected device: id=%d name=%q path=%q", d.GetId(), d.GetName(), d.GetPath())
+	}
+}
+
+func TestVideoService_ListVideoDevices_GlobError(t *testing.T) {
+	svc := newTestVideoService(
+		func() ([]string, error) { return nil, fmt.Errorf("permission denied") },
+		nil,
+	)
+
+	_, err := svc.ListVideoDevices(context.Background(), &agentpb.ListVideoDevicesRequest{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got: %v", err)
+	}
+	if st.Code() != codes.Internal {
+		t.Errorf("expected codes.Internal, got %v", st.Code())
 	}
 }
