@@ -41,6 +41,7 @@ struct RunInfo: Codable {
     let resolution: Int
     let isRunningInference: Bool
     let latestRunID: String?
+    let latestRunDuration: TimeInterval?
     let lastInferenceAt: Date?
 }
 
@@ -82,10 +83,11 @@ actor AppState {
 
     private var isRunningInference = false
     private var latestRunID: String?
+    private var latestRunDuration: TimeInterval?
     private var lastInferenceAt: Date?
     private var lastError: String?
 
-    init(config: AppConfig, baseURL: String, latestRunID: String?) {
+    init(config: AppConfig, baseURL: String, latestRun: PersistedRun?) {
         self.baseURL = baseURL
         self.interval = config.interval
         self.fps = config.fps
@@ -93,7 +95,9 @@ actor AppState {
         self.modelStatus = config.modelPath == nil ? .notConfigured : .loading
         self.modelName = config.modelPath.map { URL(fileURLWithPath: $0).lastPathComponent }
         self.promptText = config.prompt
-        self.latestRunID = latestRunID
+        self.latestRunID = latestRun?.id
+        self.latestRunDuration = latestRun?.duration
+        self.lastInferenceAt = latestRun?.timestamp
     }
 
     func snapshot() -> StateResponse {
@@ -116,6 +120,7 @@ actor AppState {
                 resolution: resolution,
                 isRunningInference: isRunningInference,
                 latestRunID: latestRunID,
+                latestRunDuration: latestRunDuration,
                 lastInferenceAt: lastInferenceAt
             ),
             error: lastError
@@ -180,8 +185,9 @@ actor AppState {
         isRunningInference = isRunning
     }
 
-    func recordRun(id: String, at date: Date) {
+    func recordRun(id: String, at date: Date, duration: TimeInterval) {
         latestRunID = id
+        latestRunDuration = duration
         lastInferenceAt = date
     }
 

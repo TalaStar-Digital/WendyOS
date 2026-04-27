@@ -16,6 +16,7 @@ struct PersistedRun: Codable, Sendable {
     let interval: Double
     let fps: Double
     let resolution: Int?
+    let duration: TimeInterval?
     let frameCount: Int
     let frames: [PersistedFrame]
 }
@@ -43,8 +44,12 @@ struct RunStore {
         try fileManager.createDirectory(at: runsURL, withIntermediateDirectories: true)
     }
 
+    func latestRun() -> PersistedRun? {
+        try? listRuns(limit: 1, before: nil).items.first
+    }
+
     func latestRunID() -> String? {
-        try? listRuns(limit: 1, before: nil).items.first?.id
+        latestRun()?.id
     }
 
     func listRuns(limit: Int, before cursor: String?) throws -> RunsResponse {
@@ -75,7 +80,8 @@ struct RunStore {
         modelName: String?,
         interval: Double,
         fps: Double,
-        resolution: Int
+        resolution: Int,
+        duration: TimeInterval
     ) throws -> PersistedRun {
         let id = RunID.make()
         let directoryURL = runsURL.appendingPathComponent(id, isDirectory: true)
@@ -109,6 +115,7 @@ struct RunStore {
             interval: interval,
             fps: fps,
             resolution: resolution,
+            duration: duration,
             frameCount: persistedFrames.count,
             frames: persistedFrames
         )

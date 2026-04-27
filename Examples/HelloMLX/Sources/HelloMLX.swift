@@ -49,10 +49,10 @@ struct CLIArguments: ParsableCommand {
     var prompt: String = ""
 
     @Option(name: .long, help: "Seconds of camera history to include in each inference pass.")
-    var interval: Double = 2
+    var interval: Double = 20
 
     @Option(name: .long, help: "Frames per second to sample into the buffer.")
-    var fps: Double = 1
+    var fps: Double = 0.1
 
     @Option(name: .long, help: "Square frame resolution. A value of Y produces YxY frames.")
     var resolution: Int = 512
@@ -123,7 +123,7 @@ struct HelloMLX {
             let dataDirectory = try AppDirectories.makeDataDirectory()
             let runStore = try RunStore(rootURL: dataDirectory)
             let baseURL = makeAdvertisedBaseURL(port: appConfig.port)
-            let state = AppState(config: appConfig, baseURL: baseURL, latestRunID: runStore.latestRunID())
+            let state = AppState(config: appConfig, baseURL: baseURL, latestRun: runStore.latestRun())
             let indexHTML = try loadIndexHTML()
             let webServer = try WebServer(
                 port: UInt16(appConfig.port),
@@ -309,6 +309,7 @@ final class Camera: NSObject {
             let resolution = CGFloat(config.resolution)
             userInput.processing.resize = CGSize(width: resolution, height: resolution)
 
+            let inferenceStartedAt = Date()
             var response = ""
             do {
                 let lmInput = try await container.prepare(input: userInput)
@@ -332,6 +333,7 @@ final class Camera: NSObject {
             }
             await state.setInferenceRunning(false)
 
+            let duration = Date().timeIntervalSince(inferenceStartedAt)
             let cleanedResponse = response.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedResponse.isEmpty else { continue }
 
@@ -344,9 +346,10 @@ final class Camera: NSObject {
                     modelName: modelName,
                     interval: config.interval,
                     fps: config.fps,
-                    resolution: config.resolution
+                    resolution: config.resolution,
+                    duration: duration
                 )
-                await state.recordRun(id: run.id, at: run.timestamp)
+                await state.recordRun(id: run.id, at: run.timestamp, duration: duration)
                 await state.setError(nil)
             } catch {
                 await state.setError("Failed to persist run: \(error.localizedDescription)")
