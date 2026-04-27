@@ -11,14 +11,76 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"go.uber.org/zap"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
 )
+
+// V4L2 ioctl constants for Linux kernel video capture interface.
+const (
+	v4l2BufTypeVideoCapture = 1
+	v4l2MemoryMmap          = 1
+	v4l2PixFmtH264          = 0x34363248 // 'H264' little-endian FourCC
+	v4l2FieldNone           = 1
+
+	vidiocSFmt      = 0xC0D05605
+	vidiocReqbufs   = 0xC0145608
+	vidiocQuerybuf  = 0xC0585609
+	vidiocQbuf      = 0xC058560F
+	vidiocDqbuf     = 0xC0585611
+	vidiocStreamon   = 0x40045612
+	vidiocStreamoff = 0x40045613
+)
+
+// v4l2Format matches struct v4l2_format (208 bytes) for V4L2_BUF_TYPE_VIDEO_CAPTURE.
+type v4l2Format struct {
+	Type        uint32
+	Width       uint32
+	Height      uint32
+	PixelFormat uint32
+	Field       uint32
+	BytesPerLine uint32
+	SizeImage   uint32
+	Colorspace  uint32
+	Priv        uint32
+	Flags       uint32
+	Enc         uint32
+	Quantization uint32
+	XferFunc    uint32
+	_           [156]byte
+}
+
+// v4l2ReqBuffers matches struct v4l2_requestbuffers (20 bytes).
+type v4l2ReqBuffers struct {
+	Count        uint32
+	Type         uint32
+	Memory       uint32
+	Capabilities uint32
+	Flags        uint8
+	_            [3]byte
+}
+
+// v4l2Buf is a fixed-size byte array matching struct v4l2_buffer (88 bytes on 64-bit Linux).
+// Accessor methods read/write fields at their known offsets to avoid C-struct alignment surprises.
+type v4l2Buf [88]byte
+
+func (b *v4l2Buf) index() uint32      { return *(*uint32)(unsafe.Pointer(&b[0])) }
+func (b *v4l2Buf) setIndex(i uint32)  { *(*uint32)(unsafe.Pointer(&b[0])) = i }
+func (b *v4l2Buf) setType(t uint32)   { *(*uint32)(unsafe.Pointer(&b[4])) = t }
+func (b *v4l2Buf) bytesUsed() uint32  { return *(*uint32)(unsafe.Pointer(&b[8])) }
+func (b *v4l2Buf) setMemory(m uint32) { *(*uint32)(unsafe.Pointer(&b[60])) = m }
+func (b *v4l2Buf) offset() uint32     { return *(*uint32)(unsafe.Pointer(&b[64])) }
+
+// nativeH264NotSupported is returned when the V4L2 device does not expose H.264 output.
+type nativeH264NotSupported struct{ msg string }
+
+func (e nativeH264NotSupported) Error() string { return e.msg }
 
 // VideoService implements agentpb.WendyVideoServiceServer.
 type VideoService struct {
@@ -78,41 +140,9 @@ func (s *VideoService) ListVideoDevices(ctx context.Context, _ *agentpb.ListVide
 	return &agentpb.ListVideoDevicesResponse{Devices: devices}, nil
 }
 
-// hwUnavailableError signals that the V4L2 hardware encoder is not available.
-type hwUnavailableError struct{ msg string }
-
-func (e hwUnavailableError) Error() string { return e.msg }
-
-// buildFFmpegArgs constructs the ffmpeg argument list for V4L2 capture.
-// hardware=true attempts the device's built-in H.264 encoder; hardware=false uses libx264.
-// Width/height are omitted when both are 0; framerate is omitted when 0.
-func buildFFmpegArgs(path string, req *agentpb.StreamVideoRequest, hardware bool) []string {
-	var args []string
-	if hardware {
-		args = []string{"-f", "v4l2", "-input_format", "h264"}
-	} else {
-		args = []string{"-f", "v4l2"}
-	}
-	if req.GetWidth() > 0 && req.GetHeight() > 0 {
-		args = append(args, "-video_size", fmt.Sprintf("%dx%d", req.GetWidth(), req.GetHeight()))
-	}
-	if req.GetFramerate() > 0 {
-		args = append(args, "-framerate", fmt.Sprintf("%d", req.GetFramerate()))
-	}
-	args = append(args, "-nostdin", "-loglevel", "error", "-i", path)
-	if hardware {
-		args = append(args, "-c:v", "copy")
-	} else {
-		args = append(args, "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency")
-	}
-	args = append(args, "-f", "h264", "pipe:1")
-	return args
-}
-
 // StreamVideo streams H.264 frames from a V4L2 camera.
-// Tries the hardware encoder first; falls back to libx264 software encoding.
-// Note: the HW fallback only triggers when ffmpeg exits within 2 s with no frames
-// sent. Devices that fail after 2 s will not fall back to software encoding.
+// Tries native H.264 capture via V4L2 mmap first; falls back to GStreamer x264enc if
+// the device does not expose H.264 output.
 func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.ServerStreamingServer[agentpb.VideoFrame]) error {
 	ctx := stream.Context()
 	path := fmt.Sprintf("/dev/video%d", req.GetDeviceId())
@@ -121,46 +151,168 @@ func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.
 		return status.Errorf(codes.NotFound, "video device %s not found", path)
 	}
 
-	err := s.runFFmpeg(ctx, stream, buildFFmpegArgs(path, req, true), true)
-	if _, ok := err.(hwUnavailableError); ok {
-		s.logger.Info("hardware H.264 encoder not available, falling back to libx264")
-		return s.runFFmpeg(ctx, stream, buildFFmpegArgs(path, req, false), false)
+	err := s.streamV4L2Native(ctx, stream, path, req)
+	if _, ok := err.(nativeH264NotSupported); ok {
+		s.logger.Info("native H.264 not supported, falling back to GStreamer", zap.String("device", path))
+		return s.streamGStreamer(ctx, stream, path, req)
 	}
 	return err
 }
 
-// runFFmpeg executes ffmpeg with the given args and streams VideoFrame chunks.
-// When detectHW is true and ffmpeg exits within 2 s with no frames sent,
-// returns hwUnavailableError so the caller can retry with software encoding.
-func (s *VideoService) runFFmpeg(ctx context.Context, stream grpc.ServerStreamingServer[agentpb.VideoFrame], args []string, detectHW bool) (runErr error) {
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+// streamV4L2Native opens the V4L2 device, configures H.264 output via VIDIOC_S_FMT,
+// allocates mmap buffers, and streams frames until ctx is cancelled or an error occurs.
+// Returns nativeH264NotSupported if the device rejects the H.264 pixel format.
+func (s *VideoService) streamV4L2Native(ctx context.Context, stream grpc.ServerStreamingServer[agentpb.VideoFrame], path string, req *agentpb.StreamVideoRequest) error {
+	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return status.Errorf(codes.Internal, "open %s: %v", path, err)
+	}
+	defer unix.Close(fd) //nolint:errcheck
+
+	// Configure H.264 output format.
+	var vfmt v4l2Format
+	vfmt.Type = v4l2BufTypeVideoCapture
+	if req.GetWidth() > 0 {
+		vfmt.Width = req.GetWidth()
+	}
+	if req.GetHeight() > 0 {
+		vfmt.Height = req.GetHeight()
+	}
+	vfmt.PixelFormat = v4l2PixFmtH264
+	vfmt.Field = v4l2FieldNone
+
+	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocSFmt, uintptr(unsafe.Pointer(&vfmt))); errno != 0 {
+		return nativeH264NotSupported{msg: fmt.Sprintf("VIDIOC_S_FMT H264 rejected: %v", errno)}
+	}
+	if vfmt.PixelFormat != v4l2PixFmtH264 {
+		return nativeH264NotSupported{msg: "device switched pixel format away from H264"}
+	}
+
+	// Request mmap buffers.
+	const numBuffers = 4
+	var req4 v4l2ReqBuffers
+	req4.Count = numBuffers
+	req4.Type = v4l2BufTypeVideoCapture
+	req4.Memory = v4l2MemoryMmap
+
+	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocReqbufs, uintptr(unsafe.Pointer(&req4))); errno != 0 {
+		return status.Errorf(codes.Internal, "VIDIOC_REQBUFS: %v", errno)
+	}
+	if req4.Count < 2 {
+		return status.Errorf(codes.Internal, "insufficient buffer memory on device")
+	}
+
+	// Map and queue each buffer.
+	type mappedBuf struct {
+		data []byte
+	}
+	mapped := make([]mappedBuf, req4.Count)
+
+	for i := uint32(0); i < req4.Count; i++ {
+		var qbuf v4l2Buf
+		qbuf.setIndex(i)
+		qbuf.setType(v4l2BufTypeVideoCapture)
+		qbuf.setMemory(v4l2MemoryMmap)
+
+		if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocQuerybuf, uintptr(unsafe.Pointer(&qbuf))); errno != 0 {
+			return status.Errorf(codes.Internal, "VIDIOC_QUERYBUF[%d]: %v", i, errno)
+		}
+
+		length := uint32(*(*uint32)(unsafe.Pointer(&qbuf[72]))) // length at offset 72 in v4l2_buffer
+		data, err := unix.Mmap(fd, int64(qbuf.offset()), int(length), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+		if err != nil {
+			return status.Errorf(codes.Internal, "mmap buffer %d: %v", i, err)
+		}
+		mapped[i].data = data
+
+		if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocQbuf, uintptr(unsafe.Pointer(&qbuf))); errno != 0 {
+			return status.Errorf(codes.Internal, "VIDIOC_QBUF[%d]: %v", i, errno)
+		}
+	}
+	defer func() {
+		for _, m := range mapped {
+			unix.Munmap(m.data) //nolint:errcheck
+		}
+	}()
+
+	// Start streaming.
+	bufType := uint32(v4l2BufTypeVideoCapture)
+	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocStreamon, uintptr(unsafe.Pointer(&bufType))); errno != 0 {
+		return status.Errorf(codes.Internal, "VIDIOC_STREAMON: %v", errno)
+	}
+	defer func() {
+		unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocStreamoff, uintptr(unsafe.Pointer(&bufType))) //nolint:errcheck
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		var dqbuf v4l2Buf
+		dqbuf.setType(v4l2BufTypeVideoCapture)
+		dqbuf.setMemory(v4l2MemoryMmap)
+
+		if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocDqbuf, uintptr(unsafe.Pointer(&dqbuf))); errno != 0 {
+			if errno == unix.EINTR {
+				continue
+			}
+			return status.Errorf(codes.Internal, "VIDIOC_DQBUF: %v", errno)
+		}
+
+		idx := dqbuf.index()
+		n := dqbuf.bytesUsed()
+		data := make([]byte, n)
+		copy(data, mapped[idx].data[:n])
+
+		if err := stream.Send(&agentpb.VideoFrame{
+			Data:        data,
+			TimestampNs: uint64(time.Now().UnixNano()),
+		}); err != nil {
+			return err
+		}
+
+		// Re-queue the buffer.
+		var qbuf v4l2Buf
+		qbuf.setIndex(idx)
+		qbuf.setType(v4l2BufTypeVideoCapture)
+		qbuf.setMemory(v4l2MemoryMmap)
+		if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocQbuf, uintptr(unsafe.Pointer(&qbuf))); errno != 0 {
+			return status.Errorf(codes.Internal, "VIDIOC_QBUF requeue[%d]: %v", idx, errno)
+		}
+	}
+}
+
+// streamGStreamer spawns gst-launch-1.0 on the device to software-encode via x264enc
+// and pipes the resulting H.264 stream back as VideoFrame chunks.
+func (s *VideoService) streamGStreamer(ctx context.Context, stream grpc.ServerStreamingServer[agentpb.VideoFrame], path string, req *agentpb.StreamVideoRequest) (runErr error) {
+	gstPath, err := exec.LookPath("gst-launch-1.0")
+	if err != nil {
+		return status.Errorf(codes.FailedPrecondition, "gst-launch-1.0 not found; install GStreamer on the device")
+	}
+
+	args := buildGStreamerArgs(gstPath, path, req)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return status.Errorf(codes.Internal, "failed to create video pipe: %v", err)
+		return status.Errorf(codes.Internal, "failed to create GStreamer pipe: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return status.Errorf(codes.Internal, "failed to start ffmpeg: %v", err)
+		return status.Errorf(codes.Internal, "failed to start GStreamer: %v", err)
 	}
 
-	startedAt := time.Now()
-	var framesSent int
-	var hwFailed bool
-
 	defer func() {
-		cmd.Process.Kill()               //nolint:errcheck
-		io.Copy(io.Discard, stdout)      // drain so Wait's internal goroutine can exit
-		cmd.Wait()                       //nolint:errcheck
-		// stderrBuf is safe to read after Wait (no concurrent writer)
-		if hwFailed {
-			runErr = hwUnavailableError{msg: fmt.Sprintf("hardware encoder not available (stderr: %s)", strings.TrimSpace(stderrBuf.String()))}
-			return
-		}
+		cmd.Process.Kill()          //nolint:errcheck
+		io.Copy(io.Discard, stdout) // drain so Wait's internal goroutine can exit
+		cmd.Wait()                  //nolint:errcheck
 		if runErr == nil {
 			if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
-				runErr = status.Errorf(codes.Internal, "ffmpeg: %s", msg)
+				runErr = status.Errorf(codes.Internal, "gstreamer: %s", msg)
 			}
 		}
 	}()
@@ -177,7 +329,6 @@ func (s *VideoService) runFFmpeg(ctx context.Context, stream grpc.ServerStreamin
 
 		n, readErr := stdout.Read(buf)
 		if n > 0 {
-			framesSent++
 			data := make([]byte, n)
 			copy(data, buf[:n])
 			if sendErr := stream.Send(&agentpb.VideoFrame{
@@ -188,11 +339,24 @@ func (s *VideoService) runFFmpeg(ctx context.Context, stream grpc.ServerStreamin
 			}
 		}
 		if readErr != nil {
-			if detectHW && framesSent == 0 && time.Since(startedAt) < 2*time.Second {
-				hwFailed = true
-				return nil // defer sets hwUnavailableError after Wait
-			}
-			return nil // defer checks stderr and sets error if non-empty
+			return nil // defer checks stderr
 		}
 	}
+}
+
+// buildGStreamerArgs constructs the gst-launch-1.0 argument list for V4L2 software encode.
+func buildGStreamerArgs(gstPath, devicePath string, req *agentpb.StreamVideoRequest) []string {
+	src := fmt.Sprintf("v4l2src device=%s", devicePath)
+	var caps string
+	if req.GetWidth() > 0 && req.GetHeight() > 0 && req.GetFramerate() > 0 {
+		caps = fmt.Sprintf(" ! video/x-raw,width=%d,height=%d,framerate=%d/1", req.GetWidth(), req.GetHeight(), req.GetFramerate())
+	} else if req.GetWidth() > 0 && req.GetHeight() > 0 {
+		caps = fmt.Sprintf(" ! video/x-raw,width=%d,height=%d", req.GetWidth(), req.GetHeight())
+	} else if req.GetFramerate() > 0 {
+		caps = fmt.Sprintf(" ! video/x-raw,framerate=%d/1", req.GetFramerate())
+	}
+	pipeline := src + caps + " ! x264enc tune=zerolatency ! h264parse ! fdsink fd=1"
+	// Split pipeline into individual arguments for exec (no shell).
+	parts := strings.Fields(pipeline)
+	return append([]string{gstPath}, parts...)
 }

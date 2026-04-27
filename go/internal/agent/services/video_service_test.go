@@ -3,7 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
-	"reflect"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -134,50 +134,43 @@ func TestVideoService_ListVideoDevices_GlobError(t *testing.T) {
 	}
 }
 
-func TestBuildFFmpegArgs_Hardware_WithDimensions(t *testing.T) {
-	req := &agentpb.StreamVideoRequest{Width: 1280, Height: 720, Framerate: 30}
-	args := buildFFmpegArgs("/dev/video0", req, true)
-	expected := []string{
-		"-f", "v4l2", "-input_format", "h264",
-		"-video_size", "1280x720",
-		"-framerate", "30",
-		"-nostdin", "-loglevel", "error",
-		"-i", "/dev/video0",
-		"-c:v", "copy",
-		"-f", "h264", "pipe:1",
-	}
-	if !reflect.DeepEqual(args, expected) {
-		t.Errorf("hardware args mismatch\ngot:  %v\nwant: %v", args, expected)
-	}
-}
-
-func TestBuildFFmpegArgs_Software_DefaultsOmitted(t *testing.T) {
+func TestBuildGStreamerArgs_NoDimensions(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildFFmpegArgs("/dev/video2", req, false)
-	expected := []string{
-		"-f", "v4l2",
-		"-nostdin", "-loglevel", "error",
-		"-i", "/dev/video2",
-		"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-		"-f", "h264", "pipe:1",
+	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req)
+	if len(args) == 0 || args[0] != "/usr/bin/gst-launch-1.0" {
+		t.Errorf("expected first arg to be gst-launch-1.0 path, got %v", args)
 	}
-	if !reflect.DeepEqual(args, expected) {
-		t.Errorf("software args mismatch\ngot:  %v\nwant: %v", args, expected)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "v4l2src") || !strings.Contains(joined, "x264enc") || !strings.Contains(joined, "fdsink") {
+		t.Errorf("pipeline missing expected elements: %v", args)
+	}
+	if strings.Contains(joined, "video/x-raw") {
+		t.Errorf("unexpected caps filter in args: %v", args)
 	}
 }
 
-func TestBuildFFmpegArgs_Software_WithFramerate(t *testing.T) {
-	req := &agentpb.StreamVideoRequest{Framerate: 15}
-	args := buildFFmpegArgs("/dev/video0", req, false)
-	expected := []string{
-		"-f", "v4l2",
-		"-framerate", "15",
-		"-nostdin", "-loglevel", "error",
-		"-i", "/dev/video0",
-		"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-		"-f", "h264", "pipe:1",
-	}
-	if !reflect.DeepEqual(args, expected) {
-		t.Errorf("software args with framerate mismatch\ngot:  %v\nwant: %v", args, expected)
+func TestBuildGStreamerArgs_WithDimensionsAndFramerate(t *testing.T) {
+	req := &agentpb.StreamVideoRequest{Width: 1280, Height: 720, Framerate: 30}
+	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "width=1280") || !strings.Contains(joined, "height=720") || !strings.Contains(joined, "framerate=30/1") {
+		t.Errorf("expected dimension caps in args: %v", args)
 	}
 }
+
+func TestStreamGStreamer_MissingGStreamer(t *testing.T) {
+	t.Setenv("PATH", "") // ensure gst-launch-1.0 is not found regardless of host installation
+	svc := NewVideoService(zap.NewNop())
+	err := svc.streamGStreamer(context.Background(), nil, "/dev/video0", &agentpb.StreamVideoRequest{})
+	if err == nil {
+		t.Fatal("expected error when gst-launch-1.0 not found")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got: %v", err)
+	}
+	if st.Code() != codes.FailedPrecondition {
+		t.Errorf("expected FailedPrecondition, got %v", st.Code())
+	}
+}
+
