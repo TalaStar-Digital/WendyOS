@@ -644,3 +644,135 @@ func TestRenderTemplateContentExecuteError(t *testing.T) {
 		t.Errorf("error should mention the file path, got: %v", err)
 	}
 }
+
+// TestCollectSchemaAnswers_NonInteractiveDefaults verifies that in non-interactive
+// mode, schema questions are answered using their declared defaults without
+// launching TUI prompts.
+func TestCollectSchemaAnswers_NonInteractiveDefaults(t *testing.T) {
+	origFn := isInteractiveTerminalFn
+	isInteractiveTerminalFn = func() bool { return false }
+	t.Cleanup(func() { isInteractiveTerminalFn = origFn })
+
+	schema := &templateSchema{
+		Phases: []templateSchemaPhase{
+			{
+				Title: "Project Type",
+				Questions: []templateSchemaQuestion{
+					{ID: "project_type", Label: "Project Type", Type: "radio", Default: "cloud", Options: []templateSchemaOption{
+						{Value: "cloud", Label: "Cloud"},
+						{Value: "edge", Label: "Edge"},
+					}},
+					{ID: "name", Label: "Name", Type: "input", Default: "my-app"},
+					{ID: "features", Label: "Features", Type: "checkbox", Default: "a,b", Options: []templateSchemaOption{
+						{Value: "a", Label: "A"},
+						{Value: "b", Label: "B"},
+						{Value: "c", Label: "C"},
+					}},
+				},
+			},
+		},
+	}
+
+	vals := map[string]interface{}{}
+	if err := collectSchemaAnswers(schema, vals); err != nil {
+		t.Fatalf("collectSchemaAnswers: %v", err)
+	}
+
+	if vals["project_type"] != "cloud" {
+		t.Errorf("project_type = %v, want cloud", vals["project_type"])
+	}
+	if vals["name"] != "my-app" {
+		t.Errorf("name = %v, want my-app", vals["name"])
+	}
+	if vals["features"] != "a,b" {
+		t.Errorf("features = %v, want a,b", vals["features"])
+	}
+	if vals["features_a"] != true {
+		t.Errorf("features_a = %v, want true", vals["features_a"])
+	}
+	if vals["features_b"] != true {
+		t.Errorf("features_b = %v, want true", vals["features_b"])
+	}
+	if vals["features_c"] != false {
+		t.Errorf("features_c = %v, want false", vals["features_c"])
+	}
+}
+
+// TestCollectSchemaAnswers_NonInteractiveNoDefaultUsesFirstOption verifies
+// that a radio question with no default falls back to the first option value.
+func TestCollectSchemaAnswers_NonInteractiveNoDefaultUsesFirstOption(t *testing.T) {
+	origFn := isInteractiveTerminalFn
+	isInteractiveTerminalFn = func() bool { return false }
+	t.Cleanup(func() { isInteractiveTerminalFn = origFn })
+
+	schema := &templateSchema{
+		Phases: []templateSchemaPhase{
+			{Questions: []templateSchemaQuestion{
+				{ID: "mode", Label: "Mode", Type: "radio", Options: []templateSchemaOption{
+					{Value: "first", Label: "First"},
+					{Value: "second", Label: "Second"},
+				}},
+			}},
+		},
+	}
+
+	vals := map[string]interface{}{}
+	if err := collectSchemaAnswers(schema, vals); err != nil {
+		t.Fatalf("collectSchemaAnswers: %v", err)
+	}
+	if vals["mode"] != "first" {
+		t.Errorf("mode = %v, want first (first option fallback)", vals["mode"])
+	}
+}
+
+// TestCollectSchemaAnswers_SkipsPreAnswered verifies that questions already
+// present in vals (e.g. pre-supplied via --var) are not overwritten.
+func TestCollectSchemaAnswers_SkipsPreAnswered(t *testing.T) {
+	origFn := isInteractiveTerminalFn
+	isInteractiveTerminalFn = func() bool { return false }
+	t.Cleanup(func() { isInteractiveTerminalFn = origFn })
+
+	schema := &templateSchema{
+		Phases: []templateSchemaPhase{
+			{Questions: []templateSchemaQuestion{
+				{ID: "project_type", Label: "Project Type", Type: "radio", Default: "cloud", Options: []templateSchemaOption{
+					{Value: "cloud", Label: "Cloud"},
+					{Value: "edge", Label: "Edge"},
+				}},
+			}},
+		},
+	}
+
+	vals := map[string]interface{}{"project_type": "edge"}
+	if err := collectSchemaAnswers(schema, vals); err != nil {
+		t.Fatalf("collectSchemaAnswers: %v", err)
+	}
+	if vals["project_type"] != "edge" {
+		t.Errorf("project_type = %v, want edge (pre-supplied value must not be overwritten)", vals["project_type"])
+	}
+}
+
+// TestCollectSchemaAnswers_RequiredNoDefaultErrors verifies that a required
+// input question with no default returns an error in non-interactive mode.
+func TestCollectSchemaAnswers_RequiredNoDefaultErrors(t *testing.T) {
+	origFn := isInteractiveTerminalFn
+	isInteractiveTerminalFn = func() bool { return false }
+	t.Cleanup(func() { isInteractiveTerminalFn = origFn })
+
+	schema := &templateSchema{
+		Phases: []templateSchemaPhase{
+			{Questions: []templateSchemaQuestion{
+				{ID: "api_key", Label: "API Key", Type: "input", Required: true},
+			}},
+		},
+	}
+
+	vals := map[string]interface{}{}
+	err := collectSchemaAnswers(schema, vals)
+	if err == nil {
+		t.Fatal("expected error for required question with no default, got nil")
+	}
+	if !strings.Contains(err.Error(), "--var") {
+		t.Errorf("error = %q, want it to mention --var for supplying the value", err.Error())
+	}
+}

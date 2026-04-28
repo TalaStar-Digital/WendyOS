@@ -689,7 +689,12 @@ func isTextFile(path string) bool {
 // For "input" questions, vals[q.ID] is set to the entered string.
 // For "checkbox" questions, vals[q.ID] is a comma-separated list of selected
 // values, and vals[q.ID+"_"+optionValue] is true/false for each option.
+//
+// In non-interactive mode, questions already answered in vals (e.g. via --var)
+// are skipped, and unanswered questions fall back to their defaults. Required
+// questions with no default and no pre-supplied value return an error.
 func collectSchemaAnswers(schema *templateSchema, vals map[string]interface{}) error {
+	interactive := isInteractiveTerminal()
 	for _, phase := range schema.Phases {
 		if !evaluateSchemaCondition(phase.When, vals) {
 			continue
@@ -703,9 +708,55 @@ func collectSchemaAnswers(schema *templateSchema, vals map[string]interface{}) e
 			if !evaluateSchemaCondition(q.When, vals) {
 				continue
 			}
+			if _, answered := vals[q.ID]; answered {
+				continue
+			}
+			if !interactive {
+				if err := applySchemaDefault(q, vals); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := promptSchemaQuestion(q, vals); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// applySchemaDefault sets a schema question's answer in vals using its declared
+// default. For radio questions with no default, the first option is used. For
+// required questions that have no fallback, an error is returned directing the
+// user to supply the answer via --var.
+func applySchemaDefault(q templateSchemaQuestion, vals map[string]interface{}) error {
+	switch q.Type {
+	case "radio":
+		if q.Default != "" {
+			vals[q.ID] = q.Default
+		} else if len(q.Options) > 0 {
+			vals[q.ID] = q.Options[0].Value
+		} else if q.Required {
+			return fmt.Errorf("schema question %q requires input in non-interactive mode (use --var %s=VALUE)", q.Label, q.ID)
+		}
+	case "checkbox":
+		selectedSet := map[string]bool{}
+		if q.Default != "" {
+			for _, p := range strings.Split(q.Default, ",") {
+				selectedSet[strings.TrimSpace(p)] = true
+			}
+		}
+		vals[q.ID] = q.Default
+		for _, opt := range q.Options {
+			vals[q.ID+"_"+opt.Value] = selectedSet[opt.Value]
+		}
+	default: // "input"
+		if q.Default != "" {
+			vals[q.ID] = q.Default
+		} else if q.Required {
+			return fmt.Errorf("schema question %q requires input in non-interactive mode (use --var %s=VALUE)", q.Label, q.ID)
+		} else {
+			vals[q.ID] = ""
 		}
 	}
 	return nil
