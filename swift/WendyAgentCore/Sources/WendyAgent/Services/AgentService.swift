@@ -23,7 +23,7 @@ struct AgentService: Wendy_Agent_Services_V1_WendyAgentService.ServiceProtocol {
     ) async throws -> ServerResponse<Wendy_Agent_Services_V1_GetAgentVersionResponse> {
         let osVersion = ProcessInfo.processInfo.operatingSystemVersion
         var response = Wendy_Agent_Services_V1_GetAgentVersionResponse()
-        response.version = "0.0.0-dev"
+        response.version = WendyAgent.version
         response.os = "darwin"
         response.osVersion =
             "\(osVersion.majorVersion).\(osVersion.minorVersion).\(osVersion.patchVersion)"
