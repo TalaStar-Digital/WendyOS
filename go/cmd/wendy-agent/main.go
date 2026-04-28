@@ -357,24 +357,24 @@ func handleUtilityCommand(args []string) (bool, int) {
 		return false, 0
 	}
 
-	openBrowserArgs := args
-	if args[0] == "utils" {
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: wendy-agent utils open-browser <url>")
-			return true, 2
-		}
-		openBrowserArgs = args[1:]
-	}
-	if args[0] != "utils" || openBrowserArgs[0] != "open-browser" {
+	if args[0] != "utils" {
 		return false, 0
 	}
 
-	if len(openBrowserArgs) != 2 {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: wendy-agent utils open-browser <url>")
+		return true, 2
+	}
+	if args[1] != "open-browser" {
+		return false, 0
+	}
+
+	if len(args) != 3 {
 		fmt.Fprintln(os.Stderr, "usage: wendy-agent utils open-browser <url>")
 		return true, 2
 	}
 
-	rawURL := openBrowserArgs[1]
+	rawURL := args[2]
 	parsed, err := url.ParseRequestURI(rawURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid URL %q: %v\n", rawURL, err)

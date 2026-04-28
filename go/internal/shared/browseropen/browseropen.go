@@ -18,7 +18,7 @@ func Open(url string) error {
 	case "windows":
 		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
 	default:
-		return fmt.Errorf("unsupported platform")
+		return fmt.Errorf("unsupported platform %q", runtime.GOOS)
 	}
 	if err := cmd.Start(); err != nil {
 		return err
