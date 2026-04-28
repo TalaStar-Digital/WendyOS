@@ -205,7 +205,7 @@ jobs:
     timeout-minutes: 45
     needs: [determine-version]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Select Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
@@ -239,7 +239,7 @@ jobs:
         run: bash ./Scripts/Build.sh
 
       - name: Upload notarized app bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wendy-agent-macos-app-${{ needs.determine-version.outputs.version }}
           path: ${{ steps.build_wendy_agent_mac_app.outputs.app_path }}
@@ -247,7 +247,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload release zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.build_wendy_agent_mac_app.outputs.artifact_name }}
           path: ${{ steps.build_wendy_agent_mac_app.outputs.artifact_path }}
@@ -524,7 +524,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign wendy.exe
-        uses: azure/trusted-signing-action@v0.5.1
+        uses: azure/trusted-signing-action@v1.2.0
         with:
           endpoint: ${{ env.SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ env.SIGNING_ACCOUNT }}
@@ -572,7 +572,7 @@ jobs:
             go/installer/windows/wendy.wxs
 
       - name: Sign MSI
-        uses: azure/trusted-signing-action@v0.5.1
+        uses: azure/trusted-signing-action@v1.2.0
         with:
           endpoint: ${{ env.SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ env.SIGNING_ACCOUNT }}
@@ -590,10 +590,17 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  integration-tests:
+    name: Hardware Integration Tests
+    needs: [determine-version]
+    if: needs.determine-version.outputs.is_release == 'true' && needs.determine-version.outputs.is_prerelease == 'false'
+    uses: ./.github/workflows/integration-tests.yml
+    secrets: inherit
+
   publish-linux-repos:
     name: Publish to GCP Artifact Registry
     runs-on: ubuntu-latest
-    needs: [determine-version, package-linux, test-templates]
+    needs: [determine-version, package-linux, test-templates, integration-tests]
     if: needs.determine-version.outputs.is_release == 'true' && needs.determine-version.outputs.is_prerelease == 'false'
     permissions:
       contents: read
@@ -647,7 +654,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [determine-version, build, build-go-macos, build-agent-macos-app, package-linux, package-windows, test-templates]
+    needs: [determine-version, build, build-go-macos, build-agent-macos-app, package-linux, package-windows, test-templates, integration-tests]
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
     steps:
       - name: Download artifact
