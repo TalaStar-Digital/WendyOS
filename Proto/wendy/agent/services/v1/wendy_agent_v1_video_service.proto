@@ -20,7 +20,7 @@ message ListVideoDevicesResponse {
 }
 
 message StreamVideoRequest {
-    uint32 device_id  = 1; // 0 = first available device
+    uint32 device_id  = 1; // numeric suffix N in /dev/videoN; 0 maps to /dev/video0
     uint32 width      = 2; // pixels; 0 = device default
     uint32 height     = 3; // pixels; 0 = device default
     uint32 framerate  = 4; // fps; 0 = device default
@@ -32,7 +32,7 @@ enum VideoCodec {
 }
 
 message VideoFrame {
-    bytes      data         = 1; // encoded video data; format described by codec
+    bytes      data         = 1; // chunk of encoded video; concatenate chunks in order; format described by codec
     uint64     timestamp_ns = 2; // wall-clock timestamp in nanoseconds
     VideoCodec codec        = 3; // codec used; default 0 = H264
 }

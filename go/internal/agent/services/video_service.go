@@ -62,8 +62,7 @@ type v4l2ReqBuffers struct {
 	Type         uint32
 	Memory       uint32
 	Capabilities uint32
-	Flags        uint8
-	_            [3]byte
+	Flags        uint32
 }
 
 // v4l2Buf is a fixed-size byte array matching struct v4l2_buffer (88 bytes on 64-bit Linux).
@@ -182,7 +181,10 @@ func (s *VideoService) streamV4L2Native(ctx context.Context, stream grpc.ServerS
 	vfmt.Field = v4l2FieldNone
 
 	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocSFmt, uintptr(unsafe.Pointer(&vfmt))); errno != 0 {
-		return nativeH264NotSupported{msg: fmt.Sprintf("VIDIOC_S_FMT H264 rejected: %v", errno)}
+		if errno == unix.EINVAL {
+			return nativeH264NotSupported{msg: fmt.Sprintf("VIDIOC_S_FMT H264 rejected: %v", errno)}
+		}
+		return status.Errorf(codes.Internal, "VIDIOC_S_FMT failed for %s: %v", path, errno)
 	}
 	if vfmt.PixelFormat != v4l2PixFmtH264 {
 		return nativeH264NotSupported{msg: "device switched pixel format away from H264"}
@@ -343,10 +345,13 @@ func (s *VideoService) streamGStreamer(ctx context.Context, stream grpc.ServerSt
 	defer func() {
 		cmd.Process.Kill()          //nolint:errcheck
 		io.Copy(io.Discard, stdout) // drain so Wait's internal goroutine can exit
-		cmd.Wait()                  //nolint:errcheck
+		waitErr := cmd.Wait()
 		if runErr == nil {
-			if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
-				runErr = status.Errorf(codes.Internal, "gstreamer: %s", msg)
+			msg := strings.TrimSpace(stderrBuf.String())
+			if msg != "" {
+				runErr = status.Errorf(codes.Internal, "gstreamer exited with error: %s", msg)
+			} else if waitErr != nil {
+				runErr = status.Errorf(codes.Internal, "gstreamer exited with error: %v", waitErr)
 			}
 		}
 	}()
@@ -374,7 +379,13 @@ func (s *VideoService) streamGStreamer(ctx context.Context, stream grpc.ServerSt
 			}
 		}
 		if readErr != nil {
-			return nil // defer checks stderr
+			if readErr == io.EOF {
+				return nil // normal termination; defer surfaces stderr/exit errors
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return status.Errorf(codes.Internal, "failed to read GStreamer output: %v", readErr)
 		}
 	}
 }
@@ -460,8 +471,11 @@ func buildGStreamerArgs(gstPath, devicePath string, req *agentpb.StreamVideoRequ
 	src := fmt.Sprintf("v4l2src device=%s", devicePath)
 
 	var capsParts []string
-	if req.GetWidth() > 0 && req.GetHeight() > 0 {
-		capsParts = append(capsParts, fmt.Sprintf("width=%d,height=%d", req.GetWidth(), req.GetHeight()))
+	if req.GetWidth() > 0 {
+		capsParts = append(capsParts, fmt.Sprintf("width=%d", req.GetWidth()))
+	}
+	if req.GetHeight() > 0 {
+		capsParts = append(capsParts, fmt.Sprintf("height=%d", req.GetHeight()))
 	}
 	if req.GetFramerate() > 0 {
 		capsParts = append(capsParts, fmt.Sprintf("framerate=%d/1", req.GetFramerate()))

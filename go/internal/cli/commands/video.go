@@ -110,7 +110,7 @@ func newVideoStreamCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&width, "width", 0, "Frame width (0 = device default)")
 	cmd.Flags().Uint32Var(&height, "height", 0, "Frame height (0 = device default)")
 	cmd.Flags().Uint32Var(&fps, "fps", 0, "Framerate (0 = device default)")
-	cmd.Flags().BoolVar(&toStdout, "stdout", false, "Write raw H.264 to stdout instead of opening a window")
+	cmd.Flags().BoolVar(&toStdout, "stdout", false, "Pipe encoded video to stdout instead of opening a window (codec: H.264 or VP8/WebM depending on device capabilities)")
 
 	return cmd
 }
@@ -191,10 +191,11 @@ func playVideoWithGStreamer(ctx context.Context, stream interface {
 	}()
 
 	recvErr := make(chan error, 1)
+	writeErr := make(chan error, 1)
 	go func() {
 		// Write the already-received first frame before entering the loop.
-		if _, writeErr := stdin.Write(first.GetData()); writeErr != nil {
-			recvErr <- fmt.Errorf("writing to GStreamer: %w", writeErr)
+		if _, err := stdin.Write(first.GetData()); err != nil {
+			writeErr <- fmt.Errorf("writing to GStreamer: %w", err)
 			return
 		}
 		for {
@@ -203,8 +204,8 @@ func playVideoWithGStreamer(ctx context.Context, stream interface {
 				recvErr <- err
 				return
 			}
-			if _, writeErr := stdin.Write(frame.GetData()); writeErr != nil {
-				recvErr <- fmt.Errorf("writing to GStreamer: %w", writeErr)
+			if _, err := stdin.Write(frame.GetData()); err != nil {
+				writeErr <- fmt.Errorf("writing to GStreamer: %w", err)
 				return
 			}
 		}
@@ -216,6 +217,8 @@ func playVideoWithGStreamer(ctx context.Context, stream interface {
 			return nil
 		}
 		return fmt.Errorf("receiving video: %w", err)
+	case err := <-writeErr:
+		return err
 	case <-ctx.Done():
 		return nil
 	}
