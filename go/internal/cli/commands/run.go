@@ -329,7 +329,6 @@ type runOptions struct {
 	noRestart            bool
 	prefix               string
 	product              string
-	deviceType           string
 	userArgs             []string
 }
 
@@ -356,7 +355,6 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "Project directory to run from instead of the current working directory")
 	cmd.Flags().StringVar(&opts.product, "product", "", "Swift Package Manager product to build and run")
 	cmd.Flags().StringSliceVar(&opts.userArgs, "user-args", nil, "Extra arguments to pass to the container")
-	cmd.Flags().StringVar(&opts.deviceType, "device-type", "", "Override hardware device type (e.g. raspberry-pi-5, jetson-agx-orin)")
 
 	return cmd
 }
@@ -721,20 +719,8 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	}
 	platform := "linux/" + architecture
 	deviceType := versionResp.GetDeviceType()
-	gpuVendor := versionResp.GetGpuVendor()
-	if deviceType == "" {
-		if opts.deviceType != "" {
-			deviceType = opts.deviceType
-		} else if isInteractiveTerminalFn() {
-			var pickErr error
-			deviceType, pickErr = pickDeviceType(gpuVendor)
-			if pickErr != nil {
-				return pickErr
-			}
-		}
-	}
 	buildArgs := map[string]string{
-		"WENDY_PLATFORM": inferWendyPlatform(deviceType, versionResp),
+		"WENDY_PLATFORM": wendyPlatform(deviceType),
 		"WENDY_DEBUG":    fmt.Sprintf("%t", opts.debug),
 	}
 	// Only set WENDY_DEVICE_TYPE / GPU args when the agent reports them so
@@ -1008,56 +994,6 @@ func startPostStartHook(ctx context.Context, appCfg *appconfig.AppConfig, hostna
 	}
 	cliLogln("Hook postStart: %s", expanded)
 	return cmd
-}
-
-// knownDeviceTypes is the ordered list of hardware shown in the interactive
-// picker when the connected agent does not report its own device type.
-var knownDeviceTypes = []struct{ key, display, description string }{
-	{"raspberry-pi-5", "Raspberry Pi 5", ""},
-	{"jetson-agx-orin", "Jetson AGX Orin", "NVIDIA Jetson (GPU)"},
-	{"jetson-orin-nano", "Jetson Orin Nano", "NVIDIA Jetson (GPU)"},
-}
-
-// pickDeviceType shows an interactive picker so the user can identify the
-// connected hardware when the agent does not report a device type. When
-// gpuVendor is "nvidia" only Jetson variants are offered and the generic
-// fallback is omitted, since the device is clearly not CPU-only.
-// Returns the device-type key, or "" when the user picks the generic fallback.
-func pickDeviceType(gpuVendor string) (string, error) {
-	nvidiaDevice := gpuVendor == "nvidia"
-	var items []tui.PickerItem
-	for _, dt := range knownDeviceTypes {
-		if nvidiaDevice && dt.description == "" {
-			continue // hide non-GPU options when GPU vendor is already known
-		}
-		items = append(items, tui.PickerItem{
-			Name:        dt.display,
-			Description: dt.description,
-			Value:       dt.key,
-		})
-	}
-	if !nvidiaDevice {
-		items = append(items, tui.PickerItem{
-			Name:        "Other / Unknown",
-			Description: "Generic CPU-only build",
-			Value:       "",
-		})
-	}
-	return pickFromItems("Select your device hardware", items)
-}
-
-// inferWendyPlatform determines the platform tier for Dockerfile base-stage
-// selection. It first consults the device-type string; when that is absent it
-// falls back to GPU metadata reported by the agent so that devices running an
-// older agent (or missing /etc/wendyos/device-type) still get the right image.
-func inferWendyPlatform(deviceType string, resp *agentpb.GetAgentVersionResponse) string {
-	if p := wendyPlatform(deviceType); p != "generic" {
-		return p
-	}
-	if resp.GetJetpackVersion() != "" || resp.GetGpuVendor() == "nvidia" {
-		return "nvidia-jetson"
-	}
-	return "generic"
 }
 
 // wendyPlatform maps a WendyOS device type to a platform tier used for
