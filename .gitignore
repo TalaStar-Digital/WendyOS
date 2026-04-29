@@ -33,3 +33,6 @@ go/wendy
 
 # Git worktrees
 .worktrees/
+
+# Superpowers planning docs (local dev tooling)
+docs/superpowers/
