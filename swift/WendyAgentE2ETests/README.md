@@ -1,33 +1,31 @@
 # WendyAgentE2ETests
 
-Minimal Swift E2E scaffolding built around a tiny `Machine` helper.
+Minimal Swift E2E scaffolding built around an SSH-only `Machine` helper.
 
-## Run unit tests
+## Run tests
 
 ```bash
 cd swift/WendyAgentE2ETests
 swift test
 ```
 
+## Machine spec
+
+`Machine` uses a compact SSH spec:
+
+- `user@host:/path/to/repo`
+
+The SSH session is persisted with an OpenSSH control socket, so the first
+command authenticates and later commands reuse the same connection.
+
 ## Run the smoke test
 
-The smoke test is gated behind `WENDY_E2E_SMOKE=1`.
+The smoke test is gated behind `WENDY_E2E_SMOKE=1` and requires one remote
+machine spec:
 
 ```bash
 cd swift/WendyAgentE2ETests
-WENDY_E2E_SMOKE=1 swift test --filter MachineSmokeTests
+WENDY_E2E_SMOKE=1 \
+E2E_MACHINE='user@host:~/wendy-agent' \
+swift test --filter MachineSmokeTests
 ```
-
-Optional machine specs:
-
-- `E2E_RUNNER`
-- `E2E_CLI`
-- `E2E_AGENT`
-- `E2E_DEVICE`
-
-Machine spec format:
-
-- `local:/absolute/path`
-- `user@host:/path/to/workdir`
-
-Without explicit `E2E_CLI` or `E2E_AGENT`, the smoke test creates local temporary directories and pushes the built artifacts there.

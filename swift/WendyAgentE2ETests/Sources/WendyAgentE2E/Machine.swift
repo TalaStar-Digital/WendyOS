@@ -1,183 +1,53 @@
 import Foundation
+import Subprocess
 
-public struct CommandResult: Sendable {
-    public let exitStatus: Int32
-    public let stdout: String
-    public let stderr: String
-
-    public init(exitStatus: Int32, stdout: String, stderr: String) {
-        self.exitStatus = exitStatus
-        self.stdout = stdout
-        self.stderr = stderr
-    }
-}
+#if canImport(System)
+    import System
+#else
+    import SystemPackage
+#endif
 
 public enum MachineError: Error, CustomStringConvertible {
     case invalidMachineSpec(String)
-    case invalidPath(String)
-    case commandFailed(machine: String, command: String, result: CommandResult)
+    case connectionFailed(machine: String, stderr: String)
+    case commandFailed(machine: String, command: String, terminationStatus: TerminationStatus)
 
     public var description: String {
         switch self {
         case .invalidMachineSpec(let spec):
             return "Invalid machine spec: \(spec)"
-        case .invalidPath(let path):
-            return "Invalid path: \(path)"
-        case .commandFailed(let machine, let command, let result):
-            var message = "Command failed on \(machine) (exit \(result.exitStatus)): \(command)"
-            if !result.stdout.isEmpty {
-                message += "\nstdout:\n\(result.stdout)"
+        case .connectionFailed(let machine, let stderr):
+            if stderr.isEmpty {
+                return "Failed to establish SSH session for \(machine)"
             }
-            if !result.stderr.isEmpty {
-                message += "\nstderr:\n\(result.stderr)"
-            }
-            return message
+            return "Failed to establish SSH session for \(machine):\n\(stderr)"
+        case .commandFailed(let machine, let command, let terminationStatus):
+            return "Command failed on \(machine) with \(terminationStatus): \(command)"
         }
     }
 }
 
-public struct Machine: Sendable {
-    enum Location: Sendable {
-        case local
-        case ssh(target: String)
-    }
+public actor Machine: Sendable {
+    public nonisolated let sshTarget: String
+    public nonisolated let baseDirectory: String
 
-    let location: Location
-    let baseDirectory: String
+    private let sshExecutable: String
+    private let controlPath: String
+    private let controlPersist: String
 
-    public static func local(_ path: String) -> Self {
-        Self(location: .local, baseDirectory: (path as NSString).expandingTildeInPath)
-    }
-
-    public static func ssh(_ spec: String) -> Self {
+    public static func ssh(_ spec: String) -> Machine {
         do {
-            return try parseSSH(spec)
+            return try self.parse(spec)
         } catch {
             preconditionFailure("\(error)")
         }
     }
 
-    public static func parse(_ spec: String) throws -> Self {
-        if spec.hasPrefix("local:") {
-            let path = String(spec.dropFirst("local:".count))
-            guard !path.isEmpty else {
-                throw MachineError.invalidMachineSpec(spec)
-            }
-            return .local(path)
-        }
-        return try parseSSH(spec)
+    public static func parse(_ spec: String) throws -> Machine {
+        try self.parse(spec, sshExecutable: "/usr/bin/ssh")
     }
 
-    public var isLocal: Bool {
-        if case .local = self.location {
-            return true
-        }
-        return false
-    }
-
-    public var sshTarget: String? {
-        if case .ssh(let target) = self.location {
-            return target
-        }
-        return nil
-    }
-
-    public var description: String {
-        switch self.location {
-        case .local:
-            return "local:\(self.baseDirectory)"
-        case .ssh(let target):
-            return "\(target):\(self.baseDirectory)"
-        }
-    }
-
-    @discardableResult
-    public func run(_ command: String) async throws -> CommandResult {
-        let result: CommandResult
-        switch self.location {
-        case .local:
-            result = try await ProcessRunner.run(
-                executable: "/bin/bash",
-                arguments: ["-lc", self.wrapped(command)],
-                commandDescription: "[\(self.description)] \(command)"
-            )
-        case .ssh(let target):
-            result = try await ProcessRunner.run(
-                executable: "/usr/bin/ssh",
-                arguments: [target, self.wrapped(command)],
-                commandDescription: "[\(self.description)] \(command)"
-            )
-        }
-
-        guard result.exitStatus == 0 else {
-            throw MachineError.commandFailed(
-                machine: self.description,
-                command: command,
-                result: result
-            )
-        }
-        return result
-    }
-
-    public func push(_ sourcePath: String, to destination: Machine) async throws {
-        let sourceName = try Self.lastPathComponent(of: sourcePath)
-        try await destination.prepareIncomingPath(sourceName)
-
-        switch (self.location, destination.location) {
-        case (.local, .local):
-            let source = try self.localAbsolutePath(for: sourcePath)
-            let target = try destination.localAbsolutePath(for: sourceName)
-            let result = try await ProcessRunner.run(
-                executable: "/bin/cp",
-                arguments: ["-R", source, target],
-                commandDescription:
-                    "[\(self.description) -> \(destination.description)] cp -R \(sourcePath) \(sourceName)"
-            )
-            guard result.exitStatus == 0 else {
-                throw MachineError.commandFailed(
-                    machine: "\(self.description) -> \(destination.description)",
-                    command: "push \(sourcePath)",
-                    result: result
-                )
-            }
-        case (.local, .ssh), (.ssh, .local):
-            let result = try await ProcessRunner.run(
-                executable: "/usr/bin/scp",
-                arguments: [
-                    "-r", try self.copyArgument(forSourcePath: sourcePath),
-                    try destination.copyArgument(forDestinationPath: sourceName),
-                ],
-                commandDescription:
-                    "[\(self.description) -> \(destination.description)] scp -r \(sourcePath) \(sourceName)"
-            )
-            guard result.exitStatus == 0 else {
-                throw MachineError.commandFailed(
-                    machine: "\(self.description) -> \(destination.description)",
-                    command: "push \(sourcePath)",
-                    result: result
-                )
-            }
-        case (.ssh, .ssh):
-            let result = try await ProcessRunner.run(
-                executable: "/usr/bin/scp",
-                arguments: [
-                    "-3", "-r", try self.copyArgument(forSourcePath: sourcePath),
-                    try destination.copyArgument(forDestinationPath: sourceName),
-                ],
-                commandDescription:
-                    "[\(self.description) -> \(destination.description)] scp -3 -r \(sourcePath) \(sourceName)"
-            )
-            guard result.exitStatus == 0 else {
-                throw MachineError.commandFailed(
-                    machine: "\(self.description) -> \(destination.description)",
-                    command: "push \(sourcePath)",
-                    result: result
-                )
-            }
-        }
-    }
-
-    private static func parseSSH(_ spec: String) throws -> Self {
+    static func parse(_ spec: String, sshExecutable: String) throws -> Machine {
         guard let colonIndex = spec.firstIndex(of: ":") else {
             throw MachineError.invalidMachineSpec(spec)
         }
@@ -188,136 +58,221 @@ public struct Machine: Sendable {
             throw MachineError.invalidMachineSpec(spec)
         }
 
-        return Self(location: .ssh(target: target), baseDirectory: path)
+        return Machine(
+            sshTarget: target,
+            baseDirectory: path,
+            sshExecutable: sshExecutable,
+            controlPath: Self.makeControlPath()
+        )
     }
 
-    private static func lastPathComponent(of path: String) throws -> String {
-        let component = (path as NSString).lastPathComponent
-        guard !component.isEmpty, component != "/", component != "." else {
-            throw MachineError.invalidPath(path)
+    init(
+        sshTarget: String,
+        baseDirectory: String,
+        sshExecutable: String = "/usr/bin/ssh",
+        controlPath: String,
+        controlPersist: String = "10m"
+    ) {
+        self.sshTarget = sshTarget
+        self.baseDirectory = baseDirectory
+        self.sshExecutable = sshExecutable
+        self.controlPath = controlPath
+        self.controlPersist = controlPersist
+    }
+
+    deinit {
+        let sshExecutable = self.sshExecutable
+        let sshTarget = self.sshTarget
+        let controlPath = self.controlPath
+
+        Task.detached {
+            _ = try? await Self.invokeSSH(
+                executable: sshExecutable,
+                arguments: [
+                    "-o", "ControlPath=\(controlPath)",
+                    "-O", "exit",
+                    sshTarget,
+                ],
+                output: .discarded,
+                error: .discarded
+            )
+            try? FileManager.default.removeItem(atPath: controlPath)
         }
-        return component
+    }
+
+    public nonisolated var description: String {
+        "\(self.sshTarget):\(self.baseDirectory)"
+    }
+
+    public func close() async throws {
+        guard try await self.isConnected() else {
+            try? FileManager.default.removeItem(atPath: self.controlPath)
+            return
+        }
+
+        _ = try await Self.invokeSSH(
+            executable: self.sshExecutable,
+            arguments: [
+                "-o", "ControlPath=\(self.controlPath)",
+                "-O", "exit",
+                self.sshTarget,
+            ],
+            output: .discarded,
+            error: .discarded
+        )
+        try? FileManager.default.removeItem(atPath: self.controlPath)
+    }
+
+    public func run(_ command: String) async throws {
+        let outcome = try await self.run(command) { _, _, stdout, stderr in
+            async let forwardStdout = Self.forward(stdout, to: .standardOutput)
+            async let forwardStderr = Self.forward(stderr, to: .standardError)
+            _ = try await (forwardStdout, forwardStderr)
+        }
+
+        guard outcome.terminationStatus.isSuccess else {
+            throw MachineError.commandFailed(
+                machine: self.description,
+                command: command,
+                terminationStatus: outcome.terminationStatus
+            )
+        }
+    }
+
+    public func run<Output: OutputProtocol, Error: ErrorOutputProtocol>(
+        _ command: String,
+        output: Output,
+        error: Error = .discarded
+    ) async throws -> ExecutionRecord<Output, Error> {
+        try await self.ensureConnected()
+        Self.printCommand(machine: self.description, command: command)
+
+        return try await Self.invokeSSH(
+            executable: self.sshExecutable,
+            arguments: self.commandArguments(for: command),
+            output: output,
+            error: error
+        )
+    }
+
+    public func run<Result>(
+        _ command: String,
+        preferredBufferSize: Int? = nil,
+        isolation: isolated (any Actor)? = #isolation,
+        body:
+            @Sendable (
+                _ execution: Execution,
+                _ inputWriter: StandardInputWriter,
+                _ standardOutput: AsyncBufferSequence,
+                _ standardError: AsyncBufferSequence
+            ) async throws -> Result
+    ) async throws -> ExecutionOutcome<Result> {
+        try await self.ensureConnected()
+        Self.printCommand(machine: self.description, command: command)
+
+        return try await Subprocess.run(
+            .path(FilePath(self.sshExecutable)),
+            arguments: Arguments(self.commandArguments(for: command)),
+            preferredBufferSize: preferredBufferSize,
+            isolation: isolation,
+            body: body
+        )
+    }
+
+    private func ensureConnected() async throws {
+        guard try await self.isConnected() == false else {
+            return
+        }
+
+        let controlDirectory = (self.controlPath as NSString).deletingLastPathComponent
+        try FileManager.default.createDirectory(
+            atPath: controlDirectory,
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.removeItem(atPath: self.controlPath)
+
+        let record = try await Self.invokeSSH(
+            executable: self.sshExecutable,
+            arguments: [
+                "-MNf",
+                "-o", "ControlMaster=yes",
+                "-o", "ControlPersist=\(self.controlPersist)",
+                "-o", "ControlPath=\(self.controlPath)",
+                self.sshTarget,
+            ],
+            output: .string(limit: .max),
+            error: .string(limit: .max)
+        )
+
+        guard record.terminationStatus.isSuccess else {
+            throw MachineError.connectionFailed(
+                machine: self.description,
+                stderr: record.standardError ?? ""
+            )
+        }
+    }
+
+    private func isConnected() async throws -> Bool {
+        let record = try await Self.invokeSSH(
+            executable: self.sshExecutable,
+            arguments: [
+                "-o", "ControlPath=\(self.controlPath)",
+                "-O", "check",
+                self.sshTarget,
+            ],
+            output: .discarded,
+            error: .discarded
+        )
+        return record.terminationStatus.isSuccess
+    }
+
+    private func commandArguments(for command: String) -> [String] {
+        [
+            "-T",
+            "-o", "ControlMaster=no",
+            "-o", "ControlPath=\(self.controlPath)",
+            self.sshTarget,
+            self.wrapped(command),
+        ]
     }
 
     private func wrapped(_ command: String) -> String {
         "cd \(Self.shellQuote(self.baseDirectory)) && \(command)"
     }
 
-    private func prepareIncomingPath(_ relativePath: String) async throws {
-        try await self.run("rm -rf \(Self.shellQuote(relativePath))")
+    private nonisolated static func makeControlPath() -> String {
+        "/tmp/wendy-e2e-\(UUID().uuidString).sock"
     }
 
-    private func localAbsolutePath(for relativePath: String) throws -> String {
-        guard self.isLocal else {
-            throw MachineError.invalidPath(relativePath)
-        }
-        return (self.baseDirectory as NSString).appendingPathComponent(relativePath)
-    }
-
-    private func copyArgument(forSourcePath sourcePath: String) throws -> String {
-        switch self.location {
-        case .local:
-            return try self.localAbsolutePath(for: sourcePath)
-        case .ssh(let target):
-            let absolutePath = (self.baseDirectory as NSString).appendingPathComponent(sourcePath)
-            return "\(target):\(Self.shellQuote(absolutePath))"
-        }
-    }
-
-    private func copyArgument(forDestinationPath destinationPath: String) throws -> String {
-        switch self.location {
-        case .local:
-            return try self.localAbsolutePath(for: destinationPath)
-        case .ssh(let target):
-            let absolutePath = (self.baseDirectory as NSString).appendingPathComponent(
-                destinationPath
-            )
-            return "\(target):\(Self.shellQuote(absolutePath))"
-        }
-    }
-
-    private static func shellQuote(_ value: String) -> String {
+    private nonisolated static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
-}
 
-private enum ProcessRunner {
-    static func run(
+    private nonisolated static func printCommand(machine: String, command: String) {
+        fputs("$ [\(machine)] \(command)\n", stderr)
+    }
+
+    private nonisolated static func forward(
+        _ sequence: AsyncBufferSequence,
+        to handle: FileHandle
+    ) async throws {
+        for try await buffer in sequence {
+            let data = buffer.withUnsafeBytes { Data($0) }
+            try handle.write(contentsOf: data)
+        }
+    }
+
+    private nonisolated static func invokeSSH<Output: OutputProtocol, Error: ErrorOutputProtocol>(
         executable: String,
         arguments: [String],
-        commandDescription: String
-    ) async throws -> CommandResult {
-        fputs("$ \(commandDescription)\n", stderr)
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        let stdoutBuffer = OutputBuffer(forwardingTo: FileHandle.standardOutput)
-        let stderrBuffer = OutputBuffer(forwardingTo: FileHandle.standardError)
-
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            stdoutBuffer.consume(handle.availableData)
-        }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            stderrBuffer.consume(handle.availableData)
-        }
-
-        try process.run()
-        let exitStatus = await withCheckedContinuation { continuation in
-            process.terminationHandler = { process in
-                continuation.resume(returning: process.terminationStatus)
-            }
-        }
-
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-        stderrPipe.fileHandleForReading.readabilityHandler = nil
-        stdoutBuffer.consume(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
-        stderrBuffer.consume(stderrPipe.fileHandleForReading.readDataToEndOfFile())
-
-        return CommandResult(
-            exitStatus: exitStatus,
-            stdout: stdoutBuffer.string,
-            stderr: stderrBuffer.string
+        output: Output,
+        error: Error
+    ) async throws -> ExecutionRecord<Output, Error> {
+        try await Subprocess.run(
+            .path(FilePath(executable)),
+            arguments: Arguments(arguments),
+            output: output,
+            error: error
         )
-    }
-}
-
-private final class OutputBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
-    private let forward: FileHandle
-
-    init(forwardingTo forward: FileHandle) {
-        self.forward = forward
-    }
-
-    func consume(_ chunk: Data) {
-        guard !chunk.isEmpty else {
-            return
-        }
-        self.lock.withLock {
-            self.data.append(chunk)
-        }
-        try? self.forward.write(contentsOf: chunk)
-    }
-
-    var string: String {
-        self.lock.withLock {
-            String(decoding: self.data, as: UTF8.self)
-        }
-    }
-}
-
-extension NSLock {
-    fileprivate func withLock<T>(_ body: () -> T) -> T {
-        self.lock()
-        defer { self.unlock() }
-        return body()
     }
 }
