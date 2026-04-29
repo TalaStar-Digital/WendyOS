@@ -7,7 +7,7 @@ import Testing
 struct MachineTests {
     @Test("parse ssh machine spec")
     func parseSSHMachineSpec() throws {
-        let machine = try Machine.parse("ai@example.local:~/wendy-agent")
+        let machine = try Machine(ssh: "ai@example.local:~/wendy-agent")
 
         #expect(machine.sshTarget == "ai@example.local")
         #expect(machine.baseDirectory == "~/wendy-agent")

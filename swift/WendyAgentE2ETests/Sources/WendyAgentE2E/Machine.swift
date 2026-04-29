@@ -13,16 +13,8 @@ public struct Machine: Sendable {
 
     // MARK: - Creating Machines
 
-    public static func ssh(_ spec: String) -> Machine {
-        do {
-            return try self.parse(spec)
-        } catch {
-            preconditionFailure("\(error)")
-        }
-    }
-
-    public static func parse(_ spec: String) throws -> Machine {
-        try self.parse(spec, sshExecutable: "/usr/bin/ssh")
+    public init(ssh: String) throws {
+        try self.init(ssh, sshExecutable: "/usr/bin/ssh")
     }
 
     // MARK: - Running Commands
@@ -83,7 +75,7 @@ public struct Machine: Sendable {
 
     // MARK: - Internal
 
-    static func parse(_ spec: String, sshExecutable: String) throws -> Machine {
+    init(_ spec: String, sshExecutable: String) throws {
         guard let colonIndex = spec.firstIndex(of: ":") else {
             throw MachineError.invalidMachineSpec(spec)
         }
@@ -94,7 +86,7 @@ public struct Machine: Sendable {
             throw MachineError.invalidMachineSpec(spec)
         }
 
-        return Machine(
+        self.init(
             sshTarget: target,
             baseDirectory: path,
             sshExecutable: sshExecutable
