@@ -16,12 +16,14 @@ swift test
 ```swift
 let remote = Machine(name: "Remote", ssh: "user@host", workingDirectory: "/path/to/repo")
 let local = Machine(name: "Local", workingDirectory: "/path/to/repo")
+let verbose = Machine(name: "Debug", workingDirectory: "/path/to/repo", verbose: true)
 ```
 
 If `ssh` is omitted, commands run on the local machine with `workingDirectory`,
 defaulting to the current directory. If remote `workingDirectory` is omitted,
 commands run in the SSH user's home directory. Each remote command runs
-in its own SSH invocation. Console output is prefixed with the machine name.
+in its own SSH invocation. Simple `run()` calls only print stdout and stderr
+when `verbose` is `true`; console output is prefixed with the machine name.
 
 ## Run the simple command test
 

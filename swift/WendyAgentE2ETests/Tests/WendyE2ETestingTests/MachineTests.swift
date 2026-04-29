@@ -12,7 +12,15 @@ struct MachineTests {
         #expect(machine.name == "SSH")
         #expect(machine.ssh == "ai@example.local")
         #expect(machine.workingDirectory == "~/wendy-agent")
+        #expect(machine.verbose == false)
         #expect(machine.description == "ai@example.local:~/wendy-agent")
+    }
+
+    @Test("creates verbose machine")
+    func createsVerboseMachine() {
+        let machine = Machine(name: "Local", verbose: true)
+
+        #expect(machine.verbose)
     }
 
     @Test("defaults to SSH user home directory")

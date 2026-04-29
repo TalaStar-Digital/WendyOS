@@ -12,6 +12,7 @@ public struct Machine: Sendable {
     public let name: String
     public let ssh: String?
     public let workingDirectory: String?
+    public let verbose: Bool
 
     // MARK: - Creating Machines
 
@@ -19,6 +20,7 @@ public struct Machine: Sendable {
         name: String,
         ssh: String? = nil,
         workingDirectory: String? = nil,
+        verbose: Bool = false,
         sshExecutable: String = "/usr/bin/ssh"
     ) {
         precondition(!name.isEmpty, "name must not be empty")
@@ -29,6 +31,7 @@ public struct Machine: Sendable {
         self.name = name
         self.ssh = ssh
         self.workingDirectory = workingDirectory ?? (ssh == nil ? FileManager.default.currentDirectoryPath : nil)
+        self.verbose = verbose
         self.sshExecutable = sshExecutable
     }
 
@@ -36,9 +39,15 @@ public struct Machine: Sendable {
 
     public func run(_ command: String) async throws {
         let outcome = try await self.run(command) { _, _, stdout, stderr in
-            async let forwardStdout = Self.forward(stdout, to: .standardOutput, name: self.name)
-            async let forwardStderr = Self.forward(stderr, to: .standardError, name: self.name)
-            _ = try await (forwardStdout, forwardStderr)
+            if self.verbose {
+                async let forwardStdout = Self.forward(stdout, to: .standardOutput, name: self.name)
+                async let forwardStderr = Self.forward(stderr, to: .standardError, name: self.name)
+                _ = try await (forwardStdout, forwardStderr)
+            } else {
+                async let discardStdout = Self.discard(stdout)
+                async let discardStderr = Self.discard(stderr)
+                _ = try await (discardStdout, discardStderr)
+            }
         }
 
         guard outcome.terminationStatus.isSuccess else {
@@ -55,7 +64,9 @@ public struct Machine: Sendable {
         output: Output,
         error: Error = .discarded
     ) async throws -> ExecutionRecord<Output, Error> {
-        Self.printCommand(machine: self.name, command: command)
+        if self.verbose {
+            Self.printCommand(machine: self.name, command: command)
+        }
 
         let invocation = self.invocation(for: command)
         return try await Self.invoke(
@@ -77,7 +88,9 @@ public struct Machine: Sendable {
                 _ standardError: AsyncBufferSequence
             ) async throws -> Result
     ) async throws -> ExecutionOutcome<Result> {
-        Self.printCommand(machine: self.name, command: command)
+        if self.verbose {
+            Self.printCommand(machine: self.name, command: command)
+        }
 
         let invocation = self.invocation(for: command)
         return try await Subprocess.run(
@@ -170,6 +183,10 @@ public struct Machine: Sendable {
             let line = rawLine.trimmingCharacters(in: .newlines)
             try handle.write(contentsOf: Data("[\(name)] \(line)\n".utf8))
         }
+    }
+
+    private static func discard(_ sequence: AsyncBufferSequence) async throws {
+        for try await _ in sequence {}
     }
 
     private static func invoke<Output: OutputProtocol, Error: ErrorOutputProtocol>(
