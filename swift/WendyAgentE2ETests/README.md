@@ -14,7 +14,7 @@ swift test
 `Machine` takes the SSH target and remote working directory separately:
 
 ```swift
-let machine = try Machine(ssh: "user@host", path: "/path/to/repo")
+let machine = Machine(ssh: "user@host", path: "/path/to/repo")
 ```
 
 Each command runs in its own SSH invocation.

@@ -6,8 +6,8 @@ import Testing
 
 struct MachineTests {
     @Test("creates SSH machine")
-    func createsSSHMachine() throws {
-        let machine = try Machine(ssh: "ai@example.local", path: "~/wendy-agent")
+    func createsSSHMachine() {
+        let machine = Machine(ssh: "ai@example.local", path: "~/wendy-agent")
 
         #expect(machine.ssh == "ai@example.local")
         #expect(machine.path == "~/wendy-agent")

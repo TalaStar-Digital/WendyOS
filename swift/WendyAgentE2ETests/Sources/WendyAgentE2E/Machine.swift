@@ -13,16 +13,14 @@ public struct Machine: Sendable {
 
     // MARK: - Creating Machines
 
-    public init(ssh: String, path: String) throws {
-        guard !ssh.isEmpty, !path.isEmpty else {
-            throw MachineError.invalidMachineSpec("ssh: \(ssh), path: \(path)")
-        }
+    public init(ssh: String, path: String, sshExecutable: String = "/usr/bin/ssh") {
+        precondition(!ssh.isEmpty, "ssh must not be empty")
+        precondition(!path.isEmpty, "path must not be empty")
+        precondition(!sshExecutable.isEmpty, "sshExecutable must not be empty")
 
-        self.init(
-            ssh: ssh,
-            path: path,
-            sshExecutable: "/usr/bin/ssh"
-        )
+        self.ssh = ssh
+        self.path = path
+        self.sshExecutable = sshExecutable
     }
 
     // MARK: - Running Commands
@@ -79,18 +77,6 @@ public struct Machine: Sendable {
             isolation: isolation,
             body: body
         )
-    }
-
-    // MARK: - Internal
-
-    init(
-        ssh: String,
-        path: String,
-        sshExecutable: String = "/usr/bin/ssh"
-    ) {
-        self.ssh = ssh
-        self.path = path
-        self.sshExecutable = sshExecutable
     }
 
     // MARK: - Private
