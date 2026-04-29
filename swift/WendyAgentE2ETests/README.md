@@ -11,18 +11,19 @@ swift test
 
 ## Machine configuration
 
-`Machine` takes the SSH target and remote working directory separately:
+`Machine` takes the SSH target and optional remote working directory separately:
 
 ```swift
 let machine = Machine(ssh: "user@host", path: "/path/to/repo")
 ```
 
+If `path` is omitted, commands run in the SSH user's home directory.
 Each command runs in its own SSH invocation.
 
 ## Run the smoke test
 
-The smoke test is gated behind `WENDY_E2E_SMOKE=1` and requires an SSH target
-and remote working directory:
+The smoke test is gated behind `WENDY_E2E_SMOKE=1` and requires an SSH target.
+`E2E_MACHINE_PATH` is optional and defaults to the SSH user's home directory:
 
 ```bash
 cd swift/WendyAgentE2ETests

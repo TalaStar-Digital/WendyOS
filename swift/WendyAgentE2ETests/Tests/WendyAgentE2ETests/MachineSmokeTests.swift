@@ -17,7 +17,7 @@ struct MachineSmokeTests {
         }
 
         let ssh = try #require(environment["E2E_MACHINE_SSH"])
-        let path = try #require(environment["E2E_MACHINE_PATH"])
+        let path = environment["E2E_MACHINE_PATH"]
         let machine = Machine(ssh: ssh, path: path)
 
         try await machine.run("cd swift && make build-dev")

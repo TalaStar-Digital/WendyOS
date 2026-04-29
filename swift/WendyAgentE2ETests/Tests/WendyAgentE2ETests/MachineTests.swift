@@ -14,6 +14,15 @@ struct MachineTests {
         #expect(machine.description == "ai@example.local:~/wendy-agent")
     }
 
+    @Test("defaults to SSH user home directory")
+    func defaultsToSSHUserHomeDirectory() {
+        let machine = Machine(ssh: "ai@example.local")
+
+        #expect(machine.ssh == "ai@example.local")
+        #expect(machine.path == nil)
+        #expect(machine.description == "ai@example.local:~")
+    }
+
     @Test("runs commands over separate SSH invocations")
     func runsCommandsOverSeparateSSHInvocations() async throws {
         try await Self.withFixtureMachine { machine, fixture in

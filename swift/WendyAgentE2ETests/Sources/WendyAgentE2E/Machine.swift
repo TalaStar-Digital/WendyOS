@@ -9,13 +9,13 @@ import Subprocess
 
 public struct Machine: Sendable {
     public let ssh: String
-    public let path: String
+    public let path: String?
 
     // MARK: - Creating Machines
 
-    public init(ssh: String, path: String, sshExecutable: String = "/usr/bin/ssh") {
+    public init(ssh: String, path: String? = nil, sshExecutable: String = "/usr/bin/ssh") {
         precondition(!ssh.isEmpty, "ssh must not be empty")
-        precondition(!path.isEmpty, "path must not be empty")
+        precondition(path?.isEmpty != true, "path must not be empty")
         precondition(!sshExecutable.isEmpty, "sshExecutable must not be empty")
 
         self.ssh = ssh
@@ -92,7 +92,11 @@ public struct Machine: Sendable {
     }
 
     private func wrapped(_ command: String) -> String {
-        "cd \(Self.shellQuote(self.path)) && \(command)"
+        guard let path = self.path else {
+            return command
+        }
+
+        return "cd \(Self.shellQuote(path)) && \(command)"
     }
 
     private static func shellQuote(_ value: String) -> String {
@@ -132,6 +136,10 @@ public struct Machine: Sendable {
 
 extension Machine: CustomStringConvertible {
     public var description: String {
-        "\(self.ssh):\(self.path)"
+        if let path = self.path {
+            return "\(self.ssh):\(path)"
+        }
+
+        return "\(self.ssh):~"
     }
 }
