@@ -18,9 +18,9 @@ struct AgentE2ETests {
             #expect(standardOutput.contains(/go build .* bin\/wendy-agent/))
         }
 
-        try await agent.run("make build-dev")
-
-        print("All done!")
+        try await agent.run("make build-dev") { standardOutput, standardError in
+            #expect(standardOutput.contains(/Created macOS app artifact: .*wendy-agent-macos-arm64-.*\.zip/))
+        }
     }
 
     private static func rootDirectoryURL() -> URL {
