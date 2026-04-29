@@ -7,33 +7,9 @@ import Subprocess
     import SystemPackage
 #endif
 
-public enum MachineError: Error, CustomStringConvertible {
-    case invalidMachineSpec(String)
-    case connectionFailed(machine: String, stderr: String)
-    case commandFailed(machine: String, command: String, terminationStatus: TerminationStatus)
-
-    public var description: String {
-        switch self {
-        case .invalidMachineSpec(let spec):
-            return "Invalid machine spec: \(spec)"
-        case .connectionFailed(let machine, let stderr):
-            if stderr.isEmpty {
-                return "Failed to establish SSH session for \(machine)"
-            }
-            return "Failed to establish SSH session for \(machine):\n\(stderr)"
-        case .commandFailed(let machine, let command, let terminationStatus):
-            return "Command failed on \(machine) with \(terminationStatus): \(command)"
-        }
-    }
-}
-
 public actor Machine: Sendable {
     public nonisolated let sshTarget: String
     public nonisolated let baseDirectory: String
-
-    private let sshExecutable: String
-    private let controlPath: String
-    private let controlPersist: String
 
     public static func ssh(_ spec: String) -> Machine {
         do {
@@ -45,59 +21,6 @@ public actor Machine: Sendable {
 
     public static func parse(_ spec: String) throws -> Machine {
         try self.parse(spec, sshExecutable: "/usr/bin/ssh")
-    }
-
-    static func parse(_ spec: String, sshExecutable: String) throws -> Machine {
-        guard let colonIndex = spec.firstIndex(of: ":") else {
-            throw MachineError.invalidMachineSpec(spec)
-        }
-
-        let target = String(spec[..<colonIndex])
-        let path = String(spec[spec.index(after: colonIndex)...])
-        guard !target.isEmpty, !path.isEmpty else {
-            throw MachineError.invalidMachineSpec(spec)
-        }
-
-        return Machine(
-            sshTarget: target,
-            baseDirectory: path,
-            sshExecutable: sshExecutable,
-            controlPath: Self.makeControlPath()
-        )
-    }
-
-    init(
-        sshTarget: String,
-        baseDirectory: String,
-        sshExecutable: String = "/usr/bin/ssh",
-        controlPath: String,
-        controlPersist: String = "10m"
-    ) {
-        self.sshTarget = sshTarget
-        self.baseDirectory = baseDirectory
-        self.sshExecutable = sshExecutable
-        self.controlPath = controlPath
-        self.controlPersist = controlPersist
-    }
-
-    deinit {
-        let sshExecutable = self.sshExecutable
-        let sshTarget = self.sshTarget
-        let controlPath = self.controlPath
-
-        Task.detached {
-            _ = try? await Self.invokeSSH(
-                executable: sshExecutable,
-                arguments: [
-                    "-o", "ControlPath=\(controlPath)",
-                    "-O", "exit",
-                    sshTarget,
-                ],
-                output: .discarded,
-                error: .discarded
-            )
-            try? FileManager.default.removeItem(atPath: controlPath)
-        }
     }
 
     public nonisolated var description: String {
@@ -178,6 +101,67 @@ public actor Machine: Sendable {
             body: body
         )
     }
+
+    // MARK: - Internal
+
+    static func parse(_ spec: String, sshExecutable: String) throws -> Machine {
+        guard let colonIndex = spec.firstIndex(of: ":") else {
+            throw MachineError.invalidMachineSpec(spec)
+        }
+
+        let target = String(spec[..<colonIndex])
+        let path = String(spec[spec.index(after: colonIndex)...])
+        guard !target.isEmpty, !path.isEmpty else {
+            throw MachineError.invalidMachineSpec(spec)
+        }
+
+        return Machine(
+            sshTarget: target,
+            baseDirectory: path,
+            sshExecutable: sshExecutable,
+            controlPath: Self.makeControlPath()
+        )
+    }
+
+    init(
+        sshTarget: String,
+        baseDirectory: String,
+        sshExecutable: String = "/usr/bin/ssh",
+        controlPath: String,
+        controlPersist: String = "10m"
+    ) {
+        self.sshTarget = sshTarget
+        self.baseDirectory = baseDirectory
+        self.sshExecutable = sshExecutable
+        self.controlPath = controlPath
+        self.controlPersist = controlPersist
+    }
+
+    deinit {
+        let sshExecutable = self.sshExecutable
+        let sshTarget = self.sshTarget
+        let controlPath = self.controlPath
+
+        Task.detached {
+            _ = try? await Self.invokeSSH(
+                executable: sshExecutable,
+                arguments: [
+                    "-o", "ControlPath=\(controlPath)",
+                    "-O", "exit",
+                    sshTarget,
+                ],
+                output: .discarded,
+                error: .discarded
+            )
+            try? FileManager.default.removeItem(atPath: controlPath)
+        }
+    }
+
+    // MARK: - Private
+
+    private let sshExecutable: String
+    private let controlPath: String
+    private let controlPersist: String
 
     private func ensureConnected() async throws {
         guard try await self.isConnected() == false else {
