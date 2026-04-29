@@ -7,11 +7,11 @@ import Testing
 struct MachineTests {
     @Test("creates SSH machine")
     func createsSSHMachine() {
-        let machine = Machine(name: "SSH", ssh: "ai@example.local", path: "~/wendy-agent")
+        let machine = Machine(name: "SSH", ssh: "ai@example.local", workingDirectory: "~/wendy-agent")
 
         #expect(machine.name == "SSH")
         #expect(machine.ssh == "ai@example.local")
-        #expect(machine.path == "~/wendy-agent")
+        #expect(machine.workingDirectory == "~/wendy-agent")
         #expect(machine.description == "ai@example.local:~/wendy-agent")
     }
 
@@ -20,7 +20,7 @@ struct MachineTests {
         let machine = Machine(name: "SSH", ssh: "ai@example.local")
 
         #expect(machine.ssh == "ai@example.local")
-        #expect(machine.path == nil)
+        #expect(machine.workingDirectory == nil)
         #expect(machine.description == "ai@example.local:~")
     }
 
@@ -29,7 +29,7 @@ struct MachineTests {
         let machine = Machine(name: "Local")
 
         #expect(machine.ssh == nil)
-        #expect(machine.path == FileManager.default.currentDirectoryPath)
+        #expect(machine.workingDirectory == FileManager.default.currentDirectoryPath)
         #expect(machine.description == "local:\(FileManager.default.currentDirectoryPath)")
     }
 
@@ -47,18 +47,18 @@ struct MachineTests {
         #expect(record.standardError == "")
     }
 
-    @Test("runs local commands in path")
-    func runsLocalCommandsInPath() async throws {
+    @Test("runs local commands in working directory")
+    func runsLocalCommandsInWorkingDirectory() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("machine-local-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(name: "Local", path: directory.path)
+        let machine = Machine(name: "Local", workingDirectory: directory.path)
         try await machine.run("touch local.txt")
 
         #expect(machine.ssh == nil)
-        #expect(machine.path == directory.path)
+        #expect(machine.workingDirectory == directory.path)
         #expect(machine.description == "local:\(directory.path)")
         #expect(FileManager.default.fileExists(atPath: directory.path + "/local.txt"))
     }
@@ -132,7 +132,7 @@ struct MachineTests {
         let machine = Machine(
             name: "SSH",
             ssh: "ai@example.local",
-            path: fixture.remoteRoot.path,
+            workingDirectory: fixture.remoteRoot.path,
             sshExecutable: fixture.sshScript.path
         )
 

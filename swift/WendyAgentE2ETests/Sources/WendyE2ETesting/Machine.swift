@@ -11,24 +11,24 @@ import Subprocess
 public struct Machine: Sendable {
     public let name: String
     public let ssh: String?
-    public let path: String?
+    public let workingDirectory: String?
 
     // MARK: - Creating Machines
 
     public init(
         name: String,
         ssh: String? = nil,
-        path: String? = nil,
+        workingDirectory: String? = nil,
         sshExecutable: String = "/usr/bin/ssh"
     ) {
         precondition(!name.isEmpty, "name must not be empty")
         precondition(ssh?.isEmpty != true, "ssh must not be empty")
-        precondition(path?.isEmpty != true, "path must not be empty")
+        precondition(workingDirectory?.isEmpty != true, "workingDirectory must not be empty")
         precondition(!sshExecutable.isEmpty, "sshExecutable must not be empty")
 
         self.name = name
         self.ssh = ssh
-        self.path = path ?? (ssh == nil ? FileManager.default.currentDirectoryPath : nil)
+        self.workingDirectory = workingDirectory ?? (ssh == nil ? FileManager.default.currentDirectoryPath : nil)
         self.sshExecutable = sshExecutable
     }
 
@@ -114,16 +114,16 @@ public struct Machine: Sendable {
             executable: user.shell,
             arguments: ["-lc", command],
             environment: Self.loginEnvironment(for: user),
-            workingDirectory: self.path.map { FilePath($0) }
+            workingDirectory: self.workingDirectory.map { FilePath($0) }
         )
     }
 
     private func wrapped(_ command: String) -> String {
-        guard let path = self.path else {
+        guard let workingDirectory = self.workingDirectory else {
             return command
         }
 
-        return "cd \(Self.shellQuote(path)) && \(command)"
+        return "cd \(Self.shellQuote(workingDirectory)) && \(command)"
     }
 
     private static func shellQuote(_ value: String) -> String {
@@ -206,8 +206,8 @@ private struct User: Sendable {
 extension Machine: CustomStringConvertible {
     public var description: String {
         let location = self.ssh ?? "local"
-        if let path = self.path {
-            return "\(location):\(path)"
+        if let workingDirectory = self.workingDirectory {
+            return "\(location):\(workingDirectory)"
         }
 
         return "\(location):~"
