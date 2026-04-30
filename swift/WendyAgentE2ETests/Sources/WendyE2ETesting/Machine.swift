@@ -100,7 +100,7 @@ public struct Machine: Sendable {
         )
         let duration = start.duration(to: .now)
 
-        Self.printExecutionReport(
+        Self.writeExecutionReport(
             machine: self,
             command: command,
             filePath: filePath,
@@ -180,7 +180,7 @@ public struct Machine: Sendable {
         )
         let duration = start.duration(to: .now)
 
-        Self.printExecutionReport(
+        Self.writeExecutionReport(
             machine: self,
             command: command,
             filePath: filePath,
@@ -266,7 +266,7 @@ public struct Machine: Sendable {
         fputs("[\(machine)] $ \(command)\n", stderr)
     }
 
-    private static func printExecutionReport(
+    private static func writeExecutionReport(
         machine: Machine,
         command: String,
         filePath: String,
@@ -278,30 +278,139 @@ public struct Machine: Sendable {
         standardOutput: String,
         standardError: String
     ) {
-        flockfile(stdout)
-        defer { funlockfile(stdout) }
+        do {
+            let reportURL = try Self.reportURL(filePath: filePath, function: function)
+            let fileExists = FileManager.default.fileExists(atPath: reportURL.path)
 
-        print("""
+            if !fileExists {
+                try Self.reportHeader(filePath: filePath, function: function)
+                    .write(to: reportURL, atomically: true, encoding: .utf8)
+            }
 
-            --- Wendy E2E command report ---
-            Source: \(filePath):\(line)
-            Function: \(function)
-            Machine: \(machine.name)
-            Machine ID: \(machine.id)
-            SSH: \(machine.ssh ?? "<none>")
-            Working directory: \(machine.workingDirectory ?? "<none>")
-            Command: \(command)
-            Process ID: \(processIdentifier ?? "<unavailable>")
-            Termination status: \(terminationStatus)
-            Duration: \(duration)
+            let handle = try FileHandle(forWritingTo: reportURL)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(
+                contentsOf: Data(
+                    Self.commandReport(
+                        machine: machine,
+                        command: command,
+                        filePath: filePath,
+                        line: line,
+                        processIdentifier: processIdentifier,
+                        terminationStatus: terminationStatus,
+                        duration: duration,
+                        standardOutput: standardOutput,
+                        standardError: standardError
+                    ).utf8
+                )
+            )
+        } catch {
+            fputs("Failed to write Wendy E2E command report: \(error)\n", stderr)
+        }
+    }
 
-            stdout:
-            \(standardOutput)
+    private static func reportURL(filePath: String, function: String) throws -> URL {
+        let directoryURL = Self.recordsDirectoryURL()
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
 
-            stderr:
-            \(standardError)
-            --- End Wendy E2E command report ---
-            """)
+        return directoryURL.appendingPathComponent(
+            "\(Self.slug(Self.fileName(from: filePath))).\(Self.slug(function)).e2e-test-record.md",
+            isDirectory: false
+        )
+    }
+
+    private static func recordsDirectoryURL() -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        let baseURL: URL
+        if let path = environment["WENDY_AGENT_E2E_TEST_RECORDS_DIR"], !path.isEmpty {
+            baseURL = URL(fileURLWithPath: path, isDirectory: true)
+        } else {
+            baseURL = Self.packageRootDirectoryURL().appendingPathComponent(".build", isDirectory: true)
+        }
+
+        return baseURL.appendingPathComponent("e2e-test-records", isDirectory: true)
+    }
+
+    private static func packageRootDirectoryURL() -> URL {
+        URL(fileURLWithPath: #filePath, isDirectory: false)
+            .deletingLastPathComponent()  // Sources/WendyE2ETesting
+            .deletingLastPathComponent()  // Sources
+            .deletingLastPathComponent()  // swift/WendyAgentE2ETests
+    }
+
+    private static func fileName(from filePath: String) -> String {
+        URL(fileURLWithPath: filePath, isDirectory: false).deletingPathExtension().lastPathComponent
+    }
+
+    private static func slug(_ value: String) -> String {
+        var slug = ""
+        var needsSeparator = false
+
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 48...57, 65...90, 97...122:
+                if needsSeparator, !slug.isEmpty {
+                    slug.append("-")
+                }
+                slug.append(String(scalar).lowercased())
+                needsSeparator = false
+            default:
+                needsSeparator = !slug.isEmpty
+            }
+        }
+
+        return slug.isEmpty ? "unknown" : slug
+    }
+
+    private static func reportHeader(filePath: String, function: String) -> String {
+        """
+        # Wendy E2E test report
+
+        - Source: `\(filePath)`
+        - Function: `\(function)`
+
+        """
+    }
+
+    private static func commandReport(
+        machine: Machine,
+        command: String,
+        filePath: String,
+        line: Int,
+        processIdentifier: String?,
+        terminationStatus: String,
+        duration: Duration,
+        standardOutput: String,
+        standardError: String
+    ) -> String {
+        """
+
+        ## Command
+
+        - Source: `\(filePath):\(line)`
+        - Machine: `\(machine.name)`
+        - Machine ID: `\(machine.id)`
+        - SSH: `\(machine.ssh ?? "<none>")`
+        - Working directory: `\(machine.workingDirectory ?? "<none>")`
+        - Command: `\(command)`
+        - Process ID: `\(processIdentifier ?? "<unavailable>")`
+        - Termination status: `\(terminationStatus)`
+        - Duration: `\(duration)`
+
+        ### stdout
+
+        ```text
+        \(standardOutput)
+        ```
+
+        ### stderr
+
+        ```text
+        \(standardError)
+        ```
+
+        """
     }
 
     private static func outputDescription(_ output: some Sendable) -> String {
