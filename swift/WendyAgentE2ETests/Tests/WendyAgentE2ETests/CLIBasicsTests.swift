@@ -1,7 +1,13 @@
 import Testing
+import WendyE2ETesting
 
 @Suite(.serialized)
 struct `CLI basics` {
+    var cli: Machine
+
+    init() async throws {
+        self.cli = try await Machine.cli()
+    }
 
     @Test
     func `'wendy --help' describes the top-level command groups`() async throws {

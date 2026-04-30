@@ -1,9 +1,9 @@
 import Foundation
 import Testing
-import WendyE2ETesting
+public import WendyE2ETesting
 
 extension Machine {
-    static func cli() async throws -> Machine {
+    public static func cli() async throws -> Machine {
         let machine = Machine(
             name: "CLI",
             workingDirectory: Self.rootDirectoryURL().appendingPathComponent("go").path
@@ -18,7 +18,7 @@ extension Machine {
         return machine
     }
 
-    static func agent() async throws -> Machine {
+    public static func agent() async throws -> Machine {
         let machine = Machine(
             name: "Agent",
             workingDirectory: Self.rootDirectoryURL().appendingPathComponent("swift").path
