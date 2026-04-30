@@ -1,5 +1,5 @@
 public enum OnceError: Error {
-    case failedOnFirstRun(originalError: Error)
+    case failedOnFirstRun(name: String, originalError: Error)
 }
 
 // MARK: - CustomStringConvertible
@@ -7,8 +7,8 @@ public enum OnceError: Error {
 extension OnceError: CustomStringConvertible {
     public var description: String {
         switch self {
-        case .failedOnFirstRun(let originalError):
-            return "Once failed on first run: \(originalError)"
+        case .failedOnFirstRun(let name, let originalError):
+            return "Once '\(name)' failed on first run with error: \(originalError)"
         }
     }
 }

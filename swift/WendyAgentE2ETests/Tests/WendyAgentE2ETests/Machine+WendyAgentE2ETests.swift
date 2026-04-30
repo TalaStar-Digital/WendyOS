@@ -39,8 +39,8 @@ extension Machine {
 
     // MARK: - Private
 
-    private static let buildCLIOnce = Once()
-    private static let buildAgentOnce = Once()
+    private static let buildCLIOnce = Once(name: "build CLI")
+    private static let buildAgentOnce = Once(name: "build agent")
 
     private static func rootDirectoryURL() -> URL {
         URL(fileURLWithPath: #filePath, isDirectory: false)

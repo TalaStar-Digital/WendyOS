@@ -1,6 +1,10 @@
 public actor Once {
-    public init() {
-        // Intentionally left blank.
+    public let name: String
+
+    public init(name: String) {
+        precondition(!name.isEmpty, "name must not be empty")
+
+        self.name = name
     }
 
     public func perform(_ block: () async -> Void) async {
@@ -11,7 +15,7 @@ public actor Once {
 
     public func perform(_ block: () async throws -> Void) async throws {
         if let error {
-            throw OnceError.failedOnFirstRun(originalError: error)
+            throw OnceError.failedOnFirstRun(name: self.name, originalError: error)
         }
 
         guard !done else { return }
