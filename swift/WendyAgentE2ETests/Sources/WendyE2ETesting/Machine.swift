@@ -92,12 +92,28 @@ public struct Machine: Sendable {
         }
 
         let invocation = self.invocation(for: command)
-
-        return try await Self.invoke(
+        let start = ContinuousClock.now
+        let record = try await Self.invoke(
             invocation,
             output: output,
             error: error
         )
+        let duration = start.duration(to: .now)
+
+        Self.printExecutionReport(
+            machine: self,
+            command: command,
+            filePath: filePath,
+            function: function,
+            line: line,
+            processIdentifier: String(describing: record.processIdentifier),
+            terminationStatus: String(describing: record.terminationStatus),
+            duration: duration,
+            standardOutput: Self.outputDescription(record.standardOutput),
+            standardError: Self.outputDescription(record.standardError)
+        )
+
+        return record
     }
 
     public func run<Result>(
@@ -152,7 +168,8 @@ public struct Machine: Sendable {
         }
 
         let invocation = self.invocation(for: command)
-        return try await Subprocess.run(
+        let start = ContinuousClock.now
+        let outcome = try await Subprocess.run(
             .path(FilePath(invocation.executable)),
             arguments: Arguments(invocation.arguments),
             environment: invocation.environment,
@@ -161,6 +178,22 @@ public struct Machine: Sendable {
             isolation: isolation,
             body: body
         )
+        let duration = start.duration(to: .now)
+
+        Self.printExecutionReport(
+            machine: self,
+            command: command,
+            filePath: filePath,
+            function: function,
+            line: line,
+            processIdentifier: nil,
+            terminationStatus: String(describing: outcome.terminationStatus),
+            duration: duration,
+            standardOutput: "<not captured: streaming API>",
+            standardError: "<not captured: streaming API>"
+        )
+
+        return outcome
     }
 
     // MARK: - Private
@@ -231,6 +264,57 @@ public struct Machine: Sendable {
 
     private static func printCommand(machine: String, command: String) {
         fputs("[\(machine)] $ \(command)\n", stderr)
+    }
+
+    private static func printExecutionReport(
+        machine: Machine,
+        command: String,
+        filePath: String,
+        function: String,
+        line: Int,
+        processIdentifier: String?,
+        terminationStatus: String,
+        duration: Duration,
+        standardOutput: String,
+        standardError: String
+    ) {
+        flockfile(stdout)
+        defer { funlockfile(stdout) }
+
+        print("""
+
+            --- Wendy E2E command report ---
+            Source: \(filePath):\(line)
+            Function: \(function)
+            Machine: \(machine.name)
+            Machine ID: \(machine.id)
+            SSH: \(machine.ssh ?? "<none>")
+            Working directory: \(machine.workingDirectory ?? "<none>")
+            Command: \(command)
+            Process ID: \(processIdentifier ?? "<unavailable>")
+            Termination status: \(terminationStatus)
+            Duration: \(duration)
+
+            stdout:
+            \(standardOutput)
+
+            stderr:
+            \(standardError)
+            --- End Wendy E2E command report ---
+            """)
+    }
+
+    private static func outputDescription(_ output: some Sendable) -> String {
+        let value = output as Any
+        if let string = value as? String {
+            return string
+        }
+
+        if let string = value as? String? {
+            return string ?? ""
+        }
+
+        return String(describing: value)
     }
 
     private static func forward(
