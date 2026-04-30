@@ -1,7 +1,7 @@
 import Testing
 
-@Suite("Global flags")
-struct GlobalFlagsTests {
+@Suite
+struct `Global flags` {
     @Test
     func `'--json' formats supported command output as JSON`() async throws {
         // TODO: implement

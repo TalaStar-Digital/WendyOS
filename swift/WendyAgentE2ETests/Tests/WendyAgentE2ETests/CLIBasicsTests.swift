@@ -1,7 +1,8 @@
 import Testing
 
-@Suite("CLI basics")
-struct CLIBasicsTests {
+@Suite
+struct `CLI basics` {
+
     @Test
     func `'wendy --help' describes the top-level command groups`() async throws {
         // TODO: implement

@@ -1,7 +1,7 @@
 import Testing
 
-@Suite("wendy json")
-struct JSONTests {
+@Suite
+struct `wendy json` {
     @Test
     func `'wendy json schema' prints the wendy_json schema`() async throws {
         // TODO: implement

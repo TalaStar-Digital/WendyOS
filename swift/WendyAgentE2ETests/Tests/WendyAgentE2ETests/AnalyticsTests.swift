@@ -1,7 +1,7 @@
 import Testing
 
-@Suite("wendy analytics")
-struct AnalyticsTests {
+@Suite
+struct `wendy analytics` {
     @Test
     func `'wendy analytics status' shows whether analytics are enabled`() async throws {
         // TODO: implement
