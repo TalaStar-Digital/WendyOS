@@ -57,6 +57,41 @@ func newAppsListCmd() *cobra.Command {
 			}
 			defer target.Close()
 
+			if target.Bluetooth != nil && target.Bluetooth.IsWendyAgent() {
+				cliLogln("Connecting to %s via Bluetooth...", target.Bluetooth.DisplayName)
+				apps, listErr := listApps(ctx, target)
+				if listErr != nil {
+					return listErr
+				}
+				if jsonOutput {
+					type jsonApp struct {
+						Name    string `json:"name"`
+						Version string `json:"version,omitempty"`
+						State   string `json:"state,omitempty"`
+					}
+					out := make([]jsonApp, len(apps))
+					for i, a := range apps {
+						out[i] = jsonApp{Name: a.Name, Version: a.Version, State: a.State}
+					}
+					data, jsonErr := json.MarshalIndent(out, "", "  ")
+					if jsonErr != nil {
+						return jsonErr
+					}
+					fmt.Println(string(data))
+					return nil
+				}
+				if len(apps) == 0 {
+					cliLogln("No applications deployed.")
+					return nil
+				}
+				headers := []string{"", "Name", "Version"}
+				var rows [][]string
+				for _, a := range apps {
+					rows = append(rows, []string{stateIcon(a.State), a.Name, a.Version})
+				}
+				fmt.Print(tui.RenderTable(headers, rows))
+				return nil
+			}
 			if target.Agent != nil {
 				return appsListAgent(ctx, target.Agent)
 			}
@@ -233,7 +268,9 @@ func appsListProvider(ctx context.Context, cm providers.ContainerManager) error 
 }
 
 func newAppsStartCmd() *cobra.Command {
-	return &cobra.Command{
+	var detach bool
+
+	cmd := &cobra.Command{
 		Use:   "start [app-name]",
 		Short: "Start an application",
 		Args:  cobra.MaximumNArgs(1),
@@ -256,6 +293,15 @@ func newAppsStartCmd() *cobra.Command {
 			}
 
 			if target.Agent != nil {
+				if detach {
+					if _, err := target.Agent.ContainerService.StartContainer(ctx, &agentpb.StartContainerRequest{
+						AppName: appName,
+					}); err != nil {
+						return fmt.Errorf("starting container: %w", err)
+					}
+					cliSuccess("Application %s started.", appName)
+					return nil
+				}
 				outStream, stdinAttempted, err := openContainerStream(ctx, target.Agent.ContainerService, appName, nil)
 				if err != nil {
 					return err
@@ -308,6 +354,9 @@ func newAppsStartCmd() *cobra.Command {
 			return fmt.Errorf("selected device does not support this command")
 		},
 	}
+
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Start without streaming output")
+	return cmd
 }
 
 func newAppsStopCmd() *cobra.Command {
@@ -331,6 +380,20 @@ func newAppsStopCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+			}
+
+			if target.Bluetooth != nil && target.Bluetooth.IsWendyAgent() {
+				cliLogln("Connecting to %s via Bluetooth...", target.Bluetooth.DisplayName)
+				bleClient, bleErr := connectBLEAgent(target.Bluetooth)
+				if bleErr != nil {
+					return bleErr
+				}
+				defer bleClient.Close()
+				if bleErr = bleClient.AppsStop(appName); bleErr != nil {
+					return fmt.Errorf("stopping app: %w", bleErr)
+				}
+				cliSuccess("Application %s stopped.", appName)
+				return nil
 			}
 
 			if target.Agent != nil {
@@ -429,6 +492,23 @@ func newAppsRemoveCmd() *cobra.Command {
 				}
 			}
 
+			if target.Bluetooth != nil && target.Bluetooth.IsWendyAgent() {
+				cliLogln("Connecting to %s via Bluetooth...", target.Bluetooth.DisplayName)
+				bleClient, bleErr := connectBLEAgent(target.Bluetooth)
+				if bleErr != nil {
+					return bleErr
+				}
+				defer bleClient.Close()
+				if bleErr = bleClient.AppsRemove(appName, cleanup); bleErr != nil {
+					return fmt.Errorf("removing app: %w", bleErr)
+				}
+				cliSuccess("Application %s removed.", appName)
+				if cleanup {
+					cliLogln("  Container image cleanup requested.")
+				}
+				return nil
+			}
+
 			if target.Agent != nil {
 				_, err = target.Agent.ContainerService.DeleteContainer(ctx, &agentpb.DeleteContainerRequest{
 					AppName:       appName,
@@ -500,6 +580,27 @@ type appInfo struct {
 
 // listApps fetches the list of apps from the target device.
 func listApps(ctx context.Context, target *SelectedDevice) ([]appInfo, error) {
+	if target.Bluetooth != nil && target.Bluetooth.IsWendyAgent() {
+		bleClient, err := connectBLEAgent(target.Bluetooth)
+		if err != nil {
+			return nil, err
+		}
+		defer bleClient.Close()
+		bleApps, err := bleClient.AppsList()
+		if err != nil {
+			return nil, fmt.Errorf("listing apps: %w", err)
+		}
+		apps := make([]appInfo, len(bleApps))
+		for i, a := range bleApps {
+			apps[i] = appInfo{
+				Name:    a.GetAppName(),
+				Version: a.GetAppVersion(),
+				State:   a.GetState(),
+			}
+		}
+		return apps, nil
+	}
+
 	if target.Agent != nil {
 		stream, err := target.Agent.ContainerService.ListContainers(ctx, &agentpb.ListContainersRequest{})
 		if err != nil {

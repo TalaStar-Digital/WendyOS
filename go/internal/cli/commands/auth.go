@@ -2,14 +2,18 @@ package commands
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
+	qrcode "github.com/skip2/go-qrcode"
 	"github.com/spf13/cobra"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
 	"github.com/wendylabsinc/wendy/internal/shared/browseropen"
@@ -35,6 +39,7 @@ func newAuthCmd() *cobra.Command {
 		newAuthLoginCmd(),
 		newAuthLogoutCmd(),
 		newAuthRefreshCertsCmd(),
+		newAuthStatusCmd(),
 	)
 
 	return cmd
@@ -167,6 +172,14 @@ func performLogin(ctx context.Context, cloudDashboard, cloudGRPC string) error {
 	if err := openBrowser(loginURL); err != nil {
 		fmt.Println(tui.WarningMessage("Could not open browser automatically. Please visit:"))
 		fmt.Printf("  %s\n", loginURL)
+	}
+
+	// Show a QR code the user can scan with the Wendy iOS app to log in on their phone.
+	mobileRedirect := url.QueryEscape("wendy://cloud-login")
+	mobileLoginURL := fmt.Sprintf("%s/cli-auth?redirect_uri=%s", cloudDashboard, mobileRedirect)
+	if qr, qrErr := qrcode.New(mobileLoginURL, qrcode.Medium); qrErr == nil {
+		fmt.Println(tui.InfoMessage("Or scan with the Wendy iOS app:"))
+		fmt.Println(qr.ToSmallString(false))
 	}
 
 	fmt.Println(tui.InfoMessage("Waiting for authentication..."))
@@ -524,6 +537,69 @@ func refreshCertsForAuth(ctx context.Context, auth *config.AuthConfig) error {
 	}
 
 	return nil
+}
+
+func newAuthStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show current authentication status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			if len(cfg.Auth) == 0 {
+				fmt.Println(tui.WarningMessage("Not logged in. Run 'wendy auth login' to authenticate."))
+				return nil
+			}
+
+			for _, auth := range cfg.Auth {
+				endpoint := auth.CloudDashboard
+				if endpoint == "" {
+					endpoint = auth.CloudGRPC
+				}
+				fmt.Printf("Cloud:  %s\n", endpoint)
+				if auth.CloudGRPC != "" && auth.CloudGRPC != endpoint {
+					fmt.Printf("  gRPC: %s\n", auth.CloudGRPC)
+				}
+
+				if len(auth.Certificates) == 0 {
+					fmt.Println(tui.WarningMessage("  No certificates stored."))
+					continue
+				}
+
+				cert := auth.Certificates[0]
+				if cert.UserID != "" {
+					fmt.Printf("  User: %s\n", cert.UserID)
+				}
+				if cert.OrganizationID != 0 {
+					fmt.Printf("  Org:  %d\n", cert.OrganizationID)
+				}
+
+				if cert.PemCertificate != "" {
+					block, _ := pem.Decode([]byte(cert.PemCertificate))
+					if block != nil {
+						if x509Cert, parseErr := x509.ParseCertificate(block.Bytes); parseErr == nil {
+							expiry := x509Cert.NotAfter
+							remaining := time.Until(expiry).Round(time.Hour)
+							expiryStr := expiry.Format("2006-01-02 15:04 UTC")
+							switch {
+							case time.Now().After(expiry):
+								fmt.Println(tui.ErrorMessage(fmt.Sprintf("  Certificate expired on %s", expiryStr)))
+							case remaining < 7*24*time.Hour:
+								fmt.Println(tui.WarningMessage(fmt.Sprintf("  Certificate expires %s (in %s)", expiryStr, remaining)))
+							default:
+								fmt.Println(tui.SuccessMessage(fmt.Sprintf("  Certificate valid until %s", expiryStr)))
+							}
+						}
+					}
+				}
+			}
+
+			return nil
+		},
+	}
 }
 
 // openBrowser opens the given URL in the default browser.
