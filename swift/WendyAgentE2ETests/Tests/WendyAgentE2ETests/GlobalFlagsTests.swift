@@ -12,7 +12,23 @@ struct `global flags` {
 
     @Test
     func `'--json' formats supported command output as JSON`() async throws {
-        // TODO: implement
+        try await self.cli.run("./bin/wendy --json info") { standardOutput, standardError in
+            #expect(standardError.isEmpty)
+
+            let data = Data(standardOutput.utf8)
+            let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+            #expect(object["version"] as? String == "dev")
+            #expect(object["os"] as? String == "darwin")
+            #expect(object["arch"] as? String == "arm64")
+            #expect((object["goVersion"] as? String)?.hasPrefix("go") == true)
+            #expect(!standardOutput.contains("Wendy CLI"))
+        }
+
+        // AI:
+        // - The --json flag switches supported commands from human text to JSON.
+        // - JSON keys are stable and useful for automation.
+        // - No human-oriented headings, warnings, or noisy diagnostics are printed.
     }
 
     @Test
