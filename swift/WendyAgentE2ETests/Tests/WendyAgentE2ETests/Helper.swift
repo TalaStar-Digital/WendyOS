@@ -26,7 +26,10 @@ enum Helper {
 
     static func writeAnalyticsConfig(enabled: Bool, home: URL) throws {
         let configDirectory = home.appendingPathComponent(".wendy", isDirectory: true)
-        try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: configDirectory,
+            withIntermediateDirectories: true
+        )
 
         let config = ["analytics": ["enabled": enabled]]
         let data = try JSONSerialization.data(
@@ -38,7 +41,8 @@ enum Helper {
 
     static func analyticsConfigEnabled(home: URL) throws -> Bool {
         let data = try Data(
-            contentsOf: home
+            contentsOf:
+                home
                 .appendingPathComponent(".wendy", isDirectory: true)
                 .appendingPathComponent("config.json", isDirectory: false)
         )

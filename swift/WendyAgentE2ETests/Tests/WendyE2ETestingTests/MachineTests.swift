@@ -129,6 +129,63 @@ struct `machine` {
         }
     }
 
+    @Test
+    func `command builder runs command`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("machine-command-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let machine = Machine(name: "Local", workingDirectory: directory.path)
+        try await machine.command("touch builder.txt").run()
+
+        #expect(FileManager.default.fileExists(atPath: directory.path + "/builder.txt"))
+    }
+
+    @Test
+    func `poll retries command until it succeeds`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("machine-poll-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let machine = Machine(name: "Local", workingDirectory: directory.path)
+        try await machine
+            .command(
+                """
+                count=$(cat counter.txt 2>/dev/null || echo 0)
+                count=$((count + 1))
+                echo "$count" > counter.txt
+                test "$count" -ge 3
+                """
+            )
+            .poll(until: .success, step: .milliseconds(10), timeout: .seconds(2))
+            .run()
+
+        let count = try String(
+            contentsOf: directory.appendingPathComponent("counter.txt"),
+            encoding: .utf8
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(count == "3")
+    }
+
+    @Test
+    func `poll throws timeout error with timeout message`() async throws {
+        let machine = Machine(name: "Local")
+
+        await #expect(throws: MachineError.self) {
+            try await machine
+                .command("exit 1")
+                .poll(
+                    until: .success,
+                    step: .milliseconds(10),
+                    timeout: .milliseconds(25),
+                    timeoutMessage: "command never succeeded"
+                )
+                .run()
+        }
+    }
+
     private static func withFixtureMachine<Result>(
         _ body: (Machine, SSHFixture) async throws -> Result
     ) async throws -> Result {

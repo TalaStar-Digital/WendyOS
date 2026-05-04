@@ -39,16 +39,15 @@ struct `global flags` {
         try await agent.run("make quit || true")
         do {
             try await agent.run("open Build/WendyAgentMac.app")
-            try await agent.run(
-                """
-                for attempt in {1..40}; do
-                  nc -z 127.0.0.1 50051 && exit 0
-                  sleep 0.25
-                done
-                echo 'WendyAgentMac did not open port 50051' >&2
-                exit 1
-                """
-            )
+            try await agent
+                .command("nc -z 127.0.0.1 50051")
+                .poll(
+                    until: .success,
+                    step: .milliseconds(250),
+                    timeout: .seconds(10),
+                    timeoutMessage: "WendyAgentMac did not open port 50051"
+                )
+                .run()
 
             try await self.cli.run("./bin/wendy --json --device 127.0.0.1 device version") {
                 standardOutput,

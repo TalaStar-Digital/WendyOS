@@ -16,7 +16,8 @@ struct `wendy analytics` {
         defer { try? FileManager.default.removeItem(at: home) }
 
         try Helper.writeAnalyticsConfig(enabled: true, home: home)
-        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics status") {
+        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics status")
+        {
             standardOutput,
             standardError in
             #expect(standardOutput.isEmpty)
@@ -24,7 +25,8 @@ struct `wendy analytics` {
         }
 
         try Helper.writeAnalyticsConfig(enabled: false, home: home)
-        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics status") {
+        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics status")
+        {
             standardOutput,
             standardError in
             #expect(standardOutput.isEmpty)
@@ -43,7 +45,8 @@ struct `wendy analytics` {
         defer { try? FileManager.default.removeItem(at: home) }
         try Helper.writeAnalyticsConfig(enabled: false, home: home)
 
-        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics enable") {
+        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics enable")
+        {
             standardOutput,
             standardError in
             #expect(standardOutput.isEmpty)
@@ -51,7 +54,8 @@ struct `wendy analytics` {
         }
 
         #expect(try Helper.analyticsConfigEnabled(home: home) == true)
-        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics status") {
+        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics status")
+        {
             standardOutput,
             standardError in
             #expect(standardOutput.isEmpty)
@@ -70,7 +74,8 @@ struct `wendy analytics` {
         defer { try? FileManager.default.removeItem(at: home) }
         try Helper.writeAnalyticsConfig(enabled: true, home: home)
 
-        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics disable") {
+        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics disable")
+        {
             standardOutput,
             standardError in
             #expect(standardOutput.isEmpty)
@@ -78,7 +83,8 @@ struct `wendy analytics` {
         }
 
         #expect(try Helper.analyticsConfigEnabled(home: home) == false)
-        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics status") {
+        try await self.cli.run("HOME=\(Helper.shellQuote(home.path)) ./bin/wendy analytics status")
+        {
             standardOutput,
             standardError in
             #expect(standardOutput.isEmpty)

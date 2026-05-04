@@ -48,6 +48,10 @@ public struct Machine: Sendable {
 
     // MARK: - Running Commands
 
+    public func command(_ command: String) -> MachineCommand {
+        MachineCommand(machine: self, command: command)
+    }
+
     public func run(
         _ command: String,
         filePath: String = #filePath,

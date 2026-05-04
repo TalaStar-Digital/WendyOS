@@ -24,7 +24,8 @@ extension Machine {
         let machine = Machine(
             name: "Agent",
             ssh: ssh,
-            workingDirectory: Helper.repositoryRootDirectoryURL().appendingPathComponent("swift").path,
+            workingDirectory: Helper.repositoryRootDirectoryURL().appendingPathComponent("swift")
+                .path,
             verbose: verbose
         )
 
