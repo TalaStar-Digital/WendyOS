@@ -8,6 +8,8 @@ struct `wendy os cache` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy os cache clear` {
     @Test
@@ -20,6 +22,8 @@ struct `wendy os cache clear` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy os cache list` {

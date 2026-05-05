@@ -8,6 +8,8 @@ struct `wendy project entitlements` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy project entitlements list` {
     @Test
@@ -26,6 +28,8 @@ struct `wendy project entitlements list` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy project entitlements add` {
     @Test
@@ -43,6 +47,8 @@ struct `wendy project entitlements add` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy project entitlements remove` {

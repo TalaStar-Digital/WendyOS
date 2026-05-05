@@ -8,6 +8,8 @@ struct `wendy os` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy os download` {
     @Test
@@ -25,6 +27,8 @@ struct `wendy os download` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy os install` {
@@ -44,6 +48,8 @@ struct `wendy os install` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy os list-drives` {
     @Test
@@ -56,6 +62,8 @@ struct `wendy os list-drives` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy os update` {

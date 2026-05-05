@@ -8,6 +8,8 @@ struct `wendy device camera` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device camera list` {
     @Test
@@ -20,6 +22,8 @@ struct `wendy device camera list` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device camera view` {

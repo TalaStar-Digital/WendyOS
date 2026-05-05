@@ -13,6 +13,8 @@ struct `wendy device` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device set-default` {
     @Test
@@ -25,6 +27,8 @@ struct `wendy device set-default` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device setup` {
@@ -39,6 +43,8 @@ struct `wendy device setup` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device unset-default` {
     @Test
@@ -51,6 +57,8 @@ struct `wendy device unset-default` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device update` {
@@ -65,6 +73,8 @@ struct `wendy device update` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device version` {
     @Test
@@ -77,6 +87,8 @@ struct `wendy device version` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device dashboard` {
@@ -91,6 +103,8 @@ struct `wendy device dashboard` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device logs` {
     @Test
@@ -103,6 +117,8 @@ struct `wendy device logs` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device telemetry-stream` {

@@ -8,6 +8,8 @@ struct `wendy device audio` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device audio list` {
     @Test
@@ -20,6 +22,8 @@ struct `wendy device audio list` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device audio listen` {
@@ -34,6 +38,8 @@ struct `wendy device audio listen` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device audio monitor` {
     @Test
@@ -46,6 +52,8 @@ struct `wendy device audio monitor` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device audio set-default` {

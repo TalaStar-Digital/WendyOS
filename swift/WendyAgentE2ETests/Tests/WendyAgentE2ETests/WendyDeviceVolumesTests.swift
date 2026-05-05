@@ -8,6 +8,8 @@ struct `wendy device volumes` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device volumes list` {
     @Test
@@ -20,6 +22,8 @@ struct `wendy device volumes list` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device volumes remove` {

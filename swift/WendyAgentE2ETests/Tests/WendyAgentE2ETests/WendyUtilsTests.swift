@@ -8,6 +8,8 @@ struct `wendy utils` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy utils open-browser` {
     @Test

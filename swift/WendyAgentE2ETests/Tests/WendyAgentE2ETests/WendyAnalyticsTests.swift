@@ -10,6 +10,8 @@ struct `wendy analytics` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy analytics status` {
     var cli: Machine
@@ -43,6 +45,8 @@ struct `wendy analytics status` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy analytics enable` {
     var cli: Machine
@@ -75,6 +79,8 @@ struct `wendy analytics enable` {
         }
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy analytics disable` {

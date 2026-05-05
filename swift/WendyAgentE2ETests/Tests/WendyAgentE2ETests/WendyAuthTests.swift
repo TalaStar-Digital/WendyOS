@@ -8,6 +8,8 @@ struct `wendy auth` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy auth login` {
     @Test
@@ -26,6 +28,8 @@ struct `wendy auth login` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy auth logout` {
     @Test
@@ -38,6 +42,8 @@ struct `wendy auth logout` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy auth refresh-certs` {

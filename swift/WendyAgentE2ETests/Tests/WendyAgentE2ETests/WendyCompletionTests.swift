@@ -8,6 +8,8 @@ struct `wendy completion` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy completion bash` {
     @Test
@@ -20,6 +22,8 @@ struct `wendy completion bash` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy completion fish` {
@@ -34,6 +38,8 @@ struct `wendy completion fish` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy completion powershell` {
     @Test
@@ -46,6 +52,8 @@ struct `wendy completion powershell` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy completion zsh` {

@@ -8,6 +8,8 @@ struct `wendy device hardware` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device hardware list` {
     @Test

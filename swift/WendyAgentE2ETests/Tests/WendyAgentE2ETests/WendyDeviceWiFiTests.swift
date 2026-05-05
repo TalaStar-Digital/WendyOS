@@ -8,6 +8,8 @@ struct `wendy device wifi` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device wifi connect` {
     @Test
@@ -20,6 +22,8 @@ struct `wendy device wifi connect` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device wifi disconnect` {
@@ -34,6 +38,8 @@ struct `wendy device wifi disconnect` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device wifi forget` {
     @Test
@@ -46,6 +52,8 @@ struct `wendy device wifi forget` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device wifi list` {
@@ -60,6 +68,8 @@ struct `wendy device wifi list` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device wifi rank` {
     @Test
@@ -72,6 +82,8 @@ struct `wendy device wifi rank` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device wifi status` {

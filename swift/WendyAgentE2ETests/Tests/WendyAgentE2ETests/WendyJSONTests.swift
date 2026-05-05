@@ -10,6 +10,8 @@ struct `wendy json` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy json schema` {
     var cli: Machine
@@ -46,6 +48,8 @@ struct `wendy json schema` {
         // - Schema output is readable as documentation.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy json validate` {

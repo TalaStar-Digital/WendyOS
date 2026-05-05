@@ -8,6 +8,8 @@ struct `wendy device apps` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device apps list` {
     @Test
@@ -26,6 +28,8 @@ struct `wendy device apps list` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device apps remove` {
     @Test
@@ -39,6 +43,8 @@ struct `wendy device apps remove` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device apps start` {
     @Test
@@ -51,6 +57,8 @@ struct `wendy device apps start` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device apps stop` {

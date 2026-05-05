@@ -8,6 +8,8 @@ struct `wendy device bluetooth` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device bluetooth connect` {
     @Test
@@ -20,6 +22,8 @@ struct `wendy device bluetooth connect` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device bluetooth disconnect` {
@@ -34,6 +38,8 @@ struct `wendy device bluetooth disconnect` {
     }
 }
 
+// MARK: -
+
 @Suite(.serialized)
 struct `wendy device bluetooth forget` {
     @Test
@@ -46,6 +52,8 @@ struct `wendy device bluetooth forget` {
         // TODO: implement.
     }
 }
+
+// MARK: -
 
 @Suite(.serialized)
 struct `wendy device bluetooth list` {
