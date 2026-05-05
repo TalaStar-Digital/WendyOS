@@ -335,22 +335,33 @@ func TestResolveWiFiCredentialsListFlags(t *testing.T) {
 }
 
 func TestResolveOSImage_ZipCacheHit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
 	content := []byte("fake image bytes")
 	zipPath, err := osCachedZipPath("test-device", "9.9.9")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(zipPath)
 
 	f, err := os.Create(zipPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	w := zip.NewWriter(f)
-	fw, _ := w.Create("image.img")
-	fw.Write(content) //nolint:errcheck
-	w.Close()
-	f.Close()
+	fw, err := w.Create("image.img")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	img := &imageInfo{Version: "9.9.9", DownloadURL: "https://example.com/image.zip"}
 	got, err := resolveOSImage("test-device", img)
@@ -363,11 +374,13 @@ func TestResolveOSImage_ZipCacheHit(t *testing.T) {
 }
 
 func TestResolveOSImage_LegacyImgCacheHit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
 	imgPath, err := osCachedImagePath("test-device", "8.8.8")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(imgPath)
 
 	if err := os.WriteFile(imgPath, []byte("legacydata"), 0o644); err != nil {
 		t.Fatal(err)
@@ -384,22 +397,33 @@ func TestResolveOSImage_LegacyImgCacheHit(t *testing.T) {
 }
 
 func TestOpenOSImageStream_ZipCacheHit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
 	content := []byte("stream me please")
 	zipPath, err := osCachedZipPath("stream-device", "7.7.7")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(zipPath)
 
 	f, err := os.Create(zipPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	w := zip.NewWriter(f)
-	fw, _ := w.Create("wendyos.img")
-	fw.Write(content) //nolint:errcheck
-	w.Close()
-	f.Close()
+	fw, err := w.Create("wendyos.img")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	img := &imageInfo{Version: "7.7.7", DownloadURL: "https://example.com/image.zip"}
 	r, size, err := openOSImageStream("stream-device", img)
@@ -421,12 +445,14 @@ func TestOpenOSImageStream_ZipCacheHit(t *testing.T) {
 }
 
 func TestOpenOSImageStream_LegacyImgCacheHit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
 	content := []byte("old img cache data")
 	imgPath, err := osCachedImagePath("legacy-device", "6.6.6")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(imgPath)
 
 	if err := os.WriteFile(imgPath, content, 0o644); err != nil {
 		t.Fatal(err)
