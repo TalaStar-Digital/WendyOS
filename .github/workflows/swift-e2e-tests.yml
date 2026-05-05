@@ -1,0 +1,104 @@
+name: Swift E2E Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: 'Comma-separated SwiftPM test filters (empty = WendyAgentE2ETests)'
+        required: false
+        default: ''
+      agent_ssh:
+        description: 'SSH target for the Mac agent host'
+        required: false
+        default: 'wendy-agent-mac'
+      agent_workdir:
+        description: 'Existing remote swift/ checkout on the agent host (empty = rsync this checkout)'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      tests:
+        type: string
+        required: false
+        default: ''
+      agent_ssh:
+        type: string
+        required: false
+        default: 'wendy-agent-mac'
+      agent_workdir:
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  swift-e2e-tests:
+    name: Swift E2E Tests
+    # The custom `MacOS` label selects the Wendy-CLI-on-mac self-hosted runner.
+    # The agent app is built/run on `agent_ssh` (default: wendy-agent-mac).
+    runs-on: [self-hosted, macOS, ARM64, MacOS]
+    concurrency:
+      group: swift-e2e-tests-wendy-cli-on-mac
+      cancel-in-progress: false
+    timeout-minutes: 120
+    env:
+      INPUT_TESTS: ${{ inputs.tests }}
+      INPUT_AGENT_SSH: ${{ inputs.agent_ssh }}
+      INPUT_AGENT_WORKDIR: ${{ inputs.agent_workdir }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Capture selected Xcode version
+        id: xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "version=$(xcodebuild -version | awk '/Xcode/ { print $2 }')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache SwiftPM package resolution
+        uses: actions/cache@v5
+        with:
+          path: |
+            swift/WendyAgentE2ETests/.build/checkouts
+            swift/WendyAgentE2ETests/.build/repositories
+            ~/Library/Caches/org.swift.swiftpm
+            ~/.cache/org.swift.swiftpm
+          key: swift-e2e-swiftpm-${{ runner.os }}-xcode-${{ steps.xcode.outputs.version }}-${{ hashFiles('swift/WendyAgentE2ETests/Package.resolved') }}
+          restore-keys: |
+            swift-e2e-swiftpm-${{ runner.os }}-xcode-${{ steps.xcode.outputs.version }}-
+            swift-e2e-swiftpm-${{ runner.os }}-
+
+      - name: Run Swift E2E tests
+        working-directory: swift
+        shell: bash
+        env:
+          WENDY_AGENT_E2E_TEST_FILTERS: ${{ env.INPUT_TESTS }}
+          WENDY_AGENT_E2E_AGENT_SSH: ${{ env.INPUT_AGENT_SSH }}
+          WENDY_AGENT_E2E_AGENT_WORKING_DIRECTORY: ${{ env.INPUT_AGENT_WORKDIR }}
+        run: |
+          set -euo pipefail
+
+          # Self-hosted macOS runners run as LaunchAgents, which can miss Local
+          # Network permission for mDNS/link-local access. Run through localhost
+          # SSH so the command executes in the logged-in user session, matching
+          # the hardware integration workflow pattern.
+          quote() { printf '%q' "$1"; }
+
+          SSH_ENV="export PATH=$(quote "$PATH")"
+          SSH_ENV+=" GITHUB_ACTIONS=$(quote "${GITHUB_ACTIONS:-}")"
+          SSH_ENV+=" GITHUB_RUN_ID=$(quote "${GITHUB_RUN_ID:-local}")"
+          SSH_ENV+=" GITHUB_RUN_ATTEMPT=$(quote "${GITHUB_RUN_ATTEMPT:-1}")"
+          SSH_ENV+=" WENDY_AGENT_E2E_TEST_FILTERS=$(quote "${WENDY_AGENT_E2E_TEST_FILTERS:-}")"
+          SSH_ENV+=" WENDY_AGENT_E2E_AGENT_SSH=$(quote "${WENDY_AGENT_E2E_AGENT_SSH:-}")"
+          SSH_ENV+=" WENDY_AGENT_E2E_AGENT_WORKING_DIRECTORY=$(quote "${WENDY_AGENT_E2E_AGENT_WORKING_DIRECTORY:-}")"
+
+          ssh -A -o StrictHostKeyChecking=no localhost \
+            "$SSH_ENV && cd $(quote "$GITHUB_WORKSPACE/swift") && bash ./Scripts/TestE2E.sh"
+
+      - name: Upload Swift E2E reports zip
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: swift-e2e-test-reports
+          path: swift/Build/E2E/swift-e2e-test-reports.zip
+          if-no-files-found: warn
+          retention-days: 14

@@ -11,6 +11,18 @@ enum Helper {
             .deletingLastPathComponent()  // repository root
     }
 
+    static func fixturesDirectoryURL() -> URL {
+        guard let path = ProcessInfo.processInfo.environment["WENDY_AGENT_E2E_FIXTURES_DIR"],
+            !path.isEmpty
+        else {
+            return repositoryRootDirectoryURL()
+                .appendingPathComponent(".github", isDirectory: true)
+                .appendingPathComponent("swift-e2e-tests", isDirectory: true)
+        }
+
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
     static func temporaryDirectory(prefix: String) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
@@ -74,7 +86,10 @@ enum Helper {
         return try #require(JSONSerialization.jsonObject(with: data) as? [Any])
     }
 
-    static func wendyJSONContents(appId: String = "sh.wendy.e2e.app", entitlements: String = "{ \"type\": \"network\" }") -> String {
+    static func wendyJSONContents(
+        appId: String = "sh.wendy.e2e.app",
+        entitlements: String = "{ \"type\": \"network\" }"
+    ) -> String {
         """
         {
           "appId": "\(appId)",
