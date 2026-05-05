@@ -56,6 +56,20 @@ enum Helper {
         return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
+    static func withAsyncCleanup<Result>(
+        _ operation: () async throws -> Result,
+        cleanup: () async throws -> Void
+    ) async throws -> Result {
+        do {
+            let result = try await operation()
+            try? await cleanup()
+            return result
+        } catch {
+            try? await cleanup()
+            throw error
+        }
+    }
+
     static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }

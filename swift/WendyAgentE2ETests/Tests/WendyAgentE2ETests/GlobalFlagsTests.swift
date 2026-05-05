@@ -34,10 +34,8 @@ struct `global flags` {
     func `'--device' overrides the selected target device`() async throws {
         let agent = try await Machine.agent()
 
-        // TODO: this test looks quite convoluted. Make it nice.
-
         try await agent.run("make quit || true")
-        do {
+        try await Helper.withAsyncCleanup {
             try await agent.run("open Build/WendyAgentMac.app")
             try await agent
                 .command("nc -z 127.0.0.1 50051")
@@ -61,11 +59,9 @@ struct `global flags` {
                 #expect((object["cliVersion"] as? String)?.isEmpty == false)
                 #expect((object["cpuArchitecture"] as? String)?.isEmpty == false)
             }
-        } catch {
-            try? await agent.run("make quit || true")
-            throw error
+        } cleanup: {
+            try await agent.run("make quit || true")
         }
-        try await agent.run("make quit || true")
 
         // AI:
         // - The CLI reaches the explicitly selected agent via --device.
