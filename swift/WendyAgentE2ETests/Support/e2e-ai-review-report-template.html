@@ -36,61 +36,72 @@
     main {
       max-width: 1080px;
       margin: 0 auto;
-      padding: 56px 24px 72px;
+      padding: 28px 24px 72px;
     }
 
-    header { margin-bottom: 28px; }
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
 
     .kicker {
       color: var(--blue);
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       letter-spacing: .08em;
       text-transform: uppercase;
-      margin-bottom: 10px;
+      margin-bottom: 6px;
     }
 
     h1 {
-      margin: 0 0 12px;
-      font-size: clamp(34px, 6vw, 54px);
+      margin: 0 0 8px;
+      font-size: clamp(28px, 4vw, 40px);
       line-height: 1.04;
       letter-spacing: -0.045em;
     }
 
     .lead {
       margin: 0;
-      max-width: 680px;
+      max-width: 720px;
       color: var(--muted);
-      font-size: 18px;
+      font-size: 15px;
+      line-height: 1.45;
     }
 
     .summary {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 14px;
-      margin: 28px 0;
+      grid-template-columns: repeat(4, minmax(110px, 1fr));
+      gap: 8px;
+      margin: 12px 0;
     }
 
     .metric {
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 18px;
-      box-shadow: 0 8px 24px rgba(31, 41, 55, .05);
+      border-radius: 12px;
+      padding: 10px 12px;
+      box-shadow: 0 6px 18px rgba(31, 41, 55, .04);
     }
 
     .metric strong {
       display: block;
-      font-size: 28px;
+      font-size: 22px;
       line-height: 1;
       letter-spacing: -0.04em;
     }
 
     .metric span {
       display: block;
-      margin-top: 7px;
+      margin-top: 5px;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
+    }
+
+    .compact-stats {
+      min-width: min(440px, 100%);
     }
 
     .filter-bar {
@@ -101,9 +112,9 @@
       flex-wrap: wrap;
       gap: 10px;
       align-items: center;
-      margin: 28px 0 18px;
+      margin: 18px 0;
       padding: 12px;
-      background: rgba(255, 255, 255, .88);
+      background: rgba(255, 255, 255, .9);
       border: 1px solid var(--line);
       border-radius: 16px;
       box-shadow: 0 10px 28px rgba(31, 41, 55, .08);
@@ -127,15 +138,57 @@
       cursor: pointer;
       font: inherit;
       font-size: 13px;
-      font-weight: 800;
+      font-weight: 900;
       padding: 8px 12px;
+    }
+
+    .filter-button[data-filter="pass"],
+    .filter-button[data-filter="passed"] {
+      color: var(--green);
+      background: var(--green-bg);
+      border-color: var(--green-line);
+    }
+
+    .filter-button[data-filter="skipped"] {
+      color: var(--amber);
+      background: var(--amber-bg);
+      border-color: var(--amber-line);
+    }
+
+    .filter-button[data-filter="fail"],
+    .filter-button[data-filter="failed"] {
+      color: var(--red);
+      background: var(--red-bg);
+      border-color: var(--red-line);
     }
 
     .filter-button:hover,
     .filter-button[aria-pressed="true"] {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(31, 41, 55, .12);
+    }
+
+    .filter-button[aria-pressed="true"] {
+      outline: 2px solid currentColor;
+      outline-offset: 2px;
+    }
+
+    .search-field {
+      flex: 1 1 260px;
+      min-width: 180px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--card);
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+      padding: 8px 13px;
+    }
+
+    .search-field:focus {
       border-color: var(--blue);
-      color: var(--blue);
-      background: #eff6ff;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, .14);
+      outline: none;
     }
 
     .filter-count {
@@ -185,7 +238,9 @@
       border: 1px solid var(--green-line);
     }
 
-    .badge.concern {
+    .badge.concern,
+    .badge.skipped,
+    .badge.no-ai {
       color: var(--amber);
       background: var(--amber-bg);
       border: 1px solid var(--amber-line);
@@ -195,13 +250,6 @@
       color: var(--red);
       background: var(--red-bg);
       border: 1px solid var(--red-line);
-    }
-
-    .badge.skipped,
-    .badge.no-ai {
-      color: #4b5563;
-      background: var(--soft);
-      border: 1px solid var(--line);
     }
 
     article {
@@ -289,7 +337,8 @@
     }
 
     .status.pass { color: var(--green); }
-    .status.concern { color: var(--amber); }
+    .status.concern,
+    .status.skipped { color: var(--amber); }
     .status.fail { color: var(--red); }
 
     .note {
@@ -411,10 +460,12 @@
     }
 
     @media (max-width: 680px) {
-      main { padding: 36px 16px 56px; }
+      main { padding: 24px 16px 56px; }
+      header { grid-template-columns: 1fr; }
       .summary { grid-template-columns: repeat(2, 1fr); }
       .filter-bar { position: static; }
       .filter-count { flex-basis: 100%; margin-left: 0; }
+      .search-field { flex-basis: 100%; }
       .card-title { align-items: flex-start; flex-direction: column; }
       .checks li { align-items: flex-start; }
       .command-meta { grid-template-columns: 1fr; }
@@ -441,22 +492,25 @@
     skip reason.
 
     The filter bar expects every test article to have data-test-status set to
-    pass, skipped, or fail. File cards are hidden automatically when none of
-    their test articles match the active filter.
+    pass, skipped, or fail. The search field filters against the article text
+    content, including suite name, test title, command text, stdout, and
+    stderr. File cards are hidden automatically when none of their test
+    articles match the active filter and search query.
   -->
   <main>
     <header>
-      <div class="kicker">{{REPORT_KICKER}}</div>
-      <h1>{{REPORT_HEADING}}</h1>
-      <p class="lead">{{REPORT_SUMMARY}}</p>
+      <div>
+        <div class="kicker">{{REPORT_KICKER}}</div>
+        <h1>{{REPORT_HEADING}}</h1>
+        <p class="lead">{{REPORT_SUMMARY}}</p>
+      </div>
+      <section class="summary compact-stats" aria-label="Summary">
+        <div class="metric"><strong>{{TESTS_PASSED_COUNT}}</strong><span>Passed</span></div>
+        <div class="metric"><strong>{{TESTS_SKIPPED_COUNT}}</strong><span>Skipped</span></div>
+        <div class="metric"><strong>{{TESTS_FAILED_COUNT}}</strong><span>Failed</span></div>
+        <div class="metric"><strong>{{COMMAND_RUN_COUNT}}</strong><span>Commands</span></div>
+      </section>
     </header>
-
-    <section class="summary" aria-label="Summary">
-      <div class="metric"><strong>{{TESTS_PASSED_COUNT}}</strong><span>Tests passed</span></div>
-      <div class="metric"><strong>{{AI_REVIEWED_TEST_COUNT}}</strong><span>Tests reviewed</span></div>
-      <div class="metric"><strong>{{CHECKLIST_PASS_COUNT}}</strong><span>Checklist passes</span></div>
-      <div class="metric"><strong>{{ISSUE_COUNT}}</strong><span>Issues found</span></div>
-    </section>
 
     <section class="filter-bar" aria-label="Filter tests by status">
       <span class="filter-label">Filter</span>
@@ -464,6 +518,7 @@
       <button class="filter-button" type="button" data-filter="pass" aria-pressed="false">Passed</button>
       <button class="filter-button" type="button" data-filter="skipped" aria-pressed="false">Skipped</button>
       <button class="filter-button" type="button" data-filter="fail" aria-pressed="false">Failed</button>
+      <input class="search-field" type="search" data-search placeholder="Search tests, commands, stdout, stderr…" aria-label="Search tests, commands, stdout, and stderr" />
       <span class="filter-count" data-filter-count>{{VISIBLE_TEST_COUNT}} of {{TOTAL_TEST_COUNT}} tests shown</span>
     </section>
 
@@ -547,15 +602,20 @@
   <script>
     (() => {
       const buttons = Array.from(document.querySelectorAll('[data-filter]'));
+      const search = document.querySelector('[data-search]');
       const articles = Array.from(document.querySelectorAll('article[data-test-status]'));
       const cards = Array.from(document.querySelectorAll('[data-test-file-card]'));
       const count = document.querySelector('[data-filter-count]');
+      let activeFilter = 'all';
 
-      function applyFilter(filter) {
+      function applyFilters() {
+        const query = (search?.value ?? '').trim().toLowerCase();
         let visible = 0;
 
         for (const article of articles) {
-          const matches = filter === 'all' || article.dataset.testStatus === filter;
+          const statusMatches = activeFilter === 'all' || article.dataset.testStatus === activeFilter;
+          const searchMatches = query === '' || article.textContent.toLowerCase().includes(query);
+          const matches = statusMatches && searchMatches;
           article.classList.toggle('is-hidden', !matches);
           if (matches) visible += 1;
         }
@@ -566,17 +626,24 @@
         }
 
         for (const button of buttons) {
-          button.setAttribute('aria-pressed', String(button.dataset.filter === filter));
+          button.setAttribute('aria-pressed', String(button.dataset.filter === activeFilter));
         }
 
         if (count) {
-          count.textContent = `${visible} of ${articles.length} tests shown`;
+          const suffix = query ? ` matching “${search.value}”` : '';
+          count.textContent = `${visible} of ${articles.length} tests shown${suffix}`;
         }
       }
 
       for (const button of buttons) {
-        button.addEventListener('click', () => applyFilter(button.dataset.filter));
+        button.addEventListener('click', () => {
+          activeFilter = button.dataset.filter;
+          applyFilters();
+        });
       }
+
+      search?.addEventListener('input', applyFilters);
+      applyFilters();
     })();
   </script>
 </body>
