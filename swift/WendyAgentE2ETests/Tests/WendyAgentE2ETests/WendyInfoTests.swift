@@ -1,6 +1,14 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy info` {
-    // TODO: implement.
+    @Test
+    func `prints CLI version and system details`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats CLI version and system details as JSON`() async throws {
+        // TODO: implement.
+    }
 }

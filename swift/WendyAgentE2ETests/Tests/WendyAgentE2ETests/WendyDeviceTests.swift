@@ -1,46 +1,118 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy device` {
-    // TODO: implement.
+    @Test
+    func `describes device management subcommands`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `uses the configured default device when none is specified`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device set-default` {
-    // TODO: implement.
+    @Test
+    func `persists the default device hostname`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `rejects an invalid device hostname`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device setup` {
-    // TODO: implement.
+    @Test
+    func `guides interactive device provisioning`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `handles cancellation without changing configuration`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device unset-default` {
-    // TODO: implement.
+    @Test
+    func `removes the configured default device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `succeeds when no default device is configured`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device update` {
-    // TODO: implement.
+    @Test
+    func `uploads the current agent build to the selected device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the selected device is unreachable`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device version` {
-    // TODO: implement.
+    @Test
+    func `prints version and hardware details from the selected device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats version and hardware details as JSON`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device dashboard` {
-    // TODO: implement.
+    @Test
+    func `opens a live dashboard for the selected device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when dashboard data cannot be reached`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device logs` {
-    // TODO: implement.
+    @Test
+    func `streams logs from applications on the selected device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `filters logs by application when requested`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device telemetry-stream` {
-    // TODO: implement.
+    @Test
+    func `streams telemetry as JSON lines`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when telemetry cannot be reached`() async throws {
+        // TODO: implement.
+    }
 }

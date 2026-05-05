@@ -1,26 +1,61 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy device bluetooth` {
-    // TODO: implement.
+    @Test
+    func `describes Bluetooth subcommands`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device bluetooth connect` {
-    // TODO: implement.
+    @Test
+    func `connects to a known Bluetooth device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the Bluetooth device is unavailable`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device bluetooth disconnect` {
-    // TODO: implement.
+    @Test
+    func `disconnects a connected Bluetooth device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `handles an already disconnected Bluetooth device`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device bluetooth forget` {
-    // TODO: implement.
+    @Test
+    func `forgets a paired Bluetooth device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the Bluetooth device is not paired`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device bluetooth list` {
-    // TODO: implement.
+    @Test
+    func `lists known Bluetooth devices`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats Bluetooth devices as JSON`() async throws {
+        // TODO: implement.
+    }
 }

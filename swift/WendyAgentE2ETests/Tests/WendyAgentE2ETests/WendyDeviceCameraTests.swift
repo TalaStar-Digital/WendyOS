@@ -1,16 +1,35 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy device camera` {
-    // TODO: implement.
+    @Test
+    func `describes camera subcommands`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device camera list` {
-    // TODO: implement.
+    @Test
+    func `lists cameras on the selected device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats cameras as JSON`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device camera view` {
-    // TODO: implement.
+    @Test
+    func `opens a camera viewer for the selected camera`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the selected camera is unavailable`() async throws {
+        // TODO: implement.
+    }
 }

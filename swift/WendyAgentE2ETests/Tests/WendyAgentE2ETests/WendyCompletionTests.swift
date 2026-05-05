@@ -1,26 +1,61 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy completion` {
-    // TODO: implement.
+    @Test
+    func `describes supported shells`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy completion bash` {
-    // TODO: implement.
+    @Test
+    func `prints a bash completion script`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `does not print diagnostics with the script`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy completion fish` {
-    // TODO: implement.
+    @Test
+    func `prints a fish completion script`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `does not print diagnostics with the script`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy completion powershell` {
-    // TODO: implement.
+    @Test
+    func `prints a PowerShell completion script`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `does not print diagnostics with the script`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy completion zsh` {
-    // TODO: implement.
+    @Test
+    func `prints a zsh completion script`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `does not print diagnostics with the script`() async throws {
+        // TODO: implement.
+    }
 }

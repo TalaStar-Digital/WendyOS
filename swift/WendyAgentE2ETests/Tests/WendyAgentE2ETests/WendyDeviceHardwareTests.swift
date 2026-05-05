@@ -1,11 +1,22 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy device hardware` {
-    // TODO: implement.
+    @Test
+    func `describes hardware subcommands`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device hardware list` {
-    // TODO: implement.
+    @Test
+    func `lists hardware capabilities on the selected device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats hardware capabilities as JSON`() async throws {
+        // TODO: implement.
+    }
 }

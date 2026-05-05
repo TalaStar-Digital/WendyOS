@@ -1,6 +1,19 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy discover` {
-    // TODO: implement.
+    @Test
+    func `discovers WendyOS devices on the local network`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats discovered devices as JSON`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `reports clearly when no devices are discovered`() async throws {
+        // TODO: implement.
+    }
 }

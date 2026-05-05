@@ -1,11 +1,22 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy utils` {
-    // TODO: implement.
+    @Test
+    func `describes utility subcommands`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy utils open-browser` {
-    // TODO: implement.
+    @Test
+    func `opens the requested URL in the system browser`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the URL is invalid`() async throws {
+        // TODO: implement.
+    }
 }

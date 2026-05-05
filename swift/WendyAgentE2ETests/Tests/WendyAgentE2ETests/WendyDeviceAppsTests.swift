@@ -1,26 +1,66 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy device apps` {
-    // TODO: implement.
+    @Test
+    func `describes app management subcommands`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device apps list` {
-    // TODO: implement.
+    @Test
+    func `lists applications on the selected device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `reports clearly when no applications are installed`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats applications as JSON`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device apps remove` {
-    // TODO: implement.
+    @Test
+    func `removes an installed application`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the application is not installed`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device apps start` {
-    // TODO: implement.
+    @Test
+    func `starts a stopped application`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the application cannot be started`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device apps stop` {
-    // TODO: implement.
+    @Test
+    func `stops a running application`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the application cannot be stopped`() async throws {
+        // TODO: implement.
+    }
 }

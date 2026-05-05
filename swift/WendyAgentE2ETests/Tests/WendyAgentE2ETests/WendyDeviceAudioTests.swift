@@ -1,26 +1,61 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy device audio` {
-    // TODO: implement.
+    @Test
+    func `describes audio subcommands`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device audio list` {
-    // TODO: implement.
+    @Test
+    func `lists audio devices on the selected device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats audio devices as JSON`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device audio listen` {
-    // TODO: implement.
+    @Test
+    func `starts listening to the selected audio input`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the audio input is unavailable`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device audio monitor` {
-    // TODO: implement.
+    @Test
+    func `streams audio level updates`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when audio monitoring is unavailable`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device audio set-default` {
-    // TODO: implement.
+    @Test
+    func `sets the default audio device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the audio device is unknown`() async throws {
+        // TODO: implement.
+    }
 }

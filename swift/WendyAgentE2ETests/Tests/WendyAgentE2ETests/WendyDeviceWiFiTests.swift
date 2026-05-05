@@ -1,36 +1,87 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy device wifi` {
-    // TODO: implement.
+    @Test
+    func `describes WiFi subcommands`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device wifi connect` {
-    // TODO: implement.
+    @Test
+    func `connects to a WiFi network`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when WiFi credentials are rejected`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device wifi disconnect` {
-    // TODO: implement.
+    @Test
+    func `disconnects from the active WiFi network`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `handles an already disconnected WiFi interface`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device wifi forget` {
-    // TODO: implement.
+    @Test
+    func `forgets a saved WiFi network`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the WiFi network is not saved`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device wifi list` {
-    // TODO: implement.
+    @Test
+    func `lists visible WiFi networks`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats WiFi networks as JSON`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device wifi rank` {
-    // TODO: implement.
+    @Test
+    func `updates saved WiFi network priority`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the WiFi network is unknown`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device wifi status` {
-    // TODO: implement.
+    @Test
+    func `shows the current WiFi connection state`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats WiFi status as JSON`() async throws {
+        // TODO: implement.
+    }
 }

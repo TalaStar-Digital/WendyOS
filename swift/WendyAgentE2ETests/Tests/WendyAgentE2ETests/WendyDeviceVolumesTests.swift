@@ -1,16 +1,35 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy device volumes` {
-    // TODO: implement.
+    @Test
+    func `describes volume management subcommands`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device volumes list` {
-    // TODO: implement.
+    @Test
+    func `lists persistent volumes on the selected device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats persistent volumes as JSON`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy device volumes remove` {
-    // TODO: implement.
+    @Test
+    func `removes an existing persistent volume`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `fails clearly when the persistent volume does not exist`() async throws {
+        // TODO: implement.
+    }
 }

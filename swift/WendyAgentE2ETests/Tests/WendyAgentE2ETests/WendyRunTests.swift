@@ -1,6 +1,24 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy run` {
-    // TODO: implement.
+    @Test
+    func `requires a valid Wendy project`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `builds and deploys the current project to the selected device`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `streams deployment progress in a readable format`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats deployment result as JSON`() async throws {
+        // TODO: implement.
+    }
 }

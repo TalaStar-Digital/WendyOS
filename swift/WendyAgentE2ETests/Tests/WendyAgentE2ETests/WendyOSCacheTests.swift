@@ -1,16 +1,35 @@
 import Testing
 
-@Suite
+@Suite(.serialized)
 struct `wendy os cache` {
-    // TODO: implement.
+    @Test
+    func `describes OS cache subcommands`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy os cache clear` {
-    // TODO: implement.
+    @Test
+    func `removes cached WendyOS images`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `reports when the OS cache is already empty`() async throws {
+        // TODO: implement.
+    }
 }
 
-@Suite
+@Suite(.serialized)
 struct `wendy os cache list` {
-    // TODO: implement.
+    @Test
+    func `lists cached WendyOS images`() async throws {
+        // TODO: implement.
+    }
+
+    @Test
+    func `formats cached WendyOS images as JSON`() async throws {
+        // TODO: implement.
+    }
 }
