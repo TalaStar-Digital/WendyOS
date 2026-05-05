@@ -2,7 +2,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy device camera` {
+struct `'wendy device camera'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -20,7 +20,7 @@ struct `wendy device camera` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device camera list` {
+struct `'wendy device camera list'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -48,7 +48,7 @@ struct `wendy device camera list` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device camera view` {
+struct `'wendy device camera view'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 

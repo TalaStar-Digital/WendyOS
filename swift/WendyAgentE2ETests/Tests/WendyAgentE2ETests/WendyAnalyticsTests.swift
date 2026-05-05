@@ -3,7 +3,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy analytics` {
+struct `'wendy analytics'` {
     var cli: Machine
 
     init() async throws {
@@ -25,7 +25,7 @@ struct `wendy analytics` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy analytics status` {
+struct `'wendy analytics status'` {
     var cli: Machine
 
     init() async throws {
@@ -60,7 +60,7 @@ struct `wendy analytics status` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy analytics enable` {
+struct `'wendy analytics enable'` {
     var cli: Machine
 
     init() async throws {
@@ -95,7 +95,7 @@ struct `wendy analytics enable` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy analytics disable` {
+struct `'wendy analytics disable'` {
     var cli: Machine
 
     init() async throws {

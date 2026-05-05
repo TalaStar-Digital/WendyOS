@@ -2,7 +2,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy device apps` {
+struct `'wendy device apps'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -22,7 +22,7 @@ struct `wendy device apps` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device apps list` {
+struct `'wendy device apps list'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -59,7 +59,7 @@ struct `wendy device apps list` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device apps remove` {
+struct `'wendy device apps remove'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -83,7 +83,7 @@ struct `wendy device apps remove` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device apps start` {
+struct `'wendy device apps start'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -107,7 +107,7 @@ struct `wendy device apps start` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device apps stop` {
+struct `'wendy device apps stop'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 

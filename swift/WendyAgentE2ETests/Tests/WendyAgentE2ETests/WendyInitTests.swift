@@ -3,7 +3,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy init` {
+struct `'wendy init'` {
     var cli: Machine
 
     init() async throws {

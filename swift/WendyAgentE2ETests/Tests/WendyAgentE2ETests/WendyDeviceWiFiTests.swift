@@ -2,7 +2,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy device wifi` {
+struct `'wendy device wifi'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -24,7 +24,7 @@ struct `wendy device wifi` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device wifi connect` {
+struct `'wendy device wifi connect'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -48,7 +48,7 @@ struct `wendy device wifi connect` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device wifi disconnect` {
+struct `'wendy device wifi disconnect'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -72,7 +72,7 @@ struct `wendy device wifi disconnect` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device wifi forget` {
+struct `'wendy device wifi forget'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -96,7 +96,7 @@ struct `wendy device wifi forget` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device wifi list` {
+struct `'wendy device wifi list'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -124,7 +124,7 @@ struct `wendy device wifi list` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device wifi rank` {
+struct `'wendy device wifi rank'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -148,7 +148,7 @@ struct `wendy device wifi rank` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device wifi status` {
+struct `'wendy device wifi status'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 

@@ -3,7 +3,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy cache` {
+struct `'wendy cache'` {
     var cli: Machine
 
     init() async throws {
@@ -24,7 +24,7 @@ struct `wendy cache` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy cache clear` {
+struct `'wendy cache clear'` {
     var cli: Machine
 
     init() async throws {
@@ -63,7 +63,7 @@ struct `wendy cache clear` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy cache list` {
+struct `'wendy cache list'` {
     var cli: Machine
 
     init() async throws {

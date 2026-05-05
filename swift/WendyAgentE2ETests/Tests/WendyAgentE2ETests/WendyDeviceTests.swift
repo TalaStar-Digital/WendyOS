@@ -3,7 +3,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy device` {
+struct `'wendy device'` {
     var cli: Machine
 
     init() async throws {
@@ -45,7 +45,7 @@ struct `wendy device` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device set-default` {
+struct `'wendy device set-default'` {
     var cli: Machine
 
     init() async throws {
@@ -89,7 +89,7 @@ struct `wendy device set-default` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device setup` {
+struct `'wendy device setup'` {
     var cli: Machine
 
     init() async throws {
@@ -133,7 +133,7 @@ struct `wendy device setup` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device unset-default` {
+struct `'wendy device unset-default'` {
     var cli: Machine
 
     init() async throws {
@@ -170,7 +170,7 @@ struct `wendy device unset-default` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device update` {
+struct `'wendy device update'` {
     var cli: Machine
 
     init() async throws {
@@ -211,7 +211,7 @@ struct `wendy device update` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device version` {
+struct `'wendy device version'` {
     var cli: Machine
 
     init() async throws {
@@ -253,7 +253,7 @@ struct `wendy device version` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device dashboard` {
+struct `'wendy device dashboard'` {
     var cli: Machine
 
     init() async throws {
@@ -290,7 +290,7 @@ struct `wendy device dashboard` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device logs` {
+struct `'wendy device logs'` {
     var cli: Machine
 
     init() async throws {
@@ -328,7 +328,7 @@ struct `wendy device logs` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device telemetry-stream` {
+struct `'wendy device telemetry-stream'` {
     var cli: Machine
 
     init() async throws {

@@ -2,7 +2,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy device audio` {
+struct `'wendy device audio'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -22,7 +22,7 @@ struct `wendy device audio` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device audio list` {
+struct `'wendy device audio list'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -50,7 +50,7 @@ struct `wendy device audio list` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device audio listen` {
+struct `'wendy device audio listen'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -73,7 +73,7 @@ struct `wendy device audio listen` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device audio monitor` {
+struct `'wendy device audio monitor'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -96,7 +96,7 @@ struct `wendy device audio monitor` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy device audio set-default` {
+struct `'wendy device audio set-default'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 

@@ -3,7 +3,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy os` {
+struct `'wendy os'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -24,7 +24,7 @@ struct `wendy os` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy os download` {
+struct `'wendy os download'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -68,7 +68,7 @@ struct `wendy os download` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy os install` {
+struct `'wendy os install'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -109,7 +109,7 @@ struct `wendy os install` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy os list-drives` {
+struct `'wendy os list-drives'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
@@ -137,7 +137,7 @@ struct `wendy os list-drives` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy os update` {
+struct `'wendy os update'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 

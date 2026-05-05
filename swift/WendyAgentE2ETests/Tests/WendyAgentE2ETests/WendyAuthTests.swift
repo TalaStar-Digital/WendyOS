@@ -3,7 +3,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy auth` {
+struct `'wendy auth'` {
     var cli: Machine
 
     init() async throws {
@@ -25,7 +25,7 @@ struct `wendy auth` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy auth login` {
+struct `'wendy auth login'` {
     var cli: Machine
 
     init() async throws {
@@ -93,7 +93,7 @@ struct `wendy auth login` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy auth logout` {
+struct `'wendy auth logout'` {
     var cli: Machine
 
     init() async throws {
@@ -139,7 +139,7 @@ struct `wendy auth logout` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy auth refresh-certs` {
+struct `'wendy auth refresh-certs'` {
     var cli: Machine
 
     init() async throws {

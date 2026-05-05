@@ -3,7 +3,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy json` {
+struct `'wendy json'` {
     var cli: Machine
 
     init() async throws {
@@ -24,7 +24,7 @@ struct `wendy json` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy json schema` {
+struct `'wendy json schema'` {
     var cli: Machine
 
     init() async throws {
@@ -63,7 +63,7 @@ struct `wendy json schema` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy json validate` {
+struct `'wendy json validate'` {
     var cli: Machine
 
     init() async throws {

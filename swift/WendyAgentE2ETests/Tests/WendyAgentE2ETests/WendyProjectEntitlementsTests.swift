@@ -3,7 +3,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy project entitlements` {
+struct `'wendy project entitlements'` {
     var cli: Machine
 
     init() async throws {
@@ -25,7 +25,7 @@ struct `wendy project entitlements` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy project entitlements list` {
+struct `'wendy project entitlements list'` {
     var cli: Machine
 
     init() async throws {
@@ -84,7 +84,7 @@ struct `wendy project entitlements list` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy project entitlements add` {
+struct `'wendy project entitlements add'` {
     var cli: Machine
 
     init() async throws {
@@ -147,7 +147,7 @@ struct `wendy project entitlements add` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy project entitlements remove` {
+struct `'wendy project entitlements remove'` {
     var cli: Machine
 
     init() async throws {

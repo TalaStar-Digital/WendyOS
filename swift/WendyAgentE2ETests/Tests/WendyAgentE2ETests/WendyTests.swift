@@ -2,7 +2,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy` {
+struct `'wendy'` {
     var cli: Machine
 
     init() async throws {
@@ -78,7 +78,7 @@ struct `wendy` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy info` {
+struct `'wendy info'` {
     var cli: Machine
 
     init() async throws {

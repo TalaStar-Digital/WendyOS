@@ -2,7 +2,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy completion` {
+struct `'wendy completion'` {
     var cli: Machine
 
     init() async throws {
@@ -25,7 +25,7 @@ struct `wendy completion` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy completion bash` {
+struct `'wendy completion bash'` {
     var cli: Machine
 
     init() async throws {
@@ -53,7 +53,7 @@ struct `wendy completion bash` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy completion fish` {
+struct `'wendy completion fish'` {
     var cli: Machine
 
     init() async throws {
@@ -81,7 +81,7 @@ struct `wendy completion fish` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy completion powershell` {
+struct `'wendy completion powershell'` {
     var cli: Machine
 
     init() async throws {
@@ -109,7 +109,7 @@ struct `wendy completion powershell` {
 // MARK: -
 
 @Suite(.serialized)
-struct `wendy completion zsh` {
+struct `'wendy completion zsh'` {
     var cli: Machine
 
     init() async throws {

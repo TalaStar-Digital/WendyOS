@@ -2,7 +2,7 @@ import Testing
 import WendyE2ETesting
 
 @Suite(.serialized)
-struct `wendy discover` {
+struct `'wendy discover'` {
     var cli: Machine
     init() async throws { self.cli = try await Machine.cli() }
 
