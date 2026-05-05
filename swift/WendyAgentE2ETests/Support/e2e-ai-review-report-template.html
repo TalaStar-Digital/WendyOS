@@ -113,21 +113,22 @@
       display: inline-flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
 
     .brand-mark {
       display: inline-grid;
       place-items: center;
-      width: 36px;
-      height: 36px;
-      border: 1px solid rgba(110, 231, 183, .54);
-      border-radius: 12px;
-      background: linear-gradient(135deg, var(--emerald-400), var(--emerald-600));
-      color: var(--emerald-950);
-      font-weight: 950;
-      letter-spacing: -.08em;
-      box-shadow: 0 12px 30px rgba(16, 185, 129, .26);
+      width: 34px;
+      height: 34px;
+      color: var(--text);
+    }
+
+    .brand-mark svg {
+      display: block;
+      width: 30px;
+      height: 30px;
+      fill: currentColor;
     }
 
     .brand-copy {
@@ -186,15 +187,6 @@
       color: var(--blue);
       font-size: 15px;
       line-height: 1;
-    }
-
-    .kicker {
-      color: var(--blue);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-      margin-bottom: 6px;
     }
 
     h1 {
@@ -725,7 +717,8 @@
     command as a terminal-style run followed by captured output lines. Leave
     stdout lines unmarked. Mark stderr lines with an amber ! in the gutter.
     If a command produced no output, omit the command-output block. Test
-    details should only include command runs and AI analysis when present.
+    details should only include command runs, AI analysis when present, and
+    skipped reasons for skipped tests.
 
     The filter bar expects every test details row to have data-test-status set
     to pass, skipped, or fail. The search field filters against the row text
@@ -736,11 +729,10 @@
   <main>
     <header>
       <div>
-        <div class="brand-row" aria-label="Wendy">
-          <span class="brand-mark" aria-hidden="true">W</span>
-          <span class="brand-copy"><strong>Wendy</strong><span>Agent E2E Report</span></span>
+        <div class="brand-row" aria-label="Wendy E2E Report">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 1024 1024" role="img"><rect x="407.04" y="299.64" width="424.72" height="424.72" transform="translate(-180.62 587.94) rotate(-45)"/><path d="M335.3,743.03l-231.03-231.03,231.03-231.02,231.02,231.02-231.02,231.03ZM179.04,512l156.27,156.27,156.27-156.27-156.27-156.27-156.27,156.27Z"/></svg></span>
+          <span class="brand-copy"><strong>E2E Report</strong><span>Wendy Agent</span></span>
         </div>
-        <div class="kicker">{{REPORT_KICKER}}</div>
         <h1>{{REPORT_HEADING}}</h1>
         <p class="lead">{{REPORT_SUMMARY}}</p>
       </div>
@@ -792,6 +784,9 @@
             </ul>
             <p class="note">{{TEST_NOTES}}</p>
           </section>
+
+          <!-- Optional: render when the test was disabled/skipped. -->
+          <p class="skip-reason">{{SKIP_REASON}}</p>
 
           <!-- Optional: remove this block when the test did not run commands. -->
           <div class="commands">
