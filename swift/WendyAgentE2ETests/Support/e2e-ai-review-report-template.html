@@ -411,6 +411,28 @@
       border: 1px solid #000;
     }
 
+    .ai-filter-analysis {
+      display: none;
+      margin: 7px 0 2px 22px;
+      user-select: text;
+    }
+
+    .ai-filter-analysis pre {
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--code-bg);
+      color: var(--text);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    body.ai-filter-active .test-details[data-has-ai-analysis="true"]:not(.is-hidden) .ai-filter-analysis {
+      display: block;
+    }
+
     .test-details {
       margin: 1px 0;
       border-radius: 8px;
@@ -727,10 +749,13 @@
     skipped reasons for skipped tests.
 
     The filter bar expects every test details row to have data-test-status set
-    to pass, skipped, or fail. The search field filters against the row text
-    content, including suite name, test title, command text, stdout, and
-    stderr. File cards are hidden automatically when none of their test rows
-    match the active filter and search query.
+    to pass, skipped, or fail. Rows with generated AI reports that need human
+    review should set data-has-ai-analysis to true and render the inline
+    TEST_AI_FILTER_ANALYSIS block. Activating the AI filter reveals that inline
+    Markdown report verbatim under each matching test line. The search field filters
+    against the row text content, including suite name, test title, command
+    text, stdout, and stderr. File cards are hidden automatically when none of
+    their test rows match the active filter and search query.
   -->
   <main>
     <header>
@@ -775,10 +800,10 @@
 
       <!-- Repeat this .suite-group once per suite in the file. Do not add a visible suite heading; the suite appears in each test sentence. -->
       <div class="suite-group">
-        <!-- Repeat this details.test-details once per test function in the suite. Set data-has-ai to true when // AI: checklist items are present. -->
-        <details class="test-details" data-test-status="{{TEST_STATUS_CLASS}}" data-has-ai="{{TEST_HAS_AI}}">
+        <!-- Repeat this details.test-details once per test function in the suite. Set data-has-ai to true when // AI: checklist items are present, and data-has-ai-analysis to true only when a generated Markdown report needs human review. Render TEST_AI_BADGE only when generated AI remarks exist. -->
+        <details class="test-details" data-test-status="{{TEST_STATUS_CLASS}}" data-has-ai="{{TEST_HAS_AI}}" data-has-ai-analysis="{{TEST_HAS_AI_ANALYSIS}}">
           <summary class="test-summary">
-            {{TEST_REPORT_LINK}}<span class="test-path">{{TEST_PATH_TEXT}}</span><span class="badge {{TEST_STATUS_CLASS}}">{{TEST_STATUS_TEXT}}</span>{{TEST_AI_BADGE}}
+            {{TEST_REPORT_LINK}}<span class="test-path">{{TEST_PATH_TEXT}}</span><span class="badge {{TEST_STATUS_CLASS}}">{{TEST_STATUS_TEXT}}</span>{{TEST_AI_BADGE}}{{TEST_AI_FILTER_ANALYSIS}}
           </summary>
           <div class="test-body">
           <!-- Optional: render when the test has // AI: checklist items. -->
@@ -923,7 +948,7 @@
         for (const test of tests) {
           const statusMatches = activeFilter === 'all'
             || test.dataset.testStatus === activeFilter
-            || (activeFilter === 'ai' && test.dataset.hasAi === 'true');
+            || (activeFilter === 'ai' && test.dataset.hasAiAnalysis === 'true');
           const searchMatches = query === '' || test.textContent.toLowerCase().includes(query);
           const matches = statusMatches && searchMatches;
           test.classList.toggle('is-hidden', !matches);
@@ -938,6 +963,8 @@
         for (const button of buttons) {
           button.setAttribute('aria-pressed', String(button.dataset.filter === activeFilter));
         }
+
+        document.body.classList.toggle('ai-filter-active', activeFilter === 'ai');
 
         if (count) {
           const suffix = query ? ` matching “${search.value}”` : '';

@@ -14,7 +14,7 @@ From the repository root, run the Swift E2E package:
 
 ```bash
 cd swift/WendyAgentE2ETests
-swift test
+swift test --filter WendyAgentE2ETests
 ```
 
 For a fresh, easy-to-find record location, prefer setting
@@ -22,7 +22,7 @@ For a fresh, easy-to-find record location, prefer setting
 
 ```bash
 cd swift/WendyAgentE2ETests
-WENDY_AGENT_E2E_TEST_RECORDS_DIR="$PWD/.build/e2e-test-records.current" swift test
+WENDY_AGENT_E2E_TEST_RECORDS_DIR="$PWD/.build/e2e-test-records.current" swift test --filter WendyAgentE2ETests
 ```
 
 When `WENDY_AGENT_E2E_TEST_RECORDS_DIR` is set, record files are written
@@ -35,6 +35,31 @@ timestamped UTC directory:
 ```text
 swift/WendyAgentE2ETests/.build/e2e-test-records.YYYY-MM-DD.HH-MM-SS/
 ```
+
+## Generate the HTML Report
+
+A helper script in this skill folder appends AI review sections to matching
+Markdown command records and renders the HTML report from Swift test files,
+command records, and the package HTML template:
+
+```bash
+.agents/skills/run-e2e-tests-and-analyze/render-e2e-report.py \
+  --records-dir swift/WendyAgentE2ETests/.build/e2e-test-records.current
+```
+
+By default, the script writes `index.html` into the records directory and updates
+matching `*.md` command records only when there is something noteworthy for a
+human to review. Each appended `AI review` section includes the full source
+`// AI:` comment block first, followed by a prose Markdown report. Passing,
+unsurprising checklist items should not generate a report. Existing generated AI
+review sections are replaced, so rerunning the script is idempotent. The HTML
+`AI` filter matches only tests with an actual generated report, not every test
+that merely has a `// AI:` checklist. When the `AI` filter is active, the
+Markdown report appears verbatim in a fixed-width block under each matching test
+row. Use `--no-append-ai-to-records` to render HTML without touching Markdown
+records. Use `--include-fake-analysis` to add deterministic fake prose reports
+for UI testing. Override paths with `--package-dir`, `--tests-dir`, `--template`,
+`--records-dir`, and `--output` when needed.
 
 ## Locate Records
 
@@ -64,7 +89,7 @@ the same file and separated with Markdown `---` rules.
 
 ## Analyze Test Files One by One
 
-1. Enumerate test files, usually:
+1. Enumerate only the WendyAgent E2E test files:
 
    ```bash
    find swift/WendyAgentE2ETests/Tests/WendyAgentE2ETests -name '*Tests.swift' | sort
