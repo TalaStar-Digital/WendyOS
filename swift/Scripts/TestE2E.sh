@@ -34,16 +34,16 @@ Options:
   --artifact-dir DIR    Directory for the final zip artifact.
   --report-zip PATH     Path to the final zip artifact.
   --fixtures-dir DIR    Fixture directory exposed to tests.
-  --agent-ssh SSH       SSH target for the Mac agent machine.
-  --agent-workdir DIR   Existing remote repository checkout to use for the agent.
+  --agent-ssh SSH       Optional SSH target for the agent machine; omitted runs locally.
+  --agent-workdir DIR   Existing swift/ working directory to use for the agent.
   --no-agent-sync       Do not rsync this checkout to --agent-ssh.
   --verbose             Print each E2E machine command before it runs.
   --help                Show this help message.
 
 Environment:
   WENDY_AGENT_E2E_TEST_FILTERS              Comma-separated SwiftPM filters.
-  WENDY_AGENT_E2E_AGENT_SSH                 SSH target for the agent machine.
-  WENDY_AGENT_E2E_AGENT_WORKING_DIRECTORY   Remote swift/ directory for agent.
+  WENDY_AGENT_E2E_AGENT_SSH                 Optional SSH target for the agent machine.
+  WENDY_AGENT_E2E_AGENT_WORKING_DIRECTORY   swift/ directory for the agent.
   WENDY_AGENT_E2E_SYNC_AGENT                auto, true, or false.
   WENDY_AGENT_E2E_FIXTURES_DIR              Defaults to .github/swift-e2e-tests.
   WENDY_AGENT_E2E_TEST_RECORDS_DIR          Defaults to package .build records dir.

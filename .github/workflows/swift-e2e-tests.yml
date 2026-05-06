@@ -11,11 +11,11 @@ on:
         required: false
         default: ''
       agent_ssh:
-        description: 'SSH target for the Mac agent host'
+        description: 'Optional SSH target for the Mac agent host (empty = run agent locally)'
         required: false
-        default: 'wendy-agent-mac'
+        default: ''
       agent_workdir:
-        description: 'Existing remote swift/ checkout on the agent host (empty = rsync this checkout)'
+        description: 'Optional agent swift/ working directory (empty = local checkout; with agent_ssh empty, remains local)'
         required: false
         default: ''
   workflow_call:
@@ -27,7 +27,7 @@ on:
       agent_ssh:
         type: string
         required: false
-        default: 'wendy-agent-mac'
+        default: ''
       agent_workdir:
         type: string
         required: false
@@ -37,7 +37,7 @@ jobs:
   swift-e2e-tests:
     name: Swift E2E Tests
     # The custom `MacOS` label selects the Wendy-CLI-on-mac self-hosted runner.
-    # The agent app is built/run on `agent_ssh` (default: wendy-agent-mac).
+    # By default both the CLI and agent run locally on the selected runner.
     runs-on: [self-hosted, macOS, ARM64, MacOS]
     concurrency:
       group: swift-e2e-tests-wendy-cli-on-mac
@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 120
     env:
       INPUT_TESTS: ${{ inputs.tests || '' }}
-      INPUT_AGENT_SSH: ${{ inputs.agent_ssh || 'wendy-agent-mac' }}
+      INPUT_AGENT_SSH: ${{ inputs.agent_ssh || '' }}
       INPUT_AGENT_WORKDIR: ${{ inputs.agent_workdir || '' }}
     steps:
       - uses: actions/checkout@v6
