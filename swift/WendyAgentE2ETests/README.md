@@ -155,9 +155,14 @@ func `uses linux behavior`() async throws {
 Known machines are declared as static properties:
 
 ```swift
+Machine.current  // the test runner, tagged `.runner`
 Machine.cli
 Machine.agent
 ```
+
+Predefined machine OS values are `.macOS`, `.linux`, `.windows`, and `.wendyOS`.
+Use `WENDY_AGENT_E2E_CLI_OS` or `WENDY_AGENT_E2E_AGENT_OS` to override a known
+machine's declared OS for a run.
 
 `Session` is the runtime command executor for a machine:
 

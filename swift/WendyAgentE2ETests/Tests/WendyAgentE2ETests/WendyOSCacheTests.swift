@@ -35,7 +35,7 @@ struct `'wendy os cache clear'` {
     func `removes cached WendyOS images`() async throws {
         let home = try Helper.temporaryDirectory(prefix: "wendy-os-cache-clear")
         defer { try? FileManager.default.removeItem(at: home) }
-        let cache = home.appendingPathComponent("Library/Caches/wendy/os-images", isDirectory: true)
+        let cache = Helper.osImageCacheDirectory(home: home)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         try "image".write(
             to: cache.appendingPathComponent("raspberry-pi-5-1.0.0.img"),
@@ -79,7 +79,7 @@ struct `'wendy os cache list'` {
     func `lists cached WendyOS images`() async throws {
         let home = try Helper.temporaryDirectory(prefix: "wendy-os-cache-list")
         defer { try? FileManager.default.removeItem(at: home) }
-        let cache = home.appendingPathComponent("Library/Caches/wendy/os-images", isDirectory: true)
+        let cache = Helper.osImageCacheDirectory(home: home)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         try "image".write(
             to: cache.appendingPathComponent("raspberry-pi-5-1.0.0.img"),
@@ -102,7 +102,7 @@ struct `'wendy os cache list'` {
         // TODO: Re-enable after adding the required fixture or implementation; one-by-one E2E run currently fails.
         let home = try Helper.temporaryDirectory(prefix: "wendy-os-cache-list-json")
         defer { try? FileManager.default.removeItem(at: home) }
-        let cache = home.appendingPathComponent("Library/Caches/wendy/os-images", isDirectory: true)
+        let cache = Helper.osImageCacheDirectory(home: home)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         try "image".write(
             to: cache.appendingPathComponent("raspberry-pi-5-1.0.0.img"),

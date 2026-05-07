@@ -36,7 +36,12 @@ struct `'wendy'` {
         // - Version matches the expected CLI build.
     }
 
-    @Test
+    @Test(
+        .enabled(
+            if: Machine.cli.os == .macOS && Machine.agent.os == .macOS,
+            "Requires the local macOS app-backed agent fixture."
+        )
+    )
     func `'--device' selects the target device explicitly`() async throws {
         // REFACTOR: Starting WendyAgentMac and shutting it down are test fixture
         // concerns. Replace this inline lifecycle management with a dedicated
@@ -109,8 +114,8 @@ struct `'wendy info'` {
             let object = try Helper.jsonObject(from: standardOutput)
 
             #expect(object["version"] as? String == "dev")
-            #expect(object["os"] as? String == "darwin")
-            #expect(object["arch"] as? String == "arm64")
+            #expect(object["os"] as? String == Helper.expectedGoOS())
+            #expect((object["arch"] as? String)?.isEmpty == false)
             #expect((object["goVersion"] as? String)?.hasPrefix("go") == true)
             #expect(!standardOutput.contains("Wendy CLI"))
         }

@@ -35,7 +35,7 @@ struct `'wendy cache clear'` {
     func `removes cached CLI data`() async throws {
         let home = try Helper.temporaryDirectory(prefix: "wendy-cache-clear")
         defer { try? FileManager.default.removeItem(at: home) }
-        let cache = home.appendingPathComponent("Library/Caches/wendy", isDirectory: true)
+        let cache = Helper.cliCacheDirectory(home: home)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         try "cached".write(
             to: cache.appendingPathComponent("entry.txt"),
@@ -82,7 +82,7 @@ struct `'wendy cache list'` {
     func `lists cached entries`() async throws {
         let home = try Helper.temporaryDirectory(prefix: "wendy-cache-list")
         defer { try? FileManager.default.removeItem(at: home) }
-        let cache = home.appendingPathComponent("Library/Caches/wendy", isDirectory: true)
+        let cache = Helper.cliCacheDirectory(home: home)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         try "cached data".write(
             to: cache.appendingPathComponent("entry.txt"),
@@ -106,7 +106,7 @@ struct `'wendy cache list'` {
         // TODO: Re-enable after adding the required fixture or implementation; one-by-one E2E run currently fails.
         let home = try Helper.temporaryDirectory(prefix: "wendy-cache-list-json")
         defer { try? FileManager.default.removeItem(at: home) }
-        let cache = home.appendingPathComponent("Library/Caches/wendy", isDirectory: true)
+        let cache = Helper.cliCacheDirectory(home: home)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         try "cached data".write(
             to: cache.appendingPathComponent("entry.txt"),

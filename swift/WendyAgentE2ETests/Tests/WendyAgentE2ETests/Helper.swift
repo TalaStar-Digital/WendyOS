@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import WendyE2ETesting
 
 enum Helper {
     static func repositoryRootDirectoryURL() -> URL {
@@ -108,6 +109,33 @@ enum Helper {
             return "HOME=\(shellQuote(home.path)) WENDY_ANALYTICS=false"
         }
         return "WENDY_ANALYTICS=false"
+    }
+
+    static func expectedGoOS(for os: MachineOS = Machine.cli.os) -> String {
+        switch os {
+        case .macOS:
+            return "darwin"
+        case .linux, .wendyOS:
+            return "linux"
+        case .windows:
+            return "windows"
+        }
+    }
+
+    static func cliCacheDirectory(home: URL, os: MachineOS = Machine.cli.os) -> URL {
+        switch os {
+        case .macOS:
+            return home.appendingPathComponent("Library/Caches/wendy", isDirectory: true)
+        case .linux, .wendyOS:
+            return home.appendingPathComponent(".cache/wendy", isDirectory: true)
+        case .windows:
+            return home.appendingPathComponent("AppData/Local/wendy", isDirectory: true)
+        }
+    }
+
+    static func osImageCacheDirectory(home: URL, os: MachineOS = Machine.cli.os) -> URL {
+        cliCacheDirectory(home: home, os: os)
+            .appendingPathComponent("os-images", isDirectory: true)
     }
 
     static func withAsyncCleanup<Result>(

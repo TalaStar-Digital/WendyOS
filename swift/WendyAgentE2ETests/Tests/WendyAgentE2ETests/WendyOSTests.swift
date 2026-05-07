@@ -45,7 +45,7 @@ struct `'wendy os download'` {
         #expect(record.standardOutput?.contains("1.0.0") == true)
         #expect(
             FileManager.default.fileExists(
-                atPath: home.appendingPathComponent("Library/Caches/wendy/os-images").path
+                atPath: Helper.osImageCacheDirectory(home: home).path
             )
         )
     }
@@ -57,7 +57,7 @@ struct `'wendy os download'` {
         // TODO: Re-enable after adding the required fixture or implementation; one-by-one E2E run currently fails.
         let home = try Helper.temporaryDirectory(prefix: "wendy-os-download-cached")
         defer { try? FileManager.default.removeItem(at: home) }
-        let cache = home.appendingPathComponent("Library/Caches/wendy/os-images", isDirectory: true)
+        let cache = Helper.osImageCacheDirectory(home: home)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         try "image".write(
             to: cache.appendingPathComponent("raspberry-pi-5-1.0.0.img"),

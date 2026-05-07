@@ -42,6 +42,15 @@ struct `machine` {
     }
 
     @Test
+    func `declares current runner machine`() {
+        #expect(Machine.current.id == "current")
+        #expect(Machine.current.name == "Current")
+        #expect(Machine.current.tags == [.runner])
+        #expect(Machine.current.ssh == nil)
+        #expect(Machine.current.workingDirectory == FileManager.default.currentDirectoryPath)
+    }
+
+    @Test
     func `declares known CLI machine`() {
         #expect(Machine.cli.id == "cli")
         #expect(Machine.cli.name == "CLI")

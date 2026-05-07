@@ -37,6 +37,7 @@ public enum MachineOS: String, Sendable {
 public enum MachineTag: String, Sendable {
     case cli
     case agent
+    case runner
 }
 
 public struct Machine: Sendable, Equatable {
@@ -78,6 +79,15 @@ public struct Machine: Sendable, Equatable {
     }
 
     // MARK: - Known Machines
+
+    public static var current: Machine {
+        Machine(
+            id: "current",
+            name: "Current",
+            os: .current,
+            tags: [.runner]
+        )
+    }
 
     public static var cli: Machine {
         Machine(
