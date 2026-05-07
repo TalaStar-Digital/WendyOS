@@ -1,91 +1,166 @@
-# Plan: implement the Swift E2E behavior spec
+# Plan: build the Swift E2E behavioral spec
 
 ## Goal
 
-Implement the existing Swift E2E test stubs in `swift/WendyAgentE2ETests` as
-a complete executable specification of the desired Wendy CLI, agent, device,
-cloud, and project behavior.
+Turn `swift/WendyAgentE2ETests` into the executable behavioral specification for
+the Wendy CLI, agent, device, cloud, and project workflows.
 
-The stubs already define the first draft of the spec. The work here is not to
-choose a small deterministic subset, and not to encode today's partial
-implementation as correct. The work is to turn each stub into an executable
-verification of the behavior we want the product to have.
+The suite should not grow by casually encoding current behavior. For each command
+area, first write and review disabled spec stubs that describe the desired
+user-facing behavior. Once the stubs read like a complete product/API spec, make
+them executable one by one.
 
 ## Guiding principle
 
 The E2E suite is the product spec.
 
-Every test should describe the final desired behavior from the user's point of
-view, even when making that test executable requires fixtures, local services,
-real devices, cloud accounts, generated projects, or substantial setup. Test
-complexity is secondary to specification completeness.
+Every spec should describe desired behavior from the user's point of view. When
+the current product is incomplete, the spec should make that gap visible instead
+of treating today's limitation as correct.
 
 If the current Mac Agent returns
 `RPCError(code: .unimplemented, message: "... currently not supported on macOS.")`
-for a behavior that the product should eventually support, the E2E test should
-not pass by asserting that error. Instead, it should assert the desired behavior
-and expose the `.unimplemented` result as an implementation gap.
+for behavior that should eventually work, do not write a passing spec that
+asserts `.unimplemented`. Assert the desired behavior and let the record expose
+the implementation gap. Only assert unsupported behavior as success when that is
+the intended user-facing contract.
 
-Only assert `.unimplemented` as success when unsupported behavior is itself the
-intended user-facing contract.
+## Workflow
 
-## Scope
+Work one bounded command area at a time.
 
-Implement all existing stubs under:
+1. Pick one command area.
+2. Build a behavioral matrix for that area.
+3. Add disabled Swift Testing spec stubs only.
+4. Review the stubs as product/API documentation.
+5. Revise until the stubs are agreed as a good-enough spec.
+6. Implement the specs incrementally.
+7. Inspect command records and refine fixtures/assertions as needed.
 
-```text
-swift/WendyAgentE2ETests/Tests/WendyAgentE2ETests
+Do not skip the stub review step. Disabled stubs are the durable handoff between
+sessions and between product/design/testing decisions.
+
+## Spec stub style
+
+Use disabled tests so unimplemented specs do not falsely pass:
+
+```swift
+@Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+func `creates a minimal Swift WendyOS project non-interactively`() async throws {
+    // Given: an empty temporary directory
+    // When: `wendy init` is run with app id, target, language, no extra entitlements, and no git init
+    // Then:
+    // - exits successfully
+    // - writes wendy.json
+    // - writes Package.swift
+    // - emits concise success guidance on stdout
+    // - emits no stderr diagnostics
+}
 ```
 
-The current files and test names are the baseline spec. Do not delete stubs to
-make the suite smaller. If a stub's behavior is ambiguous, clarify the expected
-user behavior in the test body and, when useful, with `// AI:` review notes.
+A good stub:
 
-## Test implementation model
+- reads like product documentation
+- names one user-visible behavior
+- states setup, action, and expected outcomes
+- identifies filesystem/config mutations and non-mutations
+- avoids incidental current wording unless the wording is itself the contract
+- calls out platform requirements when relevant
 
-For every stub:
+## Behavioral matrix
 
-1. Identify the user-facing command and scenario named by the test.
-2. Define the desired stdout, stderr, exit status, JSON shape, and side effects.
-3. Build whatever fixture is needed to make that scenario executable.
-4. Run the real CLI/agent path whenever possible.
-5. Assert the desired behavior directly.
-6. Leave failures as useful evidence of missing implementation, not as empty
-   passing tests.
+For each command area, consider:
+
+- happy paths
+- invalid input
+- missing state
+- existing state
+- idempotency
+- cancellation and prompts
+- non-interactive behavior
+- human output vs JSON output
+- stdout/stderr contract
+- exit status
+- filesystem side effects
+- config mutation and non-mutation
+- analytics/environment isolation
+- platform-specific behavior
+- agent/device/cloud requirements
+
+For human-readable output, prefer semantic anchors unless exact text is part of
+the contract. For JSON and config files, prefer exact structure and meaningful
+fields.
+
+## Machine/session model
+
+`Machine` is static metadata and can be used in `.enabled(if:)` traits.
+`Session` is the runtime command executor.
+
+Known machines:
+
+```swift
+Machine.current  // test runner, tagged `.runner`
+Machine.cli
+Machine.agent
+```
+
+Known OS values:
+
+```swift
+.macOS
+.linux
+.windows
+.wendyOS
+```
+
+Use `Session.begin(for:)`, `session.end()`, or `Session.with(...)` to execute
+commands. Use `session.sh(...)` for immediate shell execution and
+`session.command(...).poll(...).run()` for configured command execution.
+
+## Platform policy
+
+The E2E package must run on Linux as well as macOS. Ubuntu LTS is the first Linux
+runner target. WendyOS on Jetson/Raspberry Pi comes after the Linux runner path
+is stable.
+
+If a spec needs a local macOS app-backed agent, gate it to macOS for now. Do not
+let macOS-only lifecycle assumptions make the Linux suite fail.
+
+Prefer static machine metadata for gating:
+
+```swift
+@Test(.enabled(if: Machine.cli.os == .linux))
+```
+
+Use compile-time `#if os(...)` only when code cannot compile cross-platform.
 
 ## Fixtures and infrastructure
 
-Add helper infrastructure as needed, but keep it in service of the spec:
+Add helpers as needed, but keep them in service of the spec:
 
 - temporary `HOME` and config directories
+- platform-aware cache/config paths
 - temporary Wendy projects and generated `wendy.json` files
 - local fake Wendy Cloud services where cloud behavior must be deterministic
-- local fake or simulated WendyOS agents where hardware/device behavior must be
-  deterministic
-- real-device gates for behaviors that cannot be simulated faithfully
-- local Mac Agent lifecycle helpers for commands that intentionally exercise the
-  Mac Agent path
+- local fake or simulated WendyOS agents where device behavior must be deterministic
+- real-device gates for behavior that cannot be simulated faithfully
+- local Mac Agent lifecycle helpers for commands that intentionally exercise macOS agent behavior
 - project builders and sample apps for build/run/deploy specs
 - reusable JSON and output assertion helpers
 
-Do not avoid a test because the fixture is involved. If a behavior matters to
-users, specify it and make it verifiable.
+Do not avoid an important behavior because the fixture is involved. Specify it,
+then make it verifiable.
 
-## Handling current implementation gaps
+## Handling implementation gaps
 
-Some desired behaviors are not implemented yet, especially in the Mac Agent.
-For those:
+For desired behavior that is not implemented yet:
 
-- The E2E test should assert the desired final behavior.
-- If the command currently fails with gRPC `Unimplemented`, treat that as a
-  failing implementation gap, not the desired result.
-- If the project needs the default suite to stay green temporarily, use an
-  explicit known-issue mechanism or clearly gated execution, but keep the
-  desired assertions in the test.
-- Generated command records should make the gap obvious, including the current
-  `.unimplemented` error when that is what happened.
-
-This keeps the suite useful as both spec and backlog.
+- Keep the desired assertions in the spec.
+- Use disabled stubs until the behavior and fixture strategy are agreed.
+- Once implemented as an executable spec, failures should be useful evidence of
+  missing implementation.
+- If the default suite must stay green temporarily, use explicit gating or known
+  issue mechanisms rather than weakening the desired assertion.
 
 ## Assertions
 
@@ -93,32 +168,39 @@ Prefer strong, user-facing assertions:
 
 - exact output for stable short messages
 - parsed JSON shape and values for `--json`
-- non-zero exit plus clear diagnostic for intended failure cases
+- non-zero exit plus clear diagnostics for intended failure cases
 - real filesystem/config side effects for commands that write state
 - observable device/agent/cloud effects for integration scenarios
 - readable progress/log output for long-running commands
 
-Avoid assertions that merely preserve accidental current behavior.
+Avoid broad assertions that make different behaviors equivalent, such as:
+
+```swift
+#error contains domain-specific text || error contains "Could not connect"
+```
+
+Those are acceptable only for rough smoke coverage, not for a behavioral spec.
 
 ## Implementation order
 
-Implement the existing stubs in coherent command families:
+Recommended order, one command area at a time:
 
-1. top-level CLI, help, completion, info, analytics, json
-2. project initialization and project configuration
-3. project entitlements
-4. build and run
-5. cache and OS cache
-6. discovery and device selection/default-device behavior
-7. device version, dashboard, logs, telemetry, update
-8. device apps and volumes
-9. device hardware, camera, audio, Bluetooth, WiFi
-10. OS image download, install, list-drives, update
-11. auth and cloud-backed flows
-12. tour and utilities
+1. Make `TestE2E.sh` work out of the box on Ubuntu LTS.
+2. `wendy init` spec stubs, review, then implementation.
+3. top-level CLI, help, completion, info, analytics, json
+4. project configuration
+5. project entitlements
+6. build and run
+7. cache and OS cache
+8. discovery and device selection/default-device behavior
+9. device version, dashboard, logs, telemetry, update
+10. device apps and volumes
+11. device hardware, camera, audio, Bluetooth, WiFi
+12. OS image download, install, list-drives, update
+13. auth and cloud-backed flows
+14. tour and utilities
 
-This order is for reviewer convenience only. It is not a statement that later
-areas are optional.
+This order is for focus and reviewability only. Later areas are not optional.
 
 ## Running tests
 
@@ -126,7 +208,7 @@ Use an explicit records directory while iterating:
 
 ```bash
 cd swift/WendyAgentE2ETests
-WENDY_AGENT_E2E_TEST_RECORDS_DIR="$PWD/.build/e2e-test-records.current" swift test
+WENDY_AGENT_E2E_TEST_RECORDS_DIR="$PWD/.build/e2e-test-records.current" swift test --filter WendyAgentE2ETests
 ```
 
 For focused work:
@@ -135,20 +217,18 @@ For focused work:
 swift test --filter '<suite-or-test-fragment>'
 ```
 
-Inspect the Markdown command records after each command family. The records are
-part of the feedback loop: they should show whether the implementation matches
-the spec or where it falls short.
+Inspect the Markdown command records after each command family. Records are part
+of the feedback loop: they should show whether the implementation matches the
+spec or where it falls short.
 
 ## Acceptance criteria
 
 This work is successful when:
 
-1. Every existing E2E stub contains executable spec assertions.
-2. No test passes only because its body is empty.
-3. Desired behavior is asserted even for features not implemented yet.
-4. Current `.unimplemented` Mac Agent responses are visible as gaps unless they
-   are the intentional product contract.
-5. Fixtures, fakes, gates, and helpers exist wherever needed to make the spec
-   verifiable.
-6. Command records provide clear evidence for both passing behavior and missing
-   implementation.
+1. The E2E harness runs out of the box on macOS and Ubuntu LTS.
+2. Each command area has reviewed disabled spec stubs before implementation.
+3. Implemented specs assert desired user-facing behavior, not accidental current behavior.
+4. No test passes only because its body is empty.
+5. Current `.unimplemented` agent responses are visible as gaps unless they are the intentional product contract.
+6. Fixtures, fakes, gates, and helpers exist wherever needed to make the spec verifiable.
+7. Command records provide clear evidence for both passing behavior and missing implementation.
