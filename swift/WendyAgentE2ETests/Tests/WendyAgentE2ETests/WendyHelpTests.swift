@@ -3,15 +3,15 @@ import WendyE2ETesting
 
 @Suite(.serialized)
 struct `'wendy help'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
     func `prints documentation for a top-level command`() async throws {
-        try await self.cli.run("./bin/wendy help device") { standardOutput, standardError in
+        try await self.cli.sh("./bin/wendy help device") { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Manage WendyOS devices"))
             #expect(standardOutput.contains("Device Management:"))
@@ -23,7 +23,9 @@ struct `'wendy help'` {
 
     @Test
     func `prints documentation for a nested command`() async throws {
-        try await self.cli.run("./bin/wendy help device wifi connect") { standardOutput, standardError in
+        try await self.cli.sh("./bin/wendy help device wifi connect") {
+            standardOutput,
+            standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Connect to a WiFi network"))
             #expect(standardOutput.contains("--ssid string"))
@@ -32,10 +34,12 @@ struct `'wendy help'` {
         }
     }
 
-    @Test(.disabled("TODO: one-by-one E2E run fails against current local fixtures/implementation."))
+    @Test(
+        .disabled("TODO: one-by-one E2E run fails against current local fixtures/implementation.")
+    )
     func `fails clearly for an unknown command`() async throws {
         // TODO: Re-enable after adding the required fixture or implementation; one-by-one E2E run currently fails.
-        let record = try await self.cli.run(
+        let record = try await self.cli.sh(
             "./bin/wendy help definitely-not-a-command",
             output: .string(limit: .max),
             error: .string(limit: .max)

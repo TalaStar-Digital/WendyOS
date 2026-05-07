@@ -1,12 +1,12 @@
 import Subprocess
 
-public struct MachineCommand: Sendable {
+public struct SessionCommand: Sendable {
     public enum PollCondition: Sendable {
         case success
         case failure
     }
 
-    public let machine: Machine
+    public let session: Session
     public let command: String
 
     public func poll(
@@ -14,12 +14,12 @@ public struct MachineCommand: Sendable {
         step: Duration = .milliseconds(250),
         timeout: Duration = .seconds(10),
         timeoutMessage: String? = nil
-    ) -> MachineCommand {
+    ) -> SessionCommand {
         precondition(step > .zero, "step must be greater than zero")
         precondition(timeout >= .zero, "timeout must be greater than or equal to zero")
 
-        return MachineCommand(
-            machine: self.machine,
+        return SessionCommand(
+            session: self.session,
             command: self.command,
             pollConfiguration: PollConfiguration(
                 condition: condition,
@@ -36,7 +36,7 @@ public struct MachineCommand: Sendable {
         line: Int = #line
     ) async throws {
         guard let pollConfiguration else {
-            try await self.machine.run(
+            try await self.session.sh(
                 self.command,
                 filePath: filePath,
                 function: function,
@@ -64,7 +64,7 @@ public struct MachineCommand: Sendable {
         body: @Sendable (_ standardOutput: String, _ standardError: String) async throws -> Result
     ) async throws -> Result {
         guard let pollConfiguration else {
-            return try await self.machine.run(
+            return try await self.session.sh(
                 self.command,
                 output: output,
                 error: error,
@@ -92,8 +92,8 @@ public struct MachineCommand: Sendable {
 
     // MARK: - Internal
 
-    init(machine: Machine, command: String) {
-        self.machine = machine
+    init(session: Session, command: String) {
+        self.session = session
         self.command = command
         self.pollConfiguration = nil
     }
@@ -103,11 +103,11 @@ public struct MachineCommand: Sendable {
     private let pollConfiguration: PollConfiguration?
 
     private init(
-        machine: Machine,
+        session: Session,
         command: String,
         pollConfiguration: PollConfiguration?
     ) {
-        self.machine = machine
+        self.session = session
         self.command = command
         self.pollConfiguration = pollConfiguration
     }
@@ -125,7 +125,7 @@ public struct MachineCommand: Sendable {
         var lastTerminationStatus: TerminationStatus?
 
         while true {
-            let record = try await self.machine.run(
+            let record = try await self.session.sh(
                 self.command,
                 output: output,
                 error: error,
@@ -142,7 +142,7 @@ public struct MachineCommand: Sendable {
             let elapsed = start.duration(to: clock.now)
             guard elapsed < configuration.timeout else {
                 throw MachineError.pollTimedOut(
-                    machine: self.machine.description,
+                    machine: self.session.description,
                     command: self.command,
                     condition: configuration.condition.description,
                     timeout: configuration.timeout,
@@ -158,7 +158,7 @@ public struct MachineCommand: Sendable {
 
 // MARK: - CustomStringConvertible
 
-extension MachineCommand.PollCondition: CustomStringConvertible {
+extension SessionCommand.PollCondition: CustomStringConvertible {
     public var description: String {
         switch self {
         case .success:
@@ -172,13 +172,13 @@ extension MachineCommand.PollCondition: CustomStringConvertible {
 // MARK: - Private
 
 private struct PollConfiguration: Sendable {
-    let condition: MachineCommand.PollCondition
+    let condition: SessionCommand.PollCondition
     let step: Duration
     let timeout: Duration
     let timeoutMessage: String?
 }
 
-extension MachineCommand.PollCondition {
+extension SessionCommand.PollCondition {
     fileprivate func matches(_ terminationStatus: TerminationStatus) -> Bool {
         switch self {
         case .success:

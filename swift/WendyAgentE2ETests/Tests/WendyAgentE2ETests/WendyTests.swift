@@ -3,15 +3,15 @@ import WendyE2ETesting
 
 @Suite(.serialized)
 struct `'wendy'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
     func `describes the top-level command groups`() async throws {
-        try await self.cli.run("./bin/wendy") { standardOutput, standardError in
+        try await self.cli.sh("./bin/wendy") { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Project Commands:"))
             #expect(standardOutput.contains("Manage Your Cloud:"))
@@ -26,7 +26,7 @@ struct `'wendy'` {
 
     @Test
     func `'--version' prints the CLI version`() async throws {
-        try await self.cli.run("./bin/wendy --version") { standardOutput, standardError in
+        try await self.cli.sh("./bin/wendy --version") { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains(/wendy version \S+/))
         }
@@ -42,17 +42,17 @@ struct `'wendy'` {
         // concerns. Replace this inline lifecycle management with a dedicated
         // DSL or something. This is good enough for the first draft.
 
-        let agent = try await Machine.agent()
+        let agent = try await Session.begin(for: .agent)
         try await Helper.withAsyncCleanup {
 
-            try await agent.run("make quit || true")
-            try await agent.run("open Build/WendyAgentMac.app")
+            try await agent.sh("make quit || true")
+            try await agent.sh("open Build/WendyAgentMac.app")
             try await agent
                 .command("nc -z 127.0.0.1 50051")
                 .poll(until: .success, timeoutMessage: "WendyAgentMac did not open port 50051")
                 .run()
 
-            try await self.cli.run("./bin/wendy --json --device 127.0.0.1 device version") {
+            try await self.cli.sh("./bin/wendy --json --device 127.0.0.1 device version") {
                 standardOutput,
                 standardError in
                 #expect(standardError.isEmpty)
@@ -66,7 +66,7 @@ struct `'wendy'` {
             }
 
         } cleanup: {
-            try await agent.run("make quit || true")
+            try await agent.sh("make quit || true")
         }
 
         // AI:
@@ -79,15 +79,15 @@ struct `'wendy'` {
 
 @Suite(.serialized)
 struct `'wendy info'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
     func `prints CLI and system details`() async throws {
-        try await self.cli.run("./bin/wendy --json=false info") { standardOutput, standardError in
+        try await self.cli.sh("./bin/wendy --json=false info") { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Wendy CLI"))
             #expect(standardOutput.contains(/Version:\s+\S+/))
@@ -103,7 +103,7 @@ struct `'wendy info'` {
 
     @Test
     func `'--json' formats CLI and system details as JSON`() async throws {
-        try await self.cli.run("./bin/wendy --json info") { standardOutput, standardError in
+        try await self.cli.sh("./bin/wendy --json info") { standardOutput, standardError in
             #expect(standardError.isEmpty)
 
             let object = try Helper.jsonObject(from: standardOutput)

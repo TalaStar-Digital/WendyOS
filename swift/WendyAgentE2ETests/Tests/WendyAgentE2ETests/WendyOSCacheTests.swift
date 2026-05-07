@@ -4,15 +4,15 @@ import WendyE2ETesting
 
 @Suite(.serialized)
 struct `'wendy os cache'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
     func `describes subcommands`() async throws {
-        try await self.cli.run("./bin/wendy os cache --help") { standardOutput, standardError in
+        try await self.cli.sh("./bin/wendy os cache --help") { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Manage cached OS images"))
             #expect(standardOutput.contains("clear"))
@@ -25,10 +25,10 @@ struct `'wendy os cache'` {
 
 @Suite(.serialized)
 struct `'wendy os cache clear'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
@@ -37,9 +37,14 @@ struct `'wendy os cache clear'` {
         defer { try? FileManager.default.removeItem(at: home) }
         let cache = home.appendingPathComponent("Library/Caches/wendy/os-images", isDirectory: true)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
-        try "image".write(to: cache.appendingPathComponent("raspberry-pi-5-1.0.0.img"), atomically: true, encoding: .utf8)
+        try "image".write(
+            to: cache.appendingPathComponent("raspberry-pi-5-1.0.0.img"),
+            atomically: true,
+            encoding: .utf8
+        )
 
-        try await self.cli.run("\(Helper.commandEnvironment(home: home)) ./bin/wendy os cache clear") { standardOutput, standardError in
+        try await self.cli.sh("\(Helper.commandEnvironment(home: home)) ./bin/wendy os cache clear")
+        { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput == "OS image cache cleared.\n")
         }
@@ -52,7 +57,8 @@ struct `'wendy os cache clear'` {
         let home = try Helper.temporaryDirectory(prefix: "wendy-os-cache-empty")
         defer { try? FileManager.default.removeItem(at: home) }
 
-        try await self.cli.run("\(Helper.commandEnvironment(home: home)) ./bin/wendy os cache list") { standardOutput, standardError in
+        try await self.cli.sh("\(Helper.commandEnvironment(home: home)) ./bin/wendy os cache list")
+        { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput == "No cached OS images.\n")
         }
@@ -63,10 +69,10 @@ struct `'wendy os cache clear'` {
 
 @Suite(.serialized)
 struct `'wendy os cache list'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
@@ -75,25 +81,38 @@ struct `'wendy os cache list'` {
         defer { try? FileManager.default.removeItem(at: home) }
         let cache = home.appendingPathComponent("Library/Caches/wendy/os-images", isDirectory: true)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
-        try "image".write(to: cache.appendingPathComponent("raspberry-pi-5-1.0.0.img"), atomically: true, encoding: .utf8)
+        try "image".write(
+            to: cache.appendingPathComponent("raspberry-pi-5-1.0.0.img"),
+            atomically: true,
+            encoding: .utf8
+        )
 
-        try await self.cli.run("\(Helper.commandEnvironment(home: home)) ./bin/wendy os cache list") { standardOutput, standardError in
+        try await self.cli.sh("\(Helper.commandEnvironment(home: home)) ./bin/wendy os cache list")
+        { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("raspberry-pi-5-1.0.0.img"))
             #expect(standardOutput.contains("Cache directory:"))
         }
     }
 
-    @Test(.disabled("TODO: one-by-one E2E run fails against current local fixtures/implementation."))
+    @Test(
+        .disabled("TODO: one-by-one E2E run fails against current local fixtures/implementation.")
+    )
     func `'--json' formats cached WendyOS images as JSON`() async throws {
         // TODO: Re-enable after adding the required fixture or implementation; one-by-one E2E run currently fails.
         let home = try Helper.temporaryDirectory(prefix: "wendy-os-cache-list-json")
         defer { try? FileManager.default.removeItem(at: home) }
         let cache = home.appendingPathComponent("Library/Caches/wendy/os-images", isDirectory: true)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
-        try "image".write(to: cache.appendingPathComponent("raspberry-pi-5-1.0.0.img"), atomically: true, encoding: .utf8)
+        try "image".write(
+            to: cache.appendingPathComponent("raspberry-pi-5-1.0.0.img"),
+            atomically: true,
+            encoding: .utf8
+        )
 
-        try await self.cli.run("\(Helper.commandEnvironment(home: home)) ./bin/wendy --json os cache list") { standardOutput, standardError in
+        try await self.cli.sh(
+            "\(Helper.commandEnvironment(home: home)) ./bin/wendy --json os cache list"
+        ) { standardOutput, standardError in
             #expect(standardError.isEmpty)
             let array = try Helper.jsonArray(from: standardOutput)
             let entry = try #require(array.first as? [String: Any])

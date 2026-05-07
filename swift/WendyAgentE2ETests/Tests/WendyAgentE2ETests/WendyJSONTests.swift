@@ -4,15 +4,15 @@ import WendyE2ETesting
 
 @Suite(.serialized)
 struct `'wendy json'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
     func `describes inspection subcommands`() async throws {
-        try await self.cli.run("./bin/wendy json --help") { standardOutput, standardError in
+        try await self.cli.sh("./bin/wendy json --help") { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Inspect and validate wendy.json"))
             #expect(standardOutput.contains("schema"))
@@ -25,10 +25,10 @@ struct `'wendy json'` {
 
 @Suite(.serialized)
 struct `'wendy json schema'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
@@ -39,7 +39,7 @@ struct `'wendy json schema'` {
             encoding: .utf8
         )
 
-        try await self.cli.run("./bin/wendy json schema") { standardOutput, standardError in
+        try await self.cli.sh("./bin/wendy json schema") { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput == expectedSchema + "\n")
 
@@ -64,10 +64,10 @@ struct `'wendy json schema'` {
 
 @Suite(.serialized)
 struct `'wendy json validate'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
@@ -90,7 +90,7 @@ struct `'wendy json validate'` {
             to: directory
         )
 
-        try await self.cli.run("./bin/wendy json validate \(Helper.shellQuote(file.path))") {
+        try await self.cli.sh("./bin/wendy json validate \(Helper.shellQuote(file.path))") {
             standardOutput,
             standardError in
             #expect(standardOutput == "wendy.json is valid.\n")
@@ -112,7 +112,7 @@ struct `'wendy json validate'` {
             to: directory
         )
 
-        let record = try await self.cli.run(
+        let record = try await self.cli.sh(
             "./bin/wendy json validate \(Helper.shellQuote(file.path))",
             output: .string(limit: .max),
             error: .string(limit: .max)

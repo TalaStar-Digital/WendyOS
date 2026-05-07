@@ -7,7 +7,7 @@ import Testing
 @Suite
 struct `machine` {
     @Test
-    func `creates SSH machine`() {
+    func `creates SSH machine metadata`() {
         let machine = Machine(
             name: "SSH",
             ssh: "ai@example.local",
@@ -17,16 +17,8 @@ struct `machine` {
         #expect(machine.name == "SSH")
         #expect(machine.ssh == "ai@example.local")
         #expect(machine.workingDirectory == "~/wendy-agent")
-        #expect(machine.verbose == false)
         #expect(machine.id == "ai@example.local:~/wendy-agent")
         #expect(machine.description == "ai@example.local:~/wendy-agent")
-    }
-
-    @Test
-    func `creates verbose machine`() {
-        let machine = Machine(name: "Local", verbose: true)
-
-        #expect(machine.verbose)
     }
 
     @Test
@@ -50,9 +42,26 @@ struct `machine` {
     }
 
     @Test
-    func `runs a simple command`() async throws {
-        let machine = Machine(name: "Local")
-        let record = try await machine.run(
+    func `declares known CLI machine`() {
+        #expect(Machine.cli.id == "cli")
+        #expect(Machine.cli.name == "CLI")
+        #expect(Machine.cli.tags == [.cli])
+    }
+
+    @Test
+    func `declares known agent machine`() {
+        #expect(Machine.agent.id == "agent")
+        #expect(Machine.agent.name == "Agent")
+        #expect(Machine.agent.tags == [.agent])
+    }
+}
+
+@Suite
+struct `session` {
+    @Test
+    func `runs a simple shell command`() async throws {
+        let session = try await Session.begin(for: Machine(name: "Local"))
+        let record = try await session.sh(
             "printf 'wendy-machine-smoke'",
             output: .string(limit: .max),
             error: .string(limit: .max)
@@ -64,26 +73,27 @@ struct `machine` {
     }
 
     @Test
-    func `runs local commands in working directory`() async throws {
+    func `runs local shell commands in working directory`() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("machine-local-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let machine = Machine(name: "Local", workingDirectory: directory.path)
-        try await machine.run("touch local.txt")
+        let session = try await Session.begin(for: machine)
+        try await session.sh("touch local.txt")
 
-        #expect(machine.ssh == nil)
-        #expect(machine.workingDirectory == directory.path)
-        #expect(machine.description == "local:\(directory.path)")
+        #expect(session.machine.ssh == nil)
+        #expect(session.machine.workingDirectory == directory.path)
+        #expect(session.description == "local:\(directory.path)")
         #expect(FileManager.default.fileExists(atPath: directory.path + "/local.txt"))
     }
 
     @Test
     func `runs commands over separate SSH invocations`() async throws {
-        try await Self.withFixtureMachine { machine, fixture in
-            try await machine.run("touch first.txt")
-            try await machine.run("touch second.txt")
+        try await Self.withFixtureSession { session, fixture in
+            try await session.sh("touch first.txt")
+            try await session.sh("touch second.txt")
 
             #expect(FileManager.default.fileExists(atPath: fixture.remoteRoot.path + "/first.txt"))
             #expect(FileManager.default.fileExists(atPath: fixture.remoteRoot.path + "/second.txt"))
@@ -93,8 +103,8 @@ struct `machine` {
 
     @Test
     func `collected output API matches swift-subprocess style`() async throws {
-        try await Self.withFixtureMachine { machine, _ in
-            let record = try await machine.run(
+        try await Self.withFixtureSession { session, _ in
+            let record = try await session.sh(
                 "printf 'hello'",
                 output: .string(limit: .max),
                 error: .string(limit: .max)
@@ -108,8 +118,8 @@ struct `machine` {
 
     @Test
     func `collected output callback receives command output`() async throws {
-        try await Self.withFixtureMachine { machine, _ in
-            try await machine.run("printf 'hello'; printf 'oops' >&2") {
+        try await Self.withFixtureSession { session, _ in
+            try await session.sh("printf 'hello'; printf 'oops' >&2") {
                 standardOutput,
                 standardError in
                 #expect(standardOutput == "hello")
@@ -120,10 +130,10 @@ struct `machine` {
     }
 
     @Test
-    func `simple run throws when the remote command exits non-zero`() async throws {
-        try await Self.withFixtureMachine { machine, _ in
+    func `simple shell command throws when the remote command exits non-zero`() async throws {
+        try await Self.withFixtureSession { session, _ in
             await #expect(throws: MachineError.self) {
-                try await machine.run("exit 7")
+                try await session.sh("exit 7")
             }
             return ()
         }
@@ -137,16 +147,17 @@ struct `machine` {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let machine = Machine(name: "Local", workingDirectory: directory.path)
-        try await machine.command("touch builder.txt").run()
+        let session = try await Session.begin(for: machine)
+        try await session.command("touch builder.txt").run()
 
         #expect(FileManager.default.fileExists(atPath: directory.path + "/builder.txt"))
     }
 
     @Test
     func `command builder callback receives command output`() async throws {
-        let machine = Machine(name: "Local")
+        let session = try await Session.begin(for: Machine(name: "Local"))
 
-        try await machine.command("printf 'hello'; printf 'oops' >&2").run {
+        try await session.command("printf 'hello'; printf 'oops' >&2").run {
             standardOutput,
             standardError in
             #expect(standardOutput == "hello")
@@ -162,7 +173,8 @@ struct `machine` {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let machine = Machine(name: "Local", workingDirectory: directory.path)
-        try await machine
+        let session = try await Session.begin(for: machine)
+        try await session
             .command(
                 """
                 count=$(cat counter.txt 2>/dev/null || echo 0)
@@ -189,7 +201,8 @@ struct `machine` {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let machine = Machine(name: "Local", workingDirectory: directory.path)
-        try await machine
+        let session = try await Session.begin(for: machine)
+        try await session
             .command(
                 """
                 count=$(cat counter.txt 2>/dev/null || echo 0)
@@ -209,10 +222,10 @@ struct `machine` {
 
     @Test
     func `poll throws timeout error with timeout message`() async throws {
-        let machine = Machine(name: "Local")
+        let session = try await Session.begin(for: Machine(name: "Local"))
 
         await #expect(throws: MachineError.self) {
-            try await machine
+            try await session
                 .command("exit 1")
                 .poll(
                     until: .success,
@@ -224,8 +237,16 @@ struct `machine` {
         }
     }
 
-    private static func withFixtureMachine<Result>(
-        _ body: (Machine, SSHFixture) async throws -> Result
+    @Test
+    func `with begins sessions and ends them after the body`() async throws {
+        try await Session.with(Machine(name: "Local"), Machine(name: "Local")) { first, second in
+            #expect(first.machine.name == "Local")
+            #expect(second.machine.name == "Local")
+        }
+    }
+
+    private static func withFixtureSession<Result>(
+        _ body: (Session, SSHFixture) async throws -> Result
     ) async throws -> Result {
         let fixture = try SSHFixture()
         let machine = Machine(
@@ -234,9 +255,10 @@ struct `machine` {
             workingDirectory: fixture.remoteRoot.path,
             sshExecutable: fixture.sshScript.path
         )
+        let session = try await Session.begin(for: machine)
 
         defer { fixture.remove() }
-        return try await body(machine, fixture)
+        return try await body(session, fixture)
     }
 }
 

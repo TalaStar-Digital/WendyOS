@@ -4,15 +4,17 @@ import WendyE2ETesting
 
 @Suite(.serialized)
 struct `'wendy project entitlements'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
     func `describes subcommands`() async throws {
-        try await self.cli.run("./bin/wendy project entitlements --help") { standardOutput, standardError in
+        try await self.cli.sh("./bin/wendy project entitlements --help") {
+            standardOutput,
+            standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Manage project entitlements"))
             #expect(standardOutput.contains("add"))
@@ -26,23 +28,30 @@ struct `'wendy project entitlements'` {
 
 @Suite(.serialized)
 struct `'wendy project entitlements list'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
-    @Test(.disabled("TODO: one-by-one E2E run fails against current local fixtures/implementation."))
+    @Test(
+        .disabled("TODO: one-by-one E2E run fails against current local fixtures/implementation.")
+    )
     func `lists configured entitlements`() async throws {
         // TODO: Re-enable after adding the required fixture or implementation; one-by-one E2E run currently fails.
         let directory = try Helper.temporaryDirectory(prefix: "wendy-entitlements-list")
         defer { try? FileManager.default.removeItem(at: directory) }
         try Helper.writeWendyJSON(
-            Helper.wendyJSONContents(appId: "sh.wendy.e2e.entitlements", entitlements: "{ \"type\": \"network\" },\n    { \"type\": \"gpu\" }"),
+            Helper.wendyJSONContents(
+                appId: "sh.wendy.e2e.entitlements",
+                entitlements: "{ \"type\": \"network\" },\n    { \"type\": \"gpu\" }"
+            ),
             to: directory
         )
 
-        try await self.cli.run("cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements list") { standardOutput, standardError in
+        try await self.cli.sh(
+            "cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements list"
+        ) { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Project entitlements:"))
             #expect(standardOutput.contains("network"))
@@ -50,31 +59,48 @@ struct `'wendy project entitlements list'` {
         }
     }
 
-    @Test(.disabled("TODO: one-by-one E2E run fails against current local fixtures/implementation."))
+    @Test(
+        .disabled("TODO: one-by-one E2E run fails against current local fixtures/implementation.")
+    )
     func `reports when no entitlements are configured`() async throws {
         // TODO: Re-enable after adding the required fixture or implementation; one-by-one E2E run currently fails.
         let directory = try Helper.temporaryDirectory(prefix: "wendy-entitlements-empty")
         defer { try? FileManager.default.removeItem(at: directory) }
-        try Helper.writeWendyJSON(Helper.wendyJSONContents(appId: "sh.wendy.e2e.empty", entitlements: ""), to: directory)
+        try Helper.writeWendyJSON(
+            Helper.wendyJSONContents(appId: "sh.wendy.e2e.empty", entitlements: ""),
+            to: directory
+        )
 
-        try await self.cli.run("cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements list") { standardOutput, standardError in
+        try await self.cli.sh(
+            "cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements list"
+        ) { standardOutput, standardError in
             #expect(standardError.isEmpty)
-            #expect(standardOutput.contains("No entitlements") || standardOutput.contains("Project entitlements:"))
+            #expect(
+                standardOutput.contains("No entitlements")
+                    || standardOutput.contains("Project entitlements:")
+            )
             #expect(!standardOutput.contains("gpu"))
         }
     }
 
-    @Test(.disabled("TODO: one-by-one E2E run fails against current local fixtures/implementation."))
+    @Test(
+        .disabled("TODO: one-by-one E2E run fails against current local fixtures/implementation.")
+    )
     func `'--show-all' shows all available entitlement types`() async throws {
         // TODO: Re-enable after adding the required fixture or implementation; one-by-one E2E run currently fails.
         let directory = try Helper.temporaryDirectory(prefix: "wendy-entitlements-all")
         defer { try? FileManager.default.removeItem(at: directory) }
         try Helper.writeWendyJSON(Helper.wendyJSONContents(), to: directory)
 
-        try await self.cli.run("cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements list --show-all") { standardOutput, standardError in
+        try await self.cli.sh(
+            "cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements list --show-all"
+        ) { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Available entitlement types:"))
-            for entitlement in ["network", "bluetooth", "video", "gpu", "persist", "audio", "camera", "usb", "i2c", "gpio", "spi", "input"] {
+            for entitlement in [
+                "network", "bluetooth", "video", "gpu", "persist", "audio", "camera", "usb", "i2c",
+                "gpio", "spi", "input",
+            ] {
                 #expect(standardOutput.contains(entitlement))
             }
         }
@@ -85,10 +111,10 @@ struct `'wendy project entitlements list'` {
 
 @Suite(.serialized)
 struct `'wendy project entitlements add'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
@@ -97,7 +123,9 @@ struct `'wendy project entitlements add'` {
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = try Helper.writeWendyJSON(Helper.wendyJSONContents(), to: directory)
 
-        try await self.cli.run("cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements add audio") { standardOutput, standardError in
+        try await self.cli.sh(
+            "cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements add audio"
+        ) { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Added"))
             #expect(standardOutput.contains("audio"))
@@ -115,7 +143,7 @@ struct `'wendy project entitlements add'` {
         let file = try Helper.writeWendyJSON(Helper.wendyJSONContents(), to: directory)
         let before = try String(contentsOf: file, encoding: .utf8)
 
-        let record = try await self.cli.run(
+        let record = try await self.cli.sh(
             "cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements add definitely-not-real",
             output: .string(limit: .max),
             error: .string(limit: .max)
@@ -132,7 +160,7 @@ struct `'wendy project entitlements add'` {
         defer { try? FileManager.default.removeItem(at: directory) }
         try Helper.writeWendyJSON(Helper.wendyJSONContents(), to: directory)
 
-        let record = try await self.cli.run(
+        let record = try await self.cli.sh(
             "cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements add network",
             output: .string(limit: .max),
             error: .string(limit: .max)
@@ -140,7 +168,10 @@ struct `'wendy project entitlements add'` {
 
         #expect(!record.terminationStatus.isSuccess)
         #expect(record.standardError?.contains("network") == true)
-        #expect(record.standardError?.contains("already") == true || record.standardError?.contains("exists") == true)
+        #expect(
+            record.standardError?.contains("already") == true
+                || record.standardError?.contains("exists") == true
+        )
     }
 }
 
@@ -148,10 +179,10 @@ struct `'wendy project entitlements add'` {
 
 @Suite(.serialized)
 struct `'wendy project entitlements remove'` {
-    var cli: Machine
+    var cli: Session
 
     init() async throws {
-        self.cli = try await Machine.cli()
+        self.cli = try await Session.begin(for: .cli)
     }
 
     @Test
@@ -159,11 +190,15 @@ struct `'wendy project entitlements remove'` {
         let directory = try Helper.temporaryDirectory(prefix: "wendy-entitlements-remove")
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = try Helper.writeWendyJSON(
-            Helper.wendyJSONContents(entitlements: "{ \"type\": \"network\" },\n    { \"type\": \"gpu\" }"),
+            Helper.wendyJSONContents(
+                entitlements: "{ \"type\": \"network\" },\n    { \"type\": \"gpu\" }"
+            ),
             to: directory
         )
 
-        try await self.cli.run("cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements remove gpu") { standardOutput, standardError in
+        try await self.cli.sh(
+            "cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements remove gpu"
+        ) { standardOutput, standardError in
             #expect(standardError.isEmpty)
             #expect(standardOutput.contains("Removed"))
             #expect(standardOutput.contains("gpu"))
@@ -181,7 +216,7 @@ struct `'wendy project entitlements remove'` {
         defer { try? FileManager.default.removeItem(at: directory) }
         try Helper.writeWendyJSON(Helper.wendyJSONContents(), to: directory)
 
-        let record = try await self.cli.run(
+        let record = try await self.cli.sh(
             "cd \(Helper.shellQuote(directory.path)) && WENDY_ANALYTICS=false \(Helper.shellQuote(Helper.repositoryRootDirectoryURL().appendingPathComponent("go/bin/wendy").path)) project entitlements remove audio",
             output: .string(limit: .max),
             error: .string(limit: .max)
@@ -189,6 +224,9 @@ struct `'wendy project entitlements remove'` {
 
         #expect(!record.terminationStatus.isSuccess)
         #expect(record.standardError?.contains("audio") == true)
-        #expect(record.standardError?.contains("not found") == true || record.standardError?.contains("not configured") == true)
+        #expect(
+            record.standardError?.contains("not found") == true
+                || record.standardError?.contains("not configured") == true
+        )
     }
 }
