@@ -361,26 +361,35 @@ func (c *Client) readEntitlementsFromManifest(ctx context.Context, image contain
 		return nil, fmt.Errorf("parsing manifest: %w", err)
 	}
 
-	sig := manifest.Annotations[certs.AnnotationSignature]
-	certPEM := manifest.Annotations[certs.AnnotationSignatureCert]
-	hasEntitlementAnnotations := len(certs.EntitlementAnnotationPayload(manifest.Annotations)) > 0
+	if err := checkManifestSignature(manifest.Annotations, c.isEnrolled != nil && c.isEnrolled()); err != nil {
+		return nil, err
+	}
+	if sig := manifest.Annotations[certs.AnnotationSignature]; sig != "" {
+		c.logger.Info("Entitlement annotations verified")
+	}
+	return parseEntitlementsFromAnnotations(manifest.Annotations), nil
+}
+
+// checkManifestSignature verifies the sh.wendy/signature annotation if present,
+// and rejects unsigned images on enrolled devices.
+func checkManifestSignature(annotations map[string]string, enrolled bool) error {
+	sig := annotations[certs.AnnotationSignature]
+	certPEM := annotations[certs.AnnotationSignatureCert]
 	if sig != "" && certPEM != "" {
 		cert, parseErr := certs.ParseLeafCertificate(certPEM)
 		if parseErr != nil {
-			return nil, fmt.Errorf("parsing signature certificate: %w", parseErr)
+			return fmt.Errorf("parsing signature certificate: %w", parseErr)
 		}
-		payload := certs.EntitlementAnnotationPayload(manifest.Annotations)
+		payload := certs.EntitlementAnnotationPayload(annotations)
 		if verifyErr := certs.VerifyBytes(payload, sig, cert); verifyErr != nil {
-			return nil, fmt.Errorf("entitlement signature verification failed: %w", verifyErr)
+			return fmt.Errorf("entitlement signature verification failed: %w", verifyErr)
 		}
-		c.logger.Info("Entitlement annotations verified")
-	} else if hasEntitlementAnnotations && c.isEnrolled != nil && c.isEnrolled() {
-		// Enrolled devices require signed entitlement annotations to prevent privilege
-		// escalation via externally-injected or tampered annotation maps.
-		return nil, fmt.Errorf("device is enrolled but entitlement annotations are unsigned")
+		return nil
 	}
-
-	return parseEntitlementsFromAnnotations(manifest.Annotations), nil
+	if enrolled {
+		return fmt.Errorf("device is enrolled but container image is unsigned")
+	}
+	return nil
 }
 
 func toCreateContainerProgress(progress UnpackProgress) *agentpb.CreateContainerProgress {

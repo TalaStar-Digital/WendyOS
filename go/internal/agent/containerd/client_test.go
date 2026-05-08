@@ -1,15 +1,57 @@
 package containerd
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
+	"github.com/wendylabsinc/wendy/internal/shared/certs"
 	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+// makeTestKeyAndCertPEM generates a throw-away EC P-256 key and self-signed cert
+// for use in signature tests.
+func makeTestKeyAndCertPEM(t *testing.T) (*ecdsa.PrivateKey, string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	return key, certPEM
+}
+
+// signAnnotations adds sh.wendy/signature and sh.wendy/signature.cert to annotations.
+func signAnnotations(t *testing.T, annotations map[string]string, key *ecdsa.PrivateKey, certPEM string) {
+	t.Helper()
+	payload := certs.EntitlementAnnotationPayload(annotations)
+	sig, err := certs.SignBytes(payload, key)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	annotations[certs.AnnotationSignature] = sig
+	annotations[certs.AnnotationSignatureCert] = certPEM
+}
 
 func TestCreateContainerProgressMappingUsesApplyPhase(t *testing.T) {
 	progress := UnpackProgress{
@@ -349,3 +391,132 @@ func TestLayerMediaType_GzipDefault_GzipFalse(t *testing.T) {
 		t.Errorf("layerMediaType(GZIP, false) = %q; want %q", got, want)
 	}
 }
+
+func TestCheckManifestSignature(t *testing.T) {
+	key, certPEM := makeTestKeyAndCertPEM(t)
+	otherKey, _ := makeTestKeyAndCertPEM(t) // different key, same cert issuer
+
+	entitlementAnnotations := func() map[string]string {
+		return map[string]string{
+			"sh.wendy/entitlement.bluetooth": `{}`,
+		}
+	}
+
+	tests := []struct {
+		name     string
+		annots   func() map[string]string
+		enrolled bool
+		wantErr  string
+	}{
+		{
+			name:     "no annotations, not enrolled",
+			annots:   func() map[string]string { return nil },
+			enrolled: false,
+		},
+		{
+			name:     "no annotations, enrolled",
+			annots:   func() map[string]string { return nil },
+			enrolled: true,
+			wantErr:  "unsigned",
+		},
+		{
+			name: "valid signature, not enrolled",
+			annots: func() map[string]string {
+				a := entitlementAnnotations()
+				signAnnotations(t, a, key, certPEM)
+				return a
+			},
+			enrolled: false,
+		},
+		{
+			name: "valid signature, enrolled",
+			annots: func() map[string]string {
+				a := entitlementAnnotations()
+				signAnnotations(t, a, key, certPEM)
+				return a
+			},
+			enrolled: true,
+		},
+		{
+			name: "valid signature on empty entitlements, enrolled",
+			annots: func() map[string]string {
+				a := map[string]string{}
+				signAnnotations(t, a, key, certPEM)
+				return a
+			},
+			enrolled: true,
+		},
+		{
+			name: "corrupt signature, not enrolled",
+			annots: func() map[string]string {
+				a := entitlementAnnotations()
+				signAnnotations(t, a, key, certPEM)
+				a[certs.AnnotationSignature] = "AAAA" // corrupt
+				return a
+			},
+			enrolled: false,
+			wantErr:  "verification failed",
+		},
+		{
+			name: "corrupt signature, enrolled",
+			annots: func() map[string]string {
+				a := entitlementAnnotations()
+				signAnnotations(t, a, key, certPEM)
+				a[certs.AnnotationSignature] = "AAAA" // corrupt
+				return a
+			},
+			enrolled: true,
+			wantErr:  "verification failed",
+		},
+		{
+			name: "tampered entitlement after signing, enrolled",
+			annots: func() map[string]string {
+				a := entitlementAnnotations()
+				signAnnotations(t, a, key, certPEM)
+				a["sh.wendy/entitlement.bluetooth"] = `{"port":9999}` // tamper
+				return a
+			},
+			enrolled: true,
+			wantErr:  "verification failed",
+		},
+		{
+			name: "signature by wrong key, enrolled",
+			annots: func() map[string]string {
+				a := entitlementAnnotations()
+				signAnnotations(t, a, otherKey, certPEM) // signed by different key
+				return a
+			},
+			enrolled: true,
+			wantErr:  "verification failed",
+		},
+		{
+			name: "sig present but cert missing, enrolled",
+			annots: func() map[string]string {
+				a := entitlementAnnotations()
+				signAnnotations(t, a, key, certPEM)
+				delete(a, certs.AnnotationSignatureCert) // strip cert
+				return a
+			},
+			enrolled: true,
+			wantErr:  "unsigned",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkManifestSignature(tc.annots(), tc.enrolled)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tc.wantErr)
+				} else if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("error %q does not contain %q", err.Error(), tc.wantErr)
+				}
+			}
+		})
+	}
+}
+

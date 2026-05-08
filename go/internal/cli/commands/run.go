@@ -741,8 +741,10 @@ func runSwiftWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cw
 	}
 	cliLogln("Build and push completed.")
 
-	if len(appCfg.Entitlements) > 0 {
-		if err := annotateManifestWithEntitlements(ctx, registryAddr, strings.ToLower(product), "latest", appCfg.Entitlements, conn.IsMTLS); err != nil {
+	if len(appCfg.Entitlements) > 0 || conn.IsMTLS {
+		// registryAddr is always 127.0.0.1:PORT from resolveRegistryForSwiftAgent;
+		// the proxy handles mTLS so we use plain HTTP here.
+		if err := annotateManifestWithEntitlements(ctx, registryAddr, strings.ToLower(product), "latest", appCfg.Entitlements, false); err != nil {
 			cliLogln("Warning: could not annotate image manifest with entitlements: %v", err)
 		}
 	}
@@ -1200,10 +1202,21 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	}
 	cliLogln("Build and push completed.")
 
-	if len(appCfg.Entitlements) > 0 {
-		hostAddr := cliRegistryAddr(registryAddr)
-		if err := annotateManifestWithEntitlements(ctx, hostAddr, repo, "latest", appCfg.Entitlements, conn.IsMTLS); err != nil {
-			cliLogln("Warning: could not annotate image manifest with entitlements: %v", err)
+	if len(appCfg.Entitlements) > 0 || conn.IsMTLS {
+		// Resolve an annotation-specific address using the Swift-style resolver,
+		// which starts an mTLS-wrapping proxy for provisioned LAN devices. The
+		// buildx proxy (registryAddr) is plain TCP and cannot perform the TLS
+		// handshake the device registry expects; the Swift resolver handles that.
+		annotationAddr, annotationCleanup, annotResolveErr := resolveRegistryForSwiftAgent(ctx, conn, regPort)
+		if annotResolveErr != nil {
+			cliLogln("Warning: could not resolve registry for annotation: %v", annotResolveErr)
+		} else {
+			defer annotationCleanup()
+			// useMTLS=false: annotationAddr is always a plain-HTTP loopback address;
+			// the proxy (started above) handles mTLS on our behalf.
+			if err := annotateManifestWithEntitlements(ctx, annotationAddr, repo, "latest", appCfg.Entitlements, false); err != nil {
+				cliLogln("Warning: could not annotate image manifest with entitlements: %v", err)
+			}
 		}
 	}
 

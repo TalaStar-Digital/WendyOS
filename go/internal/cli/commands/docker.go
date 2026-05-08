@@ -1795,9 +1795,10 @@ const ociEntitlementAnnotationPrefix = "sh.wendy/entitlement."
 
 // mediaType constants for Docker v2, OCI image manifests, and OCI image indexes.
 const (
-	mediaTypeDockerManifestV2 = "application/vnd.docker.distribution.manifest.v2+json"
-	mediaTypeOCIManifestV1    = "application/vnd.oci.image.manifest.v1+json"
-	mediaTypeOCIIndexV1       = "application/vnd.oci.image.index.v1+json"
+	mediaTypeDockerManifestV2    = "application/vnd.docker.distribution.manifest.v2+json"
+	mediaTypeDockerManifestListV2 = "application/vnd.docker.distribution.manifest.list.v2+json"
+	mediaTypeOCIManifestV1       = "application/vnd.oci.image.manifest.v1+json"
+	mediaTypeOCIIndexV1          = "application/vnd.oci.image.index.v1+json"
 )
 
 // cliRegistryAddr converts a Docker-buildx-accessible registry address to one
@@ -1856,10 +1857,6 @@ func registryHTTPClient(useMTLS bool) (*http.Client, error) {
 // scheme: each entitlement type gets its own key, and the value is the JSON
 // of the entitlement object (minus the redundant "type" field).
 func annotateManifestWithEntitlements(ctx context.Context, registryAddr, repo, tag string, entitlements []appconfig.Entitlement, useMTLS bool) error {
-	if len(entitlements) == 0 {
-		return nil
-	}
-
 	// Loopback addresses are always our own local proxies that speak plain HTTP;
 	// the proxy handles TLS on our behalf. Only use HTTPS when talking directly
 	// to a provisioned device at a non-loopback address.
@@ -1884,6 +1881,8 @@ func annotateManifestWithEntitlements(ctx context.Context, registryAddr, repo, t
 		return err
 	}
 	getReq.Header.Set("Accept", strings.Join([]string{
+		mediaTypeOCIIndexV1,
+		mediaTypeDockerManifestListV2,
 		mediaTypeOCIManifestV1,
 		mediaTypeDockerManifestV2,
 	}, ", "))
@@ -2009,10 +2008,16 @@ func injectManifestAnnotations(manifestBytes []byte, contentType string, annotat
 	}
 
 	outputType := actualType
-	if strings.Contains(actualType, "vnd.docker.distribution.manifest.v2") {
-		// Promote Docker v2 → OCI manifest so the annotations field is valid.
+	switch {
+	case strings.Contains(actualType, "vnd.docker.distribution.manifest.v2+json"):
+		// Promote Docker v2 single manifest → OCI manifest so annotations are valid.
 		outputType = mediaTypeOCIManifestV1
 		mtBytes, _ := json.Marshal(mediaTypeOCIManifestV1)
+		m["mediaType"] = mtBytes
+	case strings.Contains(actualType, "vnd.docker.distribution.manifest.list.v2"):
+		// Promote Docker manifest list → OCI index so annotations are valid.
+		outputType = mediaTypeOCIIndexV1
+		mtBytes, _ := json.Marshal(mediaTypeOCIIndexV1)
 		m["mediaType"] = mtBytes
 	}
 	// OCI manifest and OCI index both natively support annotations; no rewrite needed.
