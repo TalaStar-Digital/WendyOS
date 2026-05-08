@@ -88,6 +88,22 @@ struct `'wendy device info'` {
         // - allows selecting another device
     }
 
+    /**
+     Cancels cleanly from interactive device selection.
+
+     Cancelling the picker leaves the user's saved device configuration unchanged and produces no device information summary.
+     */
+    @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+    func `cancels cleanly from the device picker`() async throws {
+        // Given: no --device value and no configured default device
+        // And: the command opens the interactive device picker
+        // When: the user cancels the picker
+        // Then:
+        // - exits as a user cancellation
+        // - prints no device information summary
+        // - does not mutate device configuration
+    }
+
     // MARK: - Printing Output
 
     /**
@@ -141,6 +157,24 @@ struct `'wendy device info'` {
         // - opens no TUI
     }
 
+    // MARK: - Handling Configuration Errors
+
+    /**
+     Reports invalid CLI configuration before selecting a device.
+
+     Device selection depends on the user's Wendy CLI configuration. If that configuration cannot be parsed, the command reports the configuration problem instead of opening the picker or contacting an agent.
+     */
+    @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+    func `reports invalid CLI configuration before selecting a device`() async throws {
+        // Given: the Wendy CLI configuration file contains invalid JSON
+        // When: `wendy device info --device <device>` is run
+        // Then:
+        // - exits unsuccessfully
+        // - prints a configuration parsing diagnostic
+        // - does not open the device picker
+        // - does not contact the selected device
+    }
+
     // MARK: - Handling Missing or Unreachable Devices
 
     /**
@@ -172,6 +206,21 @@ struct `'wendy device info'` {
         // - exits unsuccessfully
         // - prints a connection diagnostic
         // - opens no picker
+    }
+
+    /**
+     Reports unsupported selected targets.
+
+     Some discovered devices do not expose the Wendy agent information API. Selecting one of those devices produces a clear unsupported-target diagnostic instead of a partial information summary.
+     */
+    @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+    func `reports an unsupported selected target`() async throws {
+        // Given: the selected target does not support `wendy device info`
+        // When: `wendy device info` attempts to query that target
+        // Then:
+        // - exits unsuccessfully
+        // - prints an unsupported-target diagnostic
+        // - prints no partial device information summary
     }
 
     // MARK: - Checking for Updates
@@ -220,6 +269,22 @@ struct `'wendy device info'` {
         // - checks the prerelease channel
         // - reports update status for that channel
     }
+
+    /**
+     Reports update-source failures.
+
+     Update checks depend on the release source being reachable and returning a valid response. If the release source fails, the command reports the update-check failure rather than inventing an update status.
+     */
+    @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+    func `'--check-updates' reports update-source failure`() async throws {
+        // Given: a reachable Wendy agent
+        // And: the update source is unavailable or returns invalid data
+        // When: `wendy device info --device <device> --check-updates` is run
+        // Then:
+        // - exits unsuccessfully
+        // - prints an update-check diagnostic
+        // - does not report a misleading up-to-date or update-available status
+    }
 }
 
 /// Deprecated compatibility alias for `wendy device info`.
@@ -243,5 +308,21 @@ struct `'wendy device version'` {
         // - prints the same semantic information as `wendy device info`
         // - reports that `wendy device version` is deprecated
         // - points to `wendy device info`
+    }
+
+    /**
+     Preserves JSON output for existing automation.
+
+     The deprecated command keeps stdout machine-readable in JSON mode. Deprecation guidance is kept out of the JSON payload so existing scripts can continue parsing the response.
+     */
+    @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+    func `'--json' aliases device info without contaminating JSON output`() async throws {
+        // Given: a reachable Wendy agent
+        // When: `wendy --json device version --device <device>` is run
+        // Then:
+        // - exits successfully
+        // - emits the same JSON object as `wendy --json device info --device <device>`
+        // - does not print deprecation text to stdout
+        // - keeps any deprecation guidance outside the JSON payload
     }
 }
