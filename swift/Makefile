@@ -4,7 +4,7 @@ SHELL := /bin/bash
 
 SWIFT_FORMAT_TARGETS := WendyAgentCore/Sources WendyAgentCore/Tests WendyAgentMac/Sources WendyE2ETests/Sources WendyE2ETests/Tests
 
-.PHONY: help format lint test test-e2e proto build build-dev run reset-mac-app-settings reset-mac-app-tcc reset-mac-app quit clean
+.PHONY: help format lint test test-e2e reference proto build build-dev run reset-mac-app-settings reset-mac-app-tcc reset-mac-app quit clean
 
 help: ## Show this help message
 	@echo 'Usage:'
@@ -24,6 +24,10 @@ test: ## Run Swift package tests
 
 test-e2e: ## Run Swift E2E tests and package command records
 	bash ./Scripts/TestE2E.sh
+
+reference: ## Generate Swift E2E reference documentation
+	mkdir -p Build/Reference
+	cd WendyE2ETests && swift run swift-e2e-testing reference Tests/WendyE2ETests > ../Build/Reference/reference.md
 
 proto: ## Generate Swift gRPC code from Proto/
 	./Scripts/GenerateProto.sh

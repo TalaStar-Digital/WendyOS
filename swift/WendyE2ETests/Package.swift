@@ -14,6 +14,7 @@ let package = Package(
     ],
     products: [
         .library(name: "WendyE2ETesting", targets: ["WendyE2ETesting"]),
+        .executable(name: "swift-e2e-testing", targets: ["SwiftE2ETestingCLI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "0.4.0"),
@@ -30,6 +31,12 @@ let package = Package(
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
             ],
             path: "Sources/WendyE2ETesting",
+            swiftSettings: swiftSettings
+        ),
+        .executableTarget(
+            name: "SwiftE2ETestingCLI",
+            dependencies: ["WendyE2ETesting"],
+            path: "Sources/SwiftE2ETestingCLI",
             swiftSettings: swiftSettings
         ),
         .testTarget(
