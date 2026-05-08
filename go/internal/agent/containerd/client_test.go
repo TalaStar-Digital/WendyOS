@@ -461,8 +461,8 @@ func TestCheckManifestSignature(t *testing.T) {
 	tests := []struct {
 		name           string
 		annots         func() map[string]string
-		contentDigests []string    // digests used when signing and verifying
-		checkDigests   []string    // if non-nil, overrides contentDigests at verify time
+		contentDigests []string       // digests used when signing and verifying
+		checkDigests   []string       // if non-nil, overrides contentDigests at verify time
 		trustedPool    *x509.CertPool // nil = unenrolled
 		orgID          int32
 		wantErr        string
@@ -730,8 +730,8 @@ func TestCertOrgID(t *testing.T) {
 		{"wendy/1/42", 1},
 		{"wendy/2/99", 2},
 		{"sh/wendy/7/3", 7},
-		{"wendy/user/alice", 0},  // user cert — no numeric org
-		{"wendy/user/123", 0},    // user ID happens to be numeric but prefix is "user"
+		{"wendy/user/alice", 0}, // user cert — no numeric org
+		{"wendy/user/123", 0},   // user ID happens to be numeric but prefix is "user"
 		{"unrelated-cn", 0},
 		{"", 0},
 	}
