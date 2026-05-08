@@ -1852,6 +1852,7 @@ func manifestContentDigests(manifestBytes []byte) []string {
 	return digests
 }
 
+
 // annotateManifestWithEntitlements fetches the OCI image manifest at
 // registryAddr/repo:tag, adds sh.wendy/entitlement.* annotations for each
 // entitlement from the app config, and re-pushes the annotated manifest under
@@ -1863,6 +1864,10 @@ func manifestContentDigests(manifestBytes []byte) []string {
 // scheme: each entitlement type gets its own key, and the value is the JSON
 // of the entitlement object (minus the redundant "type" field).
 func annotateManifestWithEntitlements(ctx context.Context, registryAddr, repo, tag string, entitlements []appconfig.Entitlement, useMTLS bool) error {
+	if len(entitlements) == 0 {
+		return nil
+	}
+
 	// Loopback addresses are always our own local proxies that speak plain HTTP;
 	// the proxy handles TLS on our behalf. Only use HTTPS when talking directly
 	// to a provisioned device at a non-loopback address.
