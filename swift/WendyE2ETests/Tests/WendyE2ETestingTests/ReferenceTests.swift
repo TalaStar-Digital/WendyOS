@@ -68,33 +68,6 @@ struct `reference documentation extraction` {
     }
 
     @Test
-    func `extracts given when then requirements`() throws {
-        let entry = try #require(
-            Reference.parseSource(Self.fixtureSource).first?.sections.first?.entries.first
-        )
-
-        #expect(
-            entry.requirements.given == [
-                "a reachable Wendy agent address",
-                "the CLI has an isolated HOME",
-            ]
-        )
-        #expect(
-            entry.requirements.when == [
-                "`wendy device info --device <device>` is run"
-            ]
-        )
-        #expect(
-            entry.requirements.then == [
-                "exits successfully",
-                "connects to the selected device",
-                "does not open the device picker",
-                "prints device information",
-            ]
-        )
-    }
-
-    @Test
     func `parses multiple suites in one source file`() throws {
         let documents = Reference.parseSource(Self.fixtureSource)
 
@@ -118,21 +91,20 @@ struct `reference documentation extraction` {
     }
 
     @Test
-    func `renders reference markdown without requirements or metadata`() throws {
+    func `renders reference markdown without metadata`() throws {
         let document = try #require(Reference.parseSource(Self.fixtureSource).first)
         let markdown = Reference.renderMarkdown(document, options: .reference)
 
         #expect(markdown.contains("# `wendy device info`"))
         #expect(markdown.contains("## Selecting Devices"))
-        #expect(markdown.contains("### `--device` selects an explicit device"))
+        #expect(markdown.contains("### `wendy device info --device` selects an explicit device"))
         #expect(markdown.contains("Selects a device explicitly with `--device`."))
-        #expect(!markdown.contains("#### Requirements"))
         #expect(!markdown.contains("_disabled"))
         #expect(!markdown.contains("<memory>:"))
     }
 
     @Test
-    func `renders spec review markdown with requirements and metadata`() throws {
+    func `renders spec review markdown with metadata`() throws {
         let document = try #require(
             Reference.parseSource(Self.fixtureSource, path: "DeviceInfoTests.swift").first
         )
@@ -140,14 +112,7 @@ struct `reference documentation extraction` {
 
         #expect(markdown.contains("_`DeviceInfoTests.swift:9`_"))
         #expect(markdown.contains("_disabled · `DeviceInfoTests.swift:18`_"))
-        #expect(markdown.contains("_enabled · `DeviceInfoTests.swift:46`_"))
-        #expect(markdown.contains("#### Requirements"))
-        #expect(markdown.contains("**Given**"))
-        #expect(markdown.contains("- a reachable Wendy agent address"))
-        #expect(markdown.contains("**When**"))
-        #expect(markdown.contains("- `wendy device info --device <device>` is run"))
-        #expect(markdown.contains("**Then**"))
-        #expect(markdown.contains("- prints device information"))
+        #expect(markdown.contains("_enabled · `DeviceInfoTests.swift:36`_"))
     }
 
     @Test
@@ -200,11 +165,10 @@ struct `reference documentation extraction` {
         #expect(html.contains("<h2 id=\"selecting-devices\">Selecting Devices</h2>"))
         #expect(
             html.contains(
-                "<h3 id=\"device-selects-an-explicit-device\"><code>--device</code> selects an explicit device</h3>"
+                "<h3 id=\"wendy-device-info-device-selects-an-explicit-device\"><code>wendy device info --device</code> selects an explicit device</h3>"
             )
         )
         #expect(html.contains("Selects a device explicitly with <code>--device</code>."))
-        #expect(!html.contains("<h4>Requirements</h4>"))
     }
 
     @Test
@@ -233,21 +197,20 @@ struct `reference documentation extraction` {
         #expect(try Self.jsonValue(from: json) is [[String: Any]])
         #expect(json.contains("\"title\" : \"`wendy device info`\""))
         #expect(json.contains("\"sections\" : ["))
-        #expect(!json.contains("\"requirements\""))
+        #expect(
+            json.contains("\"title\" : \"`wendy device info --device` selects an explicit device\"")
+        )
         #expect(!json.contains("\"sourceLocation\""))
         #expect(!json.contains("\"isDisabled\""))
     }
 
     @Test
-    func `renders spec review json with requirements and metadata`() throws {
+    func `renders spec review json with metadata`() throws {
         let document = try #require(Reference.parseSource(Self.fixtureSource).first)
         let json = try Reference.renderJSON(document, options: .specReview)
 
-        #expect(json.contains("\"requirements\""))
         #expect(json.contains("\"sourceLocation\""))
         #expect(json.contains("\"isDisabled\" : true"))
-        #expect(json.contains("\"given\" : ["))
-        #expect(json.contains("\"then\" : ["))
     }
 
     @Test
@@ -293,10 +256,7 @@ struct `reference documentation extraction` {
              */
             @Test(.disabled("SPEC STUB"))
             func `prints help`() async throws {
-                // Given: a CLI binary
-                // When: `wendy help` is run
-                // Then:
-                // - exits successfully
+                // TODO: implement.
             }
         }
         """
@@ -320,14 +280,7 @@ struct `reference documentation extraction` {
              */
             @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
             func `'--device' selects an explicit device`() async throws {
-                // Given: a reachable Wendy agent address
-                // And: the CLI has an isolated HOME
-                // When: `wendy device info --device <device>` is run
-                // Then:
-                // - exits successfully
-                // - connects to the selected device
-                // - does not open the device picker
-                // - prints device information
+                // TODO: implement.
             }
 
             /**
@@ -335,10 +288,7 @@ struct `reference documentation extraction` {
              */
             @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
             func `uses the configured default device`() async throws {
-                // Given: a reachable default device is configured
-                // When: `wendy device info` is run
-                // Then:
-                // - exits successfully
+                // TODO: implement.
             }
 
             // MARK: - Printing Output
@@ -348,10 +298,7 @@ struct `reference documentation extraction` {
              */
             @Test
             func `'--json --device' prints JSON device information`() async throws {
-                // Given: a reachable Wendy agent
-                // When: `wendy --json device info --device <device>` is run
-                // Then:
-                // - emits one JSON object
+                // TODO: implement.
             }
         }
 
@@ -367,10 +314,7 @@ struct `reference documentation extraction` {
              */
             @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
             func `aliases device info`() async throws {
-                // Given: a reachable Wendy agent
-                // When: `wendy device version --device <device>` is run
-                // Then:
-                // - exits successfully
+                // TODO: implement.
             }
         }
         """

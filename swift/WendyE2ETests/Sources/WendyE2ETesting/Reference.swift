@@ -35,38 +35,19 @@ public enum Reference {
     public struct Entry: Sendable, Equatable {
         public var title: String
         public var documentation: String
-        public var requirements: Requirements
         public var sourceLocation: SourceLocation
         public var isDisabled: Bool
 
         public init(
             title: String,
             documentation: String,
-            requirements: Requirements,
             sourceLocation: SourceLocation,
             isDisabled: Bool
         ) {
             self.title = title
             self.documentation = documentation
-            self.requirements = requirements
             self.sourceLocation = sourceLocation
             self.isDisabled = isDisabled
-        }
-    }
-
-    public struct Requirements: Sendable, Equatable, Encodable {
-        public var given: [String]
-        public var when: [String]
-        public var then: [String]
-
-        public init(given: [String] = [], when: [String] = [], then: [String] = []) {
-            self.given = given
-            self.when = when
-            self.then = then
-        }
-
-        public var isEmpty: Bool {
-            given.isEmpty && when.isEmpty && then.isEmpty
         }
     }
 
@@ -81,28 +62,23 @@ public enum Reference {
     }
 
     public struct MarkdownOptions: Sendable, Equatable {
-        public var includeRequirements: Bool
         public var includeSourceLocations: Bool
         public var includeDisabledState: Bool
 
         public init(
-            includeRequirements: Bool,
             includeSourceLocations: Bool,
             includeDisabledState: Bool
         ) {
-            self.includeRequirements = includeRequirements
             self.includeSourceLocations = includeSourceLocations
             self.includeDisabledState = includeDisabledState
         }
 
         public static let reference = MarkdownOptions(
-            includeRequirements: false,
             includeSourceLocations: false,
             includeDisabledState: false
         )
 
         public static let specReview = MarkdownOptions(
-            includeRequirements: true,
             includeSourceLocations: true,
             includeDisabledState: true
         )
@@ -240,7 +216,11 @@ public enum Reference {
             markdown.append("")
 
             for entry in section.entries {
-                markdown.append("### \(entry.title)")
+                let title = referenceBehaviorTitle(
+                    documentTitle: document.title,
+                    entryTitle: entry.title
+                )
+                markdown.append("### \(title)")
                 appendMetadata(
                     isDisabled: entry.isDisabled,
                     sourceLocation: entry.sourceLocation,
@@ -249,11 +229,6 @@ public enum Reference {
                 )
                 appendParagraph(entry.documentation, to: &markdown)
 
-                if options.includeRequirements && !entry.requirements.isEmpty {
-                    markdown.append("#### Requirements")
-                    markdown.append("")
-                    appendRequirements(entry.requirements, to: &markdown)
-                }
             }
         }
 
@@ -327,13 +302,6 @@ public enum Reference {
 // MARK: - Private Parsing
 
 private struct SourceParser {
-    private enum RequirementContext {
-        case none
-        case given
-        case when
-        case then
-    }
-
     private struct PendingTest {
         var documentation: String
         var isDisabled: Bool
@@ -435,11 +403,10 @@ private struct SourceParser {
         pendingTest: PendingTest,
         functionLine: Int
     ) {
-        let requirements = parseRequirements(startingAt: functionLine)
+        skipFunctionBody(startingAt: functionLine)
         let entry = Reference.Entry(
             title: title,
             documentation: pendingTest.documentation,
-            requirements: requirements,
             sourceLocation: Reference.SourceLocation(path: path, line: functionLine + 1),
             isDisabled: pendingTest.isDisabled
         )
@@ -492,58 +459,16 @@ private struct SourceParser {
         return nil
     }
 
-    private mutating func parseRequirements(startingAt functionLine: Int) -> Reference.Requirements
-    {
-        var requirements = Reference.Requirements()
-        var context = RequirementContext.none
+    private mutating func skipFunctionBody(startingAt functionLine: Int) {
         var braceDepth = countBraces(in: lines[functionLine])
         var cursor = functionLine + 1
 
         while cursor < lines.count, braceDepth > 0 {
-            let trimmed = lines[cursor].trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("//") {
-                let comment = cleanOrdinaryComment(trimmed)
-                appendRequirement(comment, context: &context, requirements: &requirements)
-            }
-
             braceDepth += countBraces(in: lines[cursor])
             cursor += 1
         }
 
         index = cursor
-        return requirements
-    }
-
-    private func appendRequirement(
-        _ comment: String,
-        context: inout RequirementContext,
-        requirements: inout Reference.Requirements
-    ) {
-        if let value = comment.removingPrefix("Given:") {
-            context = .given
-            requirements.given.append(value)
-        } else if let value = comment.removingPrefix("When:") {
-            context = .when
-            requirements.when.append(value)
-        } else if let value = comment.removingPrefix("Then:") {
-            context = .then
-            if !value.isEmpty {
-                requirements.then.append(value)
-            }
-        } else if let value = comment.removingPrefix("And:") {
-            switch context {
-            case .given:
-                requirements.given.append(value)
-            case .when:
-                requirements.when.append(value)
-            case .then:
-                requirements.then.append(value)
-            case .none:
-                break
-            }
-        } else if let value = comment.removingPrefix("-") {
-            requirements.then.append(value)
-        }
     }
 
     private func parseSuiteTitle(from line: String) -> String? {
@@ -623,6 +548,36 @@ private func markdownSlug(forTitle title: String, fallback: String) -> String {
     return slug.isEmpty ? fallback : slug
 }
 
+private func referenceBehaviorTitle(documentTitle: String, entryTitle: String) -> String {
+    let entryTitle = entryTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    let documentTitle = documentTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard let documentCommand = documentTitle.leadingCodeSpan else {
+        return entryTitle
+    }
+    guard !entryTitle.isEmpty else {
+        return "`\(documentCommand)`"
+    }
+
+    guard let entryCommand = entryTitle.leadingCodeSpan else {
+        return "`\(documentCommand)` \(entryTitle)"
+    }
+    guard !entryCommand.hasPrefix(documentCommand) else {
+        return entryTitle
+    }
+
+    let remainderStart = entryTitle.index(
+        entryTitle.startIndex,
+        offsetBy: entryCommand.count + 2
+    )
+    let remainder = entryTitle[remainderStart...].trimmingCharacters(in: .whitespaces)
+    let behaviorCommand = "\(documentCommand) \(entryCommand)"
+    if remainder.isEmpty {
+        return "`\(behaviorCommand)`"
+    }
+    return "`\(behaviorCommand)` \(remainder)"
+}
+
 // MARK: - Private JSON Rendering
 
 private struct JSONIndex: Encodable {
@@ -652,7 +607,9 @@ private struct JSONDocument: Encodable {
         self.title = document.title
         self.overview = document.overview
         self.sourceLocation = options.includeSourceLocations ? document.sourceLocation : nil
-        self.sections = document.sections.map { JSONSection($0, options: options) }
+        self.sections = document.sections.map {
+            JSONSection($0, documentTitle: document.title, options: options)
+        }
     }
 }
 
@@ -660,23 +617,34 @@ private struct JSONSection: Encodable {
     var title: String
     var entries: [JSONEntry]
 
-    init(_ section: Reference.Section, options: Reference.MarkdownOptions) {
+    init(
+        _ section: Reference.Section,
+        documentTitle: String,
+        options: Reference.MarkdownOptions
+    ) {
         self.title = section.title
-        self.entries = section.entries.map { JSONEntry($0, options: options) }
+        self.entries = section.entries.map {
+            JSONEntry($0, documentTitle: documentTitle, options: options)
+        }
     }
 }
 
 private struct JSONEntry: Encodable {
     var title: String
     var documentation: String
-    var requirements: Reference.Requirements?
     var sourceLocation: Reference.SourceLocation?
     var isDisabled: Bool?
 
-    init(_ entry: Reference.Entry, options: Reference.MarkdownOptions) {
-        self.title = entry.title
+    init(
+        _ entry: Reference.Entry,
+        documentTitle: String,
+        options: Reference.MarkdownOptions
+    ) {
+        self.title = referenceBehaviorTitle(
+            documentTitle: documentTitle,
+            entryTitle: entry.title
+        )
         self.documentation = entry.documentation
-        self.requirements = options.includeRequirements ? entry.requirements : nil
         self.sourceLocation = options.includeSourceLocations ? entry.sourceLocation : nil
         self.isDisabled = options.includeDisabledState ? entry.isDisabled : nil
     }
@@ -713,8 +681,12 @@ private func renderHTMLBody(
         )
 
         for entry in section.entries {
+            let title = referenceBehaviorTitle(
+                documentTitle: document.title,
+                entryTitle: entry.title
+            )
             html.append(
-                "<h3 id=\"\(escapeHTMLAttribute(Reference.markdownAnchor(forTitle: entry.title)))\">\(renderInlineHTML(entry.title))</h3>"
+                "<h3 id=\"\(escapeHTMLAttribute(Reference.markdownAnchor(forTitle: title)))\">\(renderInlineHTML(title))</h3>"
             )
             appendHTMLMetadata(
                 isDisabled: entry.isDisabled,
@@ -724,10 +696,6 @@ private func renderHTMLBody(
             )
             appendHTMLBlocks(entry.documentation, to: &html)
 
-            if options.includeRequirements && !entry.requirements.isEmpty {
-                html.append("<h4>Requirements</h4>")
-                appendHTMLRequirements(entry.requirements, to: &html)
-            }
         }
     }
 
@@ -1058,7 +1026,7 @@ private func renderHTMLDocument(title: String, body: String) -> String {
               <div>
                 <div class="brand-row" aria-label="Wendy E2E Reference">
                   <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 1024 1024" role="img"><rect x="407.04" y="299.64" width="424.72" height="424.72" transform="translate(-180.62 587.94) rotate(-45)"/><path d="M335.3,743.03l-231.03-231.03,231.03-231.02,231.02,231.02-231.02,231.03ZM179.04,512l156.27,156.27,156.27-156.27-156.27-156.27-156.27,156.27Z"/></svg></span>
-                  <span class="brand-copy"><strong>E2E Reference</strong><span>Wendy Agent</span></span>
+                  <span class="brand-copy"><strong>E2E Reference</strong><span>Swift Specs</span></span>
                 </div>
                 <h1 class="page-title">\(escapeHTMLText(plainTitle))</h1>
                 <p class="lead">Behavioral reference generated from Swift E2E specs.</p>
@@ -1207,30 +1175,6 @@ private func appendHTMLMetadata(
     html.append("<p class=\"metadata\">\(metadata.joined(separator: " · "))</p>")
 }
 
-private func appendHTMLRequirements(_ requirements: Reference.Requirements, to html: inout [String])
-{
-    appendHTMLRequirementGroup("Given", requirements.given, to: &html)
-    appendHTMLRequirementGroup("When", requirements.when, to: &html)
-    appendHTMLRequirementGroup("Then", requirements.then, to: &html)
-}
-
-private func appendHTMLRequirementGroup(
-    _ title: String,
-    _ values: [String],
-    to html: inout [String]
-) {
-    guard !values.isEmpty else {
-        return
-    }
-
-    html.append("<h5>\(escapeHTMLText(title))</h5>")
-    html.append("<ul>")
-    for value in values {
-        html.append("<li>\(renderInlineHTML(value))</li>")
-    }
-    html.append("</ul>")
-}
-
 private func renderInlineHTML(_ value: String) -> String {
     var html = ""
     var cursor = value.startIndex
@@ -1311,30 +1255,6 @@ private func appendMetadata(
     markdown.append("")
 }
 
-private func appendRequirements(_ requirements: Reference.Requirements, to markdown: inout [String])
-{
-    appendRequirementGroup("Given", requirements.given, to: &markdown)
-    appendRequirementGroup("When", requirements.when, to: &markdown)
-    appendRequirementGroup("Then", requirements.then, to: &markdown)
-}
-
-private func appendRequirementGroup(
-    _ title: String,
-    _ values: [String],
-    to markdown: inout [String]
-) {
-    guard !values.isEmpty else {
-        return
-    }
-
-    markdown.append("**\(title)**")
-    markdown.append("")
-    for value in values {
-        markdown.append("- \(value)")
-    }
-    markdown.append("")
-}
-
 // MARK: - Private Comment Cleaning
 
 private func cleanLineDocumentation(_ line: String) -> String {
@@ -1367,6 +1287,19 @@ private func trimBlankLines(_ lines: [String]) -> [String] {
 // MARK: - Private String Helpers
 
 extension String {
+    fileprivate var leadingCodeSpan: String? {
+        guard first == "`" else {
+            return nil
+        }
+
+        let contentStart = index(after: startIndex)
+        guard let contentEnd = self[contentStart...].firstIndex(of: "`") else {
+            return nil
+        }
+
+        return String(self[contentStart..<contentEnd])
+    }
+
     fileprivate func removingOneLeadingSpace() -> String {
         if hasPrefix(" ") {
             return String(dropFirst())

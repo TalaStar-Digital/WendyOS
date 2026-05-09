@@ -52,10 +52,14 @@ Use flattened suites only. Each suite name is the full command phrase being spec
 @Suite(.serialized)
 struct `'wendy help'` {
     @Test
-    func `prints top-level help`() async throws {}
+    func `prints top-level help`() async throws {
+        // TODO: implement.
+    }
 
     @Test
-    func `prints help for a nested command`() async throws {}
+    func `prints help for a nested command`() async throws {
+        // TODO: implement.
+    }
 }
 ```
 
@@ -72,10 +76,14 @@ For command variants, keep the flag in the test name when it is a mode of the sa
 @Suite(.serialized)
 struct `'wendy info'` {
     @Test
-    func `prints CLI and system details`() async throws {}
+    func `prints CLI and system details`() async throws {
+        // TODO: implement.
+    }
 
     @Test
-    func `'--json' prints CLI and system details as JSON`() async throws {}
+    func `'--json' prints CLI and system details as JSON`() async throws {
+        // TODO: implement.
+    }
 }
 ```
 
@@ -160,16 +168,15 @@ Future DSL directions include command success/failure helpers, stdout/stderr con
 Use disabled tests so unimplemented specs do not falsely pass:
 
 ```swift
+/**
+ Creates a minimal Swift WendyOS project in an empty directory.
+
+ The command accepts app id, target, language, entitlements, and git choices,
+ then writes the expected project files and concise success guidance.
+ */
 @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
 func `creates a minimal Swift WendyOS project non-interactively`() async throws {
-    // Given: an empty temporary directory
-    // When: `wendy init` is run with app id, target, language, no extra entitlements, and no git init
-    // Then:
-    // - exits successfully
-    // - writes wendy.json
-    // - writes Package.swift
-    // - emits concise success guidance on stdout
-    // - emits no stderr diagnostics
+    // TODO: implement.
 }
 ```
 

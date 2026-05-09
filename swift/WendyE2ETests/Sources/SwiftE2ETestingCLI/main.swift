@@ -22,16 +22,13 @@ struct ReferenceCommand: ParsableCommand {
             """
     )
 
-    @Flag(help: "Include Given/When/Then requirement comments.")
-    var includeRequirements = false
-
     @Flag(help: "Include source file and line metadata.")
     var includeSourceLocations = false
 
     @Flag(help: "Include enabled/disabled test metadata.")
     var includeDisabledState = false
 
-    @Flag(help: "Include requirements, source locations, and disabled state.")
+    @Flag(help: "Include source locations and disabled state.")
     var specReview = false
 
     @Option(name: .long, help: "Output format: markdown, md, html, or json.")
@@ -49,7 +46,6 @@ struct ReferenceCommand: ParsableCommand {
         }
 
         let options = Reference.MarkdownOptions(
-            includeRequirements: includeRequirements || specReview,
             includeSourceLocations: includeSourceLocations || specReview,
             includeDisabledState: includeDisabledState || specReview
         )
