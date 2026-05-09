@@ -18,6 +18,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "0.4.0"),
+        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.6.0"),
         .package(url: "https://github.com/apple/swift-system", from: "1.6.0"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
     ],
@@ -35,7 +36,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "SwiftE2ETestingCLI",
-            dependencies: ["WendyE2ETesting"],
+            dependencies: [
+                "WendyE2ETesting",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
             path: "Sources/SwiftE2ETestingCLI",
             swiftSettings: swiftSettings
         ),
