@@ -47,8 +47,10 @@ ubuntu: ## Open an Ubuntu LTS Lima shell for Swift E2E testing
 				;; \
 		esac; \
 	fi
-	@limactl start '$(LIMA_E2E_UBUNTU_INSTANCE)' >/dev/null
-	@limactl shell --workdir '$(LIMA_E2E_SWIFT_DIR)' '$(LIMA_E2E_UBUNTU_INSTANCE)' bash -lc 'bash Scripts/SetupE2E.sh && { [ ! -f "$${SWIFTLY_HOME_DIR:-$$HOME/.local/share/swiftly}/env.sh" ] || . "$${SWIFTLY_HOME_DIR:-$$HOME/.local/share/swiftly}/env.sh"; } && exec "$$SHELL"'
+	@set -e; \
+		limactl start '$(LIMA_E2E_UBUNTU_INSTANCE)' >/dev/null; \
+		trap 'limactl stop "$(LIMA_E2E_UBUNTU_INSTANCE)" >/dev/null || true' EXIT; \
+		limactl shell --workdir '$(LIMA_E2E_SWIFT_DIR)' '$(LIMA_E2E_UBUNTU_INSTANCE)' bash -lc 'bash Scripts/SetupE2E.sh && { [ ! -f "$${SWIFTLY_HOME_DIR:-$$HOME/.local/share/swiftly}/env.sh" ] || . "$${SWIFTLY_HOME_DIR:-$$HOME/.local/share/swiftly}/env.sh"; } && exec "$$SHELL"'
 
 reference: ## Generate Swift E2E HTML reference documentation and open it
 	rm -rf Build/Reference
