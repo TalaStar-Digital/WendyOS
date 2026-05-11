@@ -64,7 +64,39 @@ struct `'wendy device info'` {
      */
     @Test
     func `uses the configured default device`() async throws {
-        // TODO: implement.
+        try await self.scenario.run { cli, agent in
+            let agentAddress = agent.machine.address
+
+            try await cli.sh(
+                """
+                mkdir -p "$HOME/.wendy"
+                printf '{"defaultDevice":"\(agentAddress)"}\n' > "$HOME/.wendy/config.json"
+                """
+            )
+
+            try await cli.sh("wendy device info --json") {
+                terminationStatus,
+                standardOutput,
+                standardError in
+                #expect(terminationStatus.isSuccess)
+                #expect(standardOutput.contains("\"version\""))
+                #expect(standardOutput.contains("\"os\""))
+                #expect(standardOutput.contains("\"cpuArchitecture\""))
+                #expect(standardOutput.contains("\"cliVersion\""))
+                #expect(standardError == "")
+                #expect(!standardOutput.contains("Select a device"))
+                #expect(!standardError.contains("Select a device"))
+            }
+
+            try await cli.sh("cat \"$HOME/.wendy/config.json\"") {
+                terminationStatus,
+                standardOutput,
+                standardError in
+                #expect(terminationStatus.isSuccess)
+                #expect(standardOutput == "{\"defaultDevice\":\"\(agentAddress)\"}\n")
+                #expect(standardError == "")
+            }
+        }
     }
 
     /**
