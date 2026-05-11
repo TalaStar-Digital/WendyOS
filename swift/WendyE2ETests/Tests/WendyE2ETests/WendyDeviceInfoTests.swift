@@ -102,7 +102,7 @@ struct `'wendy device info'` {
     /**
      If no explicit or default device is available, interactive mode helps the user choose one. The picker discovers LAN, Bluetooth, and provider-backed devices.
      */
-    @Test
+    @Test(.disabled("INTERACTIVE: requires picker harness"))
     func `opens the device picker when no device is selected`() async throws {
         // TODO: implement.
     }
@@ -110,7 +110,7 @@ struct `'wendy device info'` {
     /**
      A stale default device does not end the workflow. The command explains that the saved target is unreachable and returns the user to device selection.
      */
-    @Test
+    @Test(.disabled("INTERACTIVE: requires picker harness"))
     func `recovers from an unreachable default device`() async throws {
         // TODO: implement.
     }
@@ -118,7 +118,7 @@ struct `'wendy device info'` {
     /**
      Cancelling the picker leaves the user's saved device configuration unchanged and produces no device information summary.
      */
-    @Test
+    @Test(.disabled("INTERACTIVE: requires picker harness"))
     func `cancels cleanly from the device picker`() async throws {
         // TODO: implement.
     }
@@ -311,7 +311,7 @@ struct `'wendy device info'` {
     /**
      Some discovered devices do not expose the Wendy agent information API. Selecting one of those devices produces a clear unsupported-target diagnostic instead of a partial information summary.
      */
-    @Test
+    @Test(.disabled("INTERACTIVE: requires selectable unsupported target"))
     func `reports an unsupported selected target`() async throws {
         // TODO: implement.
     }
