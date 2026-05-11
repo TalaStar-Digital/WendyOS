@@ -217,13 +217,15 @@ public struct Session: Sendable {
     }
 
     private func invocation(for command: String) -> Invocation {
+        let wrappedCommand = self.wrapped(command)
+
         if let ssh = self.machine.ssh {
             return Invocation(
                 executable: self.machine.sshExecutable,
                 arguments: [
                     "-T",
                     ssh,
-                    self.wrapped(command),
+                    wrappedCommand,
                 ],
                 environment: .inherit,
                 workingDirectory: nil
@@ -233,22 +235,111 @@ public struct Session: Sendable {
         let user = Self.currentUser()
         return Invocation(
             executable: user.shell,
-            arguments: ["-lc", command],
+            arguments: ["-lc", wrappedCommand],
             environment: Self.loginEnvironment(for: user),
-            workingDirectory: self.machine.workingDirectory.map { FilePath($0) }
+            workingDirectory: nil
         )
     }
 
     private func wrapped(_ command: String) -> String {
-        guard let workingDirectory = self.machine.workingDirectory else {
-            return command
+        var parts = self.machine.env.keys.sorted().map { key in
+            "export \(key)=\(Self.shellEnvironmentValue(self.machine.env[key] ?? ""))"
         }
 
-        return "cd \(Self.shellQuote(workingDirectory)) && \(command)"
+        if let workingDirectory = self.machine.workingDirectory {
+            parts.append("cd \(Self.shellQuote(workingDirectory))")
+        }
+        parts.append(command)
+
+        return parts.joined(separator: " && ")
+    }
+
+    private static func shellEnvironmentValue(_ value: String) -> String {
+        var parts: [String] = []
+        var literal = ""
+        var index = value.startIndex
+
+        func flushLiteral() {
+            guard !literal.isEmpty else {
+                return
+            }
+            parts.append(Self.shellQuote(literal))
+            literal = ""
+        }
+
+        while index < value.endIndex {
+            guard value[index] == "$" else {
+                literal.append(value[index])
+                index = value.index(after: index)
+                continue
+            }
+
+            let next = value.index(after: index)
+            guard next < value.endIndex else {
+                literal.append(value[index])
+                index = next
+                continue
+            }
+
+            if value[next] == "{" {
+                guard let close = value[next...].firstIndex(of: "}") else {
+                    literal.append(value[index])
+                    index = next
+                    continue
+                }
+
+                let nameStart = value.index(after: next)
+                let name = String(value[nameStart..<close])
+                guard Self.isValidEnvironmentName(name) else {
+                    literal.append(value[index])
+                    index = next
+                    continue
+                }
+
+                flushLiteral()
+                parts.append("${\(name)}")
+                index = value.index(after: close)
+                continue
+            }
+
+            guard Self.isEnvironmentNameStart(value[next]) else {
+                literal.append(value[index])
+                index = next
+                continue
+            }
+
+            var end = value.index(after: next)
+            while end < value.endIndex, Self.isEnvironmentNameBody(value[end]) {
+                end = value.index(after: end)
+            }
+
+            flushLiteral()
+            parts.append("$\(String(value[next..<end]))")
+            index = end
+        }
+
+        flushLiteral()
+        return parts.isEmpty ? "''" : parts.joined()
     }
 
     private static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func isValidEnvironmentName(_ name: String) -> Bool {
+        guard let first = name.first else {
+            return false
+        }
+        return Self.isEnvironmentNameStart(first)
+            && name.dropFirst().allSatisfy(Self.isEnvironmentNameBody)
+    }
+
+    private static func isEnvironmentNameStart(_ character: Character) -> Bool {
+        character == "_" || character.isASCII && character.isLetter
+    }
+
+    private static func isEnvironmentNameBody(_ character: Character) -> Bool {
+        character == "_" || character.isASCII && (character.isLetter || character.isNumber)
     }
 
     private static func currentUser() -> User {
@@ -445,6 +536,12 @@ public struct Session: Sendable {
             - Termination status: `\(terminationStatus)`
             - Duration: `\(duration)`
 
+            ### environment
+
+            ```text
+            \(Self.environmentDescription(machine.env))
+            ```
+
             ### stdout
 
             ```text
@@ -458,6 +555,16 @@ public struct Session: Sendable {
             ```
 
             """
+    }
+
+    private static func environmentDescription(_ environment: [String: String]) -> String {
+        guard !environment.isEmpty else {
+            return "<none>"
+        }
+
+        return environment.keys.sorted().map { key in
+            "\(key)=\(environment[key] ?? "")"
+        }.joined(separator: "\n")
     }
 
     private static func outputDescription(_ output: some Sendable) -> String {

@@ -49,6 +49,22 @@ struct `machine` {
         #expect(Machine.current.ssh == nil)
         #expect(Machine.current.workingDirectory == FileManager.default.currentDirectoryPath)
     }
+
+    @Test
+    func `stores shell environment variables`() {
+        let machine = Machine(
+            name: "Local",
+            env: [
+                "HOME": "/tmp/wendy-e2e-home",
+                "PATH": "/tmp/wendy-e2e-bin:$PATH",
+                "WENDY_ANALYTICS": "false",
+            ]
+        )
+
+        #expect(machine.env["HOME"] == "/tmp/wendy-e2e-home")
+        #expect(machine.env["PATH"] == "/tmp/wendy-e2e-bin:$PATH")
+        #expect(machine.env["WENDY_ANALYTICS"] == "false")
+    }
 }
 
 @Suite
@@ -85,6 +101,52 @@ struct `session` {
     }
 
     @Test
+    func `sets environment variables before running local commands`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("machine-env-" + UUID().uuidString, isDirectory: true)
+        let binDirectory = directory.appendingPathComponent("bin", isDirectory: true)
+        let homeDirectory = directory.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: homeDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let wendy = binDirectory.appendingPathComponent("wendy")
+        try """
+        #!/bin/sh
+        printf 'HOME=%s\n' "$HOME"
+        printf 'WENDY_ANALYTICS=%s\n' "$WENDY_ANALYTICS"
+        """.write(to: wendy, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: wendy.path
+        )
+
+        let machine = Machine(
+            name: "Local",
+            workingDirectory: directory.path,
+            env: [
+                "HOME": homeDirectory.path,
+                "PATH": "\(binDirectory.path):$PATH",
+                "WENDY_ANALYTICS": "false",
+            ]
+        )
+        let session = try await Session.begin(for: machine)
+
+        let record = try await session.sh(
+            "wendy",
+            output: .string(limit: .max),
+            error: .string(limit: .max)
+        )
+
+        #expect(record.terminationStatus.isSuccess)
+        #expect(record.standardOutput == "HOME=\(homeDirectory.path)\nWENDY_ANALYTICS=false\n")
+        #expect(record.standardError == "")
+    }
+
+    @Test
     func `runs commands over separate SSH invocations`() async throws {
         try await Self.withFixtureSession { session, fixture in
             try await session.sh("touch first.txt")
@@ -94,6 +156,54 @@ struct `session` {
             #expect(FileManager.default.fileExists(atPath: fixture.remoteRoot.path + "/second.txt"))
             #expect(try fixture.counter(named: "run-count") == 2)
         }
+    }
+
+    @Test
+    func `sets environment variables before running SSH commands`() async throws {
+        let fixture = try SSHFixture()
+        defer { fixture.remove() }
+
+        let binDirectory = fixture.remoteRoot.appendingPathComponent("bin", isDirectory: true)
+        let homeDirectory = fixture.remoteRoot.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: homeDirectory,
+            withIntermediateDirectories: true
+        )
+
+        let wendy = binDirectory.appendingPathComponent("wendy")
+        try """
+        #!/bin/sh
+        printf 'HOME=%s\n' "$HOME"
+        printf 'WENDY_ANALYTICS=%s\n' "$WENDY_ANALYTICS"
+        """.write(to: wendy, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: wendy.path
+        )
+
+        let machine = Machine(
+            name: "SSH",
+            ssh: "ai@example.local",
+            workingDirectory: fixture.remoteRoot.path,
+            env: [
+                "HOME": homeDirectory.path,
+                "PATH": "\(binDirectory.path):$PATH",
+                "WENDY_ANALYTICS": "false",
+            ],
+            sshExecutable: fixture.sshScript.path
+        )
+        let session = try await Session.begin(for: machine)
+
+        let record = try await session.sh(
+            "wendy",
+            output: .string(limit: .max),
+            error: .string(limit: .max)
+        )
+
+        #expect(record.terminationStatus.isSuccess)
+        #expect(record.standardOutput == "HOME=\(homeDirectory.path)\nWENDY_ANALYTICS=false\n")
+        #expect(record.standardError == "")
     }
 
     @Test

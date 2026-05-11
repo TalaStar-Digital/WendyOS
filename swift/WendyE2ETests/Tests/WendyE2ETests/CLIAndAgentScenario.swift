@@ -24,6 +24,7 @@ final class CLIAndAgentScenario: Scenario, Sendable {
         // Fix by finding a structured concurrency solution for this.
         Task {
             try? await Self.stopAgent(with: agent)
+            try? await cli.sh("rm -rf \"$HOME\"")
             try? await agent.end()
             try? await cli.end()
         }
@@ -37,6 +38,10 @@ final class CLIAndAgentScenario: Scenario, Sendable {
 
     private init() async throws {
         let repositoryRootDirectoryURL = Self.repositoryRootDirectoryURL()
+        let cliWorkingDirectory =
+            Environment.cliWorkingDirectory
+            ?? repositoryRootDirectoryURL.appendingPathComponent("go").path
+        let cliHomeDirectory = "/tmp/wendy-e2e-cli-home-\(UUID().uuidString)"
 
         let cli = Machine(
             id: "cli",
@@ -44,8 +49,12 @@ final class CLIAndAgentScenario: Scenario, Sendable {
             os: Environment.cliOS ?? .current,
             tags: [.cli],
             ssh: Environment.cliSSH,
-            workingDirectory: Environment.cliWorkingDirectory
-                ?? repositoryRootDirectoryURL.appendingPathComponent("go").path
+            workingDirectory: cliWorkingDirectory,
+            env: [
+                "HOME": cliHomeDirectory,
+                "PATH": "\(cliWorkingDirectory)/bin:$PATH",
+                "WENDY_ANALYTICS": "false",
+            ]
         )
 
         let agent = Machine(
@@ -61,6 +70,7 @@ final class CLIAndAgentScenario: Scenario, Sendable {
         self.cli = try await Session.begin(for: cli)
         self.agent = try await Session.begin(for: agent)
 
+        try await self.cli.sh("mkdir -p \"$HOME\"")
         try await self.buildCLI(with: self.cli)
         try await self.buildAgent(with: self.agent)
         try await Self.startAgent(with: self.agent)

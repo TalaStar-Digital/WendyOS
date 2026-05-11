@@ -47,6 +47,7 @@ public struct Machine: Sendable, Equatable {
     public let tags: Set<MachineTag>
     public let ssh: String?
     public let workingDirectory: String?
+    public let env: [String: String]
     public let sshExecutable: String
 
     // MARK: - Creating Machines
@@ -58,6 +59,7 @@ public struct Machine: Sendable, Equatable {
         tags: Set<MachineTag> = [],
         ssh: String? = nil,
         workingDirectory: String? = nil,
+        env: [String: String] = [:],
         sshExecutable: String = "/usr/bin/ssh"
     ) {
         precondition(id?.isEmpty != true, "id must not be empty")
@@ -65,6 +67,12 @@ public struct Machine: Sendable, Equatable {
         precondition(ssh?.isEmpty != true, "ssh must not be empty")
         precondition(workingDirectory?.isEmpty != true, "workingDirectory must not be empty")
         precondition(!sshExecutable.isEmpty, "sshExecutable must not be empty")
+        for key in env.keys {
+            precondition(
+                Self.isValidEnvironmentKey(key),
+                "env keys must be valid shell variable names"
+            )
+        }
 
         let currentDirectoryPathOrNil = ssh == nil ? FileManager.default.currentDirectoryPath : nil
         let resolvedWorkingDirectory = workingDirectory ?? currentDirectoryPathOrNil
@@ -75,6 +83,7 @@ public struct Machine: Sendable, Equatable {
         self.tags = tags
         self.ssh = ssh
         self.workingDirectory = resolvedWorkingDirectory
+        self.env = env
         self.sshExecutable = sshExecutable
     }
 
@@ -90,6 +99,19 @@ public struct Machine: Sendable, Equatable {
     }
 
     // MARK: - Private
+
+    private static func isValidEnvironmentKey(_ key: String) -> Bool {
+        guard let first = key.first else {
+            return false
+        }
+        guard first == "_" || first.isASCII && first.isLetter else {
+            return false
+        }
+
+        return key.dropFirst().allSatisfy { character in
+            character == "_" || character.isASCII && (character.isLetter || character.isNumber)
+        }
+    }
 
     private static func defaultID(ssh: String?, workingDirectory: String?) -> String {
         let location = ssh ?? "local"
