@@ -92,7 +92,27 @@ final class CLIAndAgentScenario: Scenario, Sendable {
             try await session.sh("make quit && open Build/WendyAgentMac.app")
         case .linux:
             try await session.sh(
-                "cd ../go && nohup ./bin/wendy-agent > /tmp/wendy-agent-e2e.log 2>&1 &"
+                """
+                set -e
+                pidfile=/tmp/wendy-agent-e2e.pid
+                logfile=/tmp/wendy-agent-e2e.log
+
+                if [ -f "$pidfile" ]; then
+                  old_pid="$(cat "$pidfile")"
+                  if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+                    kill "$old_pid"
+                    sleep 1
+                    if kill -0 "$old_pid" 2>/dev/null; then
+                      kill -9 "$old_pid"
+                    fi
+                  fi
+                  rm -f "$pidfile"
+                fi
+
+                cd ../go
+                nohup ./bin/wendy-agent > "$logfile" 2>&1 &
+                echo $! > "$pidfile"
+                """
             )
         case .windows, .wendyOS:
             fatalError("Starting the agent is not supported on \(session.machine.os) yet.")
@@ -104,7 +124,24 @@ final class CLIAndAgentScenario: Scenario, Sendable {
         case .macOS:
             try await session.sh("make quit")
         case .linux:
-            try await session.sh("pkill -f wendy-agent")
+            try await session.sh(
+                """
+                set -e
+                pidfile=/tmp/wendy-agent-e2e.pid
+
+                if [ -f "$pidfile" ]; then
+                  pid="$(cat "$pidfile")"
+                  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                    kill "$pid"
+                    sleep 1
+                    if kill -0 "$pid" 2>/dev/null; then
+                      kill -9 "$pid"
+                    fi
+                  fi
+                  rm -f "$pidfile"
+                fi
+                """
+            )
         case .windows, .wendyOS:
             fatalError("Stopping the agent is not supported on \(session.machine.os) yet.")
         }
