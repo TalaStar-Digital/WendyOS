@@ -24,6 +24,20 @@ import WendyE2ETesting
 /// - `--prerelease`: Includes prerelease agent builds when checking for updates.
 @Suite(.serialized)
 struct `'wendy device info'` {
+    let scenario: CLIAndAgentScenario
+    let cli: Session
+    let agent: Session
+
+    init() async throws {
+        let scenario = try await CLIAndAgentScenario.shared
+        self.scenario = scenario
+        self.cli = scenario.cli
+        self.agent = scenario.agent
+
+        // Keep this suite deterministic when tests share the scenario's CLI home.
+        // Individual tests can create the config state they need after this reset.
+        try await self.cli.sh("rm -rf \"$HOME/.wendy\"")
+    }
 
     // MARK: - Selecting Devices
 
@@ -110,7 +124,19 @@ struct `'wendy device info'` {
      */
     @Test
     func `'--json' reports a missing device without prompting`() async throws {
-        // TODO: implement.
+        try await self.cli.sh("wendy device info --json") {
+            terminationStatus,
+            standardOutput,
+            standardError in
+            #expect(!terminationStatus.isSuccess)
+            #expect(standardOutput == "")
+            #expect(
+                standardError.contains(
+                    "no device specified; use --device flag or set a default"
+                )
+            )
+            #expect(!standardError.contains("Select a device"))
+        }
     }
 
     /**
@@ -163,16 +189,6 @@ struct `'wendy device info'` {
         // TODO: implement.
     }
 
-    private static func makeTemporaryHome() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("wendy-e2e-home-" + UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
-    private static func shellQuote(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
 }
 
 /// Deprecated compatibility alias for `wendy device info`.

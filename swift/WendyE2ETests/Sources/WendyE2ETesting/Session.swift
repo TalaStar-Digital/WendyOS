@@ -189,6 +189,36 @@ public struct Session: Sendable {
         )
     }
 
+    public func sh<Result>(
+        _ command: String,
+        output: StringOutput<UTF8> = .string(limit: .max),
+        error: StringOutput<UTF8> = .string(limit: .max),
+        filePath: String = #filePath,
+        function: String = #function,
+        line: Int = #line,
+        body:
+            @Sendable (
+                _ terminationStatus: TerminationStatus,
+                _ standardOutput: String,
+                _ standardError: String
+            ) async throws -> Result
+    ) async throws -> Result {
+        let record = try await self.sh(
+            command,
+            output: output,
+            error: error,
+            filePath: filePath,
+            function: function,
+            line: line
+        )
+
+        return try await body(
+            record.terminationStatus,
+            record.standardOutput ?? "",
+            record.standardError ?? ""
+        )
+    }
+
     // MARK: - Internal
 
     init(machine: Machine, verbose: Bool = false) {
