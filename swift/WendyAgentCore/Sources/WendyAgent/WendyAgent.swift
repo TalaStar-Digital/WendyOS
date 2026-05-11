@@ -245,8 +245,10 @@ public final class WendyAgent {
             self.mainServerTask = task
         } catch {
             server.beginGracefulShutdown()
-            _ = try? await task.value
-            throw error
+            throw await Self.preferredServerStartupError(
+                listeningAddressError: error,
+                serverTask: task
+            )
         }
     }
 
@@ -290,8 +292,10 @@ public final class WendyAgent {
             self.otelServerTask = task
         } catch {
             server.beginGracefulShutdown()
-            _ = try? await task.value
-            throw error
+            throw await Self.preferredServerStartupError(
+                listeningAddressError: error,
+                serverTask: task
+            )
         }
     }
 
@@ -574,6 +578,18 @@ public final class WendyAgent {
     nonisolated private static func makeServeTask(server: PosixGRPCServer) -> Task<Void, Error> {
         Task {
             try await server.serve()
+        }
+    }
+
+    nonisolated private static func preferredServerStartupError(
+        listeningAddressError: any Error,
+        serverTask: Task<Void, Error>
+    ) async -> any Error {
+        do {
+            try await serverTask.value
+            return listeningAddressError
+        } catch {
+            return error
         }
     }
 
