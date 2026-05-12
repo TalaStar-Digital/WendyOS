@@ -41,7 +41,6 @@ installUbuntuPackages() {
     openssh-client \
     openssh-server \
     pkg-config \
-    rsync \
     tar \
     unzip \
     xz-utils \
@@ -164,7 +163,6 @@ setupE2EUbuntu() {
   checkCommand git
   checkCommand go
   checkCommand make
-  checkCommand rsync
   checkCommand swift
   checkCommand swiftly
   checkCommand zip
@@ -181,7 +179,6 @@ setupE2EMacOS() {
   checkCommand git
   checkCommand go
   checkCommand make
-  checkCommand rsync
   checkCommand swift
   checkCommand zip
   checkCommand xcodebuild "Xcode command line tools"

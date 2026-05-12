@@ -16,7 +16,6 @@ REPORT_ZIP="${WENDY_E2E_REPORT_ZIP:-$ARTIFACT_DIR/swift-e2e-test-reports.zip}"
 AGENT_USER="${WENDY_E2E_AGENT_USER:-}"
 AGENT_ADDRESS="${WENDY_E2E_AGENT_ADDRESS:-}"
 AGENT_WORKDIR="${WENDY_E2E_AGENT_WORKING_DIRECTORY:-}"
-SYNC_AGENT="${WENDY_E2E_SYNC_AGENT:-auto}"
 VERBOSE="${WENDY_E2E_VERBOSE:-false}"
 TEST_FILTERS=()
 
@@ -38,7 +37,6 @@ Options:
   --agent-user USER     Optional SSH user for the agent machine.
   --agent-address HOST  Optional address for the agent machine; defaults to hostname.
   --agent-workdir DIR   Existing swift/ working directory to use for the agent.
-  --no-agent-sync       Do not rsync this checkout to --agent-address.
   --verbose             Print each E2E machine command before it runs.
   --help                Show this help message.
 
@@ -47,7 +45,6 @@ Environment:
   WENDY_E2E_AGENT_USER                Optional SSH user for the agent machine.
   WENDY_E2E_AGENT_ADDRESS             Optional address for the agent machine.
   WENDY_E2E_AGENT_WORKING_DIRECTORY   swift/ directory for the agent.
-  WENDY_E2E_SYNC_AGENT                auto, true, or false.
   WENDY_E2E_FIXTURES_DIR              Defaults to .github/swift-e2e-tests.
   WENDY_E2E_TEST_RECORDS_DIR          Defaults to package .build records dir.
   WENDY_E2E_VERBOSE                   true/false; prints machine commands.
@@ -89,10 +86,6 @@ while [[ $# -gt 0 ]]; do
     --agent-workdir)
       AGENT_WORKDIR="$2"
       shift 2
-      ;;
-    --no-agent-sync)
-      SYNC_AGENT="false"
-      shift
       ;;
     --verbose)
       VERBOSE="true"
@@ -152,10 +145,6 @@ if [[ ! -d "$FIXTURES_DIR" ]]; then
 fi
 FIXTURES_DIR="$(cd "$FIXTURES_DIR" && pwd)"
 
-shell_quote() {
-  printf "%q" "$1"
-}
-
 ssh_target() {
   local host="$AGENT_ADDRESS"
   if [[ "$host" == *:* ]]; then
@@ -167,47 +156,6 @@ ssh_target() {
   else
     printf "%s" "$host"
   fi
-}
-
-sync_agent_checkout_if_needed() {
-  if [[ -z "$AGENT_ADDRESS" ]]; then
-    return 0
-  fi
-
-  if [[ "$SYNC_AGENT" == "false" ]]; then
-    return 0
-  fi
-
-  if [[ -n "$AGENT_WORKDIR" && "$SYNC_AGENT" == "auto" ]]; then
-    return 0
-  fi
-
-  if ! command -v rsync >/dev/null 2>&1; then
-    echo "ERROR: rsync is required when WENDY_E2E_AGENT_ADDRESS is set" >&2
-    exit 1
-  fi
-
-  local agent_target
-  agent_target="$(ssh_target)"
-
-  local run_id="${GITHUB_RUN_ID:-local}"
-  local run_attempt="${GITHUB_RUN_ATTEMPT:-1}"
-  local remote_root="wendy-agent-swift-e2e/${run_id}-${run_attempt}"
-  local remote_swift_dir="$remote_root/swift"
-
-  echo "==> Syncing checkout to $agent_target:$remote_root"
-  ssh -o StrictHostKeyChecking=no "$agent_target" "mkdir -p $(shell_quote "$remote_root")"
-  rsync -az --delete \
-    -e 'ssh -o StrictHostKeyChecking=no' \
-    --exclude '.git/' \
-    --exclude '.build/' \
-    --exclude 'Build/' \
-    --exclude 'swift/WendyAgentCore/.build/' \
-    --exclude 'swift/WendyE2ETests/.build/' \
-    --exclude 'swift/Build/' \
-    "$REPO_ROOT/" "$agent_target:$remote_root/"
-
-  AGENT_WORKDIR="$remote_swift_dir"
 }
 
 collect_reports() {
@@ -256,8 +204,6 @@ collect_reports() {
 
   echo "==> Wrote Swift E2E reports zip: $report_zip"
 }
-
-sync_agent_checkout_if_needed
 
 SWIFT_TEST_ARGS=("test")
 if [[ ${#TEST_FILTERS[@]} -eq 1 ]]; then
