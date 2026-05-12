@@ -30,7 +30,7 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - id: macos-26__jetson-orin-nano
+          - id: macos-26-to-jetson-orin-nano
             name: macOS 26 → Jetson Orin Nano 🚧
             status: not-supported-yet
             status_label: Not Supported Yet
@@ -42,7 +42,7 @@ jobs:
             device_name: Jetson Orin Nano
             transport: lan
 
-          - id: ubuntu-24-04__jetson-orin-nano
+          - id: ubuntu-24-04-to-jetson-orin-nano
             name: Ubuntu 24.04 → Jetson Orin Nano 🚧
             status: not-supported-yet
             status_label: Not Supported Yet
@@ -54,7 +54,7 @@ jobs:
             device_name: Jetson Orin Nano
             transport: lan
 
-          - id: windows-11__jetson-orin-nano
+          - id: windows-11-to-jetson-orin-nano
             name: Windows 11 → Jetson Orin Nano 🚧
             status: not-supported-yet
             status_label: Not Supported Yet
@@ -66,7 +66,7 @@ jobs:
             device_name: Jetson Orin Nano
             transport: lan
 
-          - id: macos-26__raspberry-pi-5
+          - id: macos-26-to-raspberry-pi-5
             name: macOS 26 → Raspberry Pi 5 🚧
             status: not-supported-yet
             status_label: Not Supported Yet
@@ -78,7 +78,7 @@ jobs:
             device_name: Raspberry Pi 5
             transport: lan
 
-          - id: ubuntu-24-04__raspberry-pi-5
+          - id: ubuntu-24-04-to-raspberry-pi-5
             name: Ubuntu 24.04 → Raspberry Pi 5 🚧
             status: not-supported-yet
             status_label: Not Supported Yet
@@ -90,7 +90,7 @@ jobs:
             device_name: Raspberry Pi 5
             transport: lan
 
-          - id: windows-11__raspberry-pi-5
+          - id: windows-11-to-raspberry-pi-5
             name: Windows 11 → Raspberry Pi 5 🚧
             status: not-supported-yet
             status_label: Not Supported Yet
@@ -102,7 +102,7 @@ jobs:
             device_name: Raspberry Pi 5
             transport: lan
 
-          - id: macos-26__esp32-c6
+          - id: macos-26-to-esp32-c6
             name: macOS 26 → ESP32-C6 🚧
             status: not-supported-yet
             status_label: Not Supported Yet
@@ -114,7 +114,7 @@ jobs:
             device_name: ESP32-C6
             transport: ble
 
-          - id: ubuntu-24-04__esp32-c6
+          - id: ubuntu-24-04-to-esp32-c6
             name: Ubuntu 24.04 → ESP32-C6 🚧
             status: not-supported-yet
             status_label: Not Supported Yet
@@ -126,7 +126,7 @@ jobs:
             device_name: ESP32-C6
             transport: ble
 
-          - id: windows-11__esp32-c6
+          - id: windows-11-to-esp32-c6
             name: Windows 11 → ESP32-C6 🚧
             status: not-supported-yet
             status_label: Not Supported Yet
