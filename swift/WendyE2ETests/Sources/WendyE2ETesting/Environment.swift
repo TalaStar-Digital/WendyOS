@@ -43,7 +43,7 @@ public enum Environment {
     }
 
     public static var testRecordsDirectory: String? {
-        value("WENDY_E2E_TEST_RECORDS_DIR")
+        value("WENDY_E2E_RECORDING_DIR") ?? value("WENDY_E2E_TEST_RECORDS_DIR")
     }
 
     private static func value(_ name: String) -> String? {

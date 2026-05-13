@@ -13,15 +13,15 @@ swift test --filter WendyE2ETests
 For reproducible command records:
 
 ```bash
-WENDY_E2E_TEST_RECORDS_DIR="$PWD/.build/e2e-test-records.current" \
+WENDY_E2E_RECORDING_DIR="$PWD/.build/e2e-recording.current" \
   swift test --filter WendyE2ETests
 ```
 
-To render the HTML report from the repository root:
+To render the HTML report from this package:
 
 ```bash
-.agents/skills/run-e2e-tests-and-analyze/render-e2e-report.py \
-  --records-dir swift/WendyE2ETests/.build/e2e-test-records.current
+swift run swift-e2e-testing report \
+  --records-dir .build/e2e-recording.current
 ```
 
 ## Behavioral spec workflow

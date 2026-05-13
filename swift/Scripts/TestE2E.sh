@@ -6,13 +6,13 @@ SWIFT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$SWIFT_DIR/.." && pwd)"
 PACKAGE_DIR="$SWIFT_DIR/WendyE2ETests"
 DEFAULT_FIXTURES_DIR="$REPO_ROOT/.github/swift-e2e-tests"
-DEFAULT_RECORDS_DIR="$PACKAGE_DIR/.build/e2e-test-records.current"
+DEFAULT_RECORDS_DIR="$PACKAGE_DIR/.build/e2e-recording.current"
 DEFAULT_ARTIFACT_DIR="$SWIFT_DIR/Build/E2E"
 
 FIXTURES_DIR="${WENDY_E2E_FIXTURES_DIR:-$DEFAULT_FIXTURES_DIR}"
-RECORDS_DIR="${WENDY_E2E_TEST_RECORDS_DIR:-$DEFAULT_RECORDS_DIR}"
+RECORDS_DIR="${WENDY_E2E_RECORDING_DIR:-${WENDY_E2E_TEST_RECORDS_DIR:-$DEFAULT_RECORDS_DIR}}"
 ARTIFACT_DIR="${WENDY_E2E_ARTIFACT_DIR:-$DEFAULT_ARTIFACT_DIR}"
-REPORT_ZIP="${WENDY_E2E_REPORT_ZIP:-$ARTIFACT_DIR/swift-e2e-test-reports.zip}"
+REPORT_ZIP="${WENDY_E2E_REPORT_ZIP:-$ARTIFACT_DIR/e2e-report.zip}"
 AGENT_USER="${WENDY_E2E_AGENT_USER:-}"
 AGENT_ADDRESS="${WENDY_E2E_AGENT_ADDRESS:-}"
 AGENT_WORKDIR="${WENDY_E2E_AGENT_WORKING_DIRECTORY:-}"
@@ -25,13 +25,13 @@ usage() {
 Usage: $(basename "$0") [OPTIONS]
 
 Run the WendyAgent Swift E2E tests and package the generated Markdown command
-records as a zip artifact.
+recording as a zip artifact.
 
 Options:
   --filter FILTER       Pass a SwiftPM test filter (can be repeated). If omitted,
                         WENDY_E2E_TEST_FILTERS may contain comma-separated
                         filters, otherwise the WendyE2ETests target is run.
-  --records-dir DIR     Directory for generated *.md command records.
+  --records-dir DIR     Directory for generated *.md command recording files.
   --artifact-dir DIR    Directory for the final zip artifact.
   --report-zip PATH     Path to the final zip artifact.
   --fixtures-dir DIR    Fixture directory exposed to tests.
@@ -39,7 +39,7 @@ Options:
   --agent-address HOST  Optional address for the agent machine; defaults to hostname.
   --agent-workdir DIR   Existing swift/ working directory to use for the agent.
   --verbose             Print each E2E machine command before it runs.
-  --no-report           Do not generate index.html from command records.
+  --no-report           Do not generate index.html from command recording files.
   --help                Show this help message.
 
 Environment:
@@ -48,7 +48,8 @@ Environment:
   WENDY_E2E_AGENT_ADDRESS             Optional address for the agent machine.
   WENDY_E2E_AGENT_WORKING_DIRECTORY   swift/ directory for the agent.
   WENDY_E2E_FIXTURES_DIR              Defaults to .github/swift-e2e-tests.
-  WENDY_E2E_TEST_RECORDS_DIR          Defaults to package .build records dir.
+  WENDY_E2E_RECORDING_DIR             Defaults to package .build recording dir.
+  WENDY_E2E_TEST_RECORDS_DIR          Backward-compatible alias for recording dir.
   WENDY_E2E_GENERATE_REPORT           true/false; generates index.html.
   WENDY_E2E_VERBOSE                   true/false; prints machine commands.
 EOF
@@ -66,7 +67,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --artifact-dir)
       ARTIFACT_DIR="$2"
-      REPORT_ZIP="$ARTIFACT_DIR/swift-e2e-test-reports.zip"
+      REPORT_ZIP="$ARTIFACT_DIR/e2e-report.zip"
       shift 2
       ;;
     --report-zip)
@@ -181,23 +182,33 @@ generate_html_report() {
 
 collect_reports() {
   local status="$1"
-  local staging_dir="$ARTIFACT_DIR/swift-e2e-test-reports"
+  local staging_dir="$ARTIFACT_DIR/e2e-report"
+  local recording_dir="$staging_dir/recording"
 
   rm -rf "$staging_dir" "$REPORT_ZIP"
-  mkdir -p "$staging_dir"
+  mkdir -p "$recording_dir"
 
   if [[ -d "$RECORDS_DIR" ]]; then
-    find "$RECORDS_DIR" -maxdepth 1 -type f \( -name '*.md' -o -name '*.html' \) -print0 \
+    find "$RECORDS_DIR" -maxdepth 1 -type f -name '*.md' -print0 \
       | while IFS= read -r -d '' file; do
-          cp "$file" "$staging_dir/"
+          cp "$file" "$recording_dir/"
         done
+  fi
+
+  if [[ "$GENERATE_REPORT" == "true" ]]; then
+    (
+      cd "$PACKAGE_DIR"
+      swift run swift-e2e-testing report \
+        --records-dir "$recording_dir" \
+        --output "$staging_dir/index.html"
+    )
   fi
 
   {
     echo "# Swift E2E Test Reports"
     echo
     echo "- Exit status: \`$status\`"
-    echo "- Records directory: \`$RECORDS_DIR\`"
+    echo "- Recording directory: \`$RECORDS_DIR\`"
     echo "- Fixtures directory: \`$FIXTURES_DIR\`"
     echo "- Verbose: \`$VERBOSE\`"
     echo "- HTML report: \`$GENERATE_REPORT\`"
@@ -208,7 +219,7 @@ collect_reports() {
     fi
     echo
     echo "## Files"
-    find "$staging_dir" -maxdepth 1 -type f | sort | sed "s#^$staging_dir/#- #"
+    find "$staging_dir" -type f | sort | sed "s#^$staging_dir/#- #"
   } > "$staging_dir/README.md"
 
   local report_zip_dir
@@ -238,7 +249,7 @@ fi
 echo "==> Running Swift E2E tests"
 echo "    Package:  $PACKAGE_DIR"
 echo "    Fixtures: $FIXTURES_DIR"
-echo "    Records:  $RECORDS_DIR"
+echo "    Recording: $RECORDS_DIR"
 echo "    Filters:  ${TEST_FILTERS[*]}"
 echo "    Verbose:  $VERBOSE"
 echo "    Report:   $GENERATE_REPORT"
@@ -250,6 +261,7 @@ set +e
 (
   cd "$PACKAGE_DIR"
   WENDY_E2E_FIXTURES_DIR="$FIXTURES_DIR" \
+  WENDY_E2E_RECORDING_DIR="$RECORDS_DIR" \
   WENDY_E2E_TEST_RECORDS_DIR="$RECORDS_DIR" \
   WENDY_E2E_AGENT_USER="$AGENT_USER" \
   WENDY_E2E_AGENT_ADDRESS="$AGENT_ADDRESS" \

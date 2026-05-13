@@ -113,7 +113,7 @@ public struct Reporter: Sendable {
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyy-MM-dd.HH-mm-ss"
 
-        return "e2e-test-records.\(formatter.string(from: Date()))"
+        return "e2e-recording.\(formatter.string(from: Date()))"
     }()
 
     private static func reportURL(filePath: String, function: String) throws -> URL {

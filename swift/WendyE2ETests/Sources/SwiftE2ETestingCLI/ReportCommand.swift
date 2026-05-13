@@ -20,7 +20,7 @@ struct ReportCommand: ParsableCommand {
     @Option(name: .long, help: "HTML report template path.")
     var template: String?
 
-    @Option(name: .long, help: "Directory containing Markdown command records.")
+    @Option(name: .long, help: "Directory containing Markdown command recording files.")
     var recordsDir: String?
 
     @Option(name: [.short, .long], help: "Output HTML file path.")
@@ -94,9 +94,13 @@ private func defaultTestsDir(packageURL: URL) -> URL {
 
 private func latestRecordsDirectory(packageURL: URL) throws -> URL {
     let buildURL = packageURL.appendingPathComponent(".build")
-    let currentURL = buildURL.appendingPathComponent("e2e-test-records.current")
+    let currentURL = buildURL.appendingPathComponent("e2e-recording.current")
     if FileManager.default.fileExists(atPath: currentURL.path) {
         return currentURL
+    }
+    let legacyCurrentURL = buildURL.appendingPathComponent("e2e-test-records.current")
+    if FileManager.default.fileExists(atPath: legacyCurrentURL.path) {
+        return legacyCurrentURL
     }
 
     let contents = try FileManager.default.contentsOfDirectory(
@@ -104,14 +108,17 @@ private func latestRecordsDirectory(packageURL: URL) throws -> URL {
         includingPropertiesForKeys: [.isDirectoryKey]
     )
     let candidates = contents.filter { url in
-        guard url.lastPathComponent.hasPrefix("e2e-test-records.") else {
+        guard
+            url.lastPathComponent.hasPrefix("e2e-recording.")
+                || url.lastPathComponent.hasPrefix("e2e-test-records.")
+        else {
             return false
         }
         return (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }.sorted { $0.path < $1.path }
 
     guard let latest = candidates.last else {
-        throw ValidationError("No e2e-test-records.* directory found in \(buildURL.path)")
+        throw ValidationError("No e2e-recording.* directory found in \(buildURL.path)")
     }
     return latest
 }
@@ -296,7 +303,7 @@ private func renderReport(
 
     var template = try String(contentsOf: templateURL, encoding: .utf8)
     template = replacingFirstMatch(
-        #"\n  <!--\n    Wendy E2E AI Review HTML Template[\s\S]*?\n  -->"#,
+        #"\n  <!--\n    Wendy E2E Report HTML Template[\s\S]*?\n  -->"#,
         in: template,
         with: ""
     )
@@ -310,9 +317,15 @@ private func renderReport(
         throw ValidationError("Report template does not contain expected card/footer markers.")
     }
 
+    let testCards = renderCards(
+        files: files,
+        recordsURL: recordsURL,
+        recordLinkPrefix: recordLinkPrefix(recordsURL: recordsURL, outputURL: outputURL)
+    )
+
     template.replaceSubrange(
         start.lowerBound..<footerStart.lowerBound,
-        with: renderCards(files: files, recordsURL: recordsURL) + "\n\n"
+        with: testCards + "\n\n"
     )
 
     let replacements: [String: String] = [
@@ -361,7 +374,25 @@ private func renderReport(
     )
 }
 
-private func renderCards(files: [ReportTestFile], recordsURL: URL) -> String {
+private func recordLinkPrefix(recordsURL: URL, outputURL: URL) -> String {
+    let outputDirectoryPath = outputURL.deletingLastPathComponent().standardizedFileURL.path
+    let recordsPath = recordsURL.standardizedFileURL.path
+    let prefix =
+        outputDirectoryPath.hasSuffix("/") ? outputDirectoryPath : outputDirectoryPath + "/"
+
+    guard recordsPath.hasPrefix(prefix) else {
+        return ""
+    }
+
+    let relativePath = String(recordsPath.dropFirst(prefix.count))
+    return relativePath.isEmpty ? "" : relativePath + "/"
+}
+
+private func renderCards(
+    files: [ReportTestFile],
+    recordsURL: URL,
+    recordLinkPrefix: String
+) -> String {
     var cards: [String] = []
 
     for file in files {
@@ -378,7 +409,7 @@ private func renderCards(files: [ReportTestFile], recordsURL: URL) -> String {
             let recordURL = recordsURL.appendingPathComponent(test.recordName)
             let reportLink =
                 FileManager.default.fileExists(atPath: recordURL.path)
-                ? "<a class=\"report-button\" href=\"\(escapeHTML(test.recordName))\">Record</a>"
+                ? "<a class=\"report-button\" href=\"\(escapeHTML(recordLinkPrefix + test.recordName))\">Record</a>"
                 : ""
             let pathText = "\(test.suite) › \(test.name)"
 
