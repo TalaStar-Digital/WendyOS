@@ -117,6 +117,7 @@ type deviceHub struct {
 	mu     sync.Mutex
 	subs   map[int]chan videoFrame
 	nextID int
+	ctx    context.Context
 	cancel context.CancelFunc
 }
 
@@ -241,15 +242,19 @@ func (s *VideoService) ListVideoDevices(ctx context.Context, _ *agentpb.ListVide
 func (s *VideoService) getOrCreateHub(path string, req *agentpb.StreamVideoRequest) (h *deviceHub, id int, ch chan videoFrame) {
 	s.mu.Lock()
 	h, exists := s.hubs[path]
-	if exists {
+	if exists && h.ctx.Err() == nil {
 		id, ch = h.subscribe()
 		s.mu.Unlock()
 		return h, id, ch
 	}
+	// Hub is absent or its context is already cancelled (producer winding down).
+	// Evict it so runProducer's cleanup delete becomes a no-op, then start fresh.
+	delete(s.hubs, path)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h = &deviceHub{
 		subs:   make(map[int]chan videoFrame),
+		ctx:    ctx,
 		cancel: cancel,
 	}
 	id, ch = h.subscribe()
