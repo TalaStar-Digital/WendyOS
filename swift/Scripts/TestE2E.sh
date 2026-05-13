@@ -3,9 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SWIFT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPO_ROOT="$(cd "$SWIFT_DIR/.." && pwd)"
 PACKAGE_DIR="$SWIFT_DIR/WendyE2ETests"
-DEFAULT_FIXTURES_DIR="$REPO_ROOT/.github/swift-e2e-tests"
 
 default_run_id() {
   local timestamp
@@ -42,7 +40,6 @@ fi
 
 DEFAULT_REPORT_DIR="$SWIFT_DIR/Build/e2e-report.$RUN_ID"
 
-FIXTURES_DIR="${WENDY_E2E_FIXTURES_DIR:-$DEFAULT_FIXTURES_DIR}"
 REPORT_DIR="${WENDY_E2E_ARTIFACT_DIR:-$DEFAULT_REPORT_DIR}"
 RECORDING_DIR="${WENDY_E2E_RECORDING_DIR:-${WENDY_E2E_TEST_RECORDS_DIR:-}}"
 REPORT_ZIP="${WENDY_E2E_REPORT_ZIP:-}"
@@ -70,7 +67,6 @@ Options:
   --records-dir DIR    Deprecated alias for --recording-dir.
   --artifact-dir DIR    Directory for generated report files.
   --report-zip PATH     Path to the final zip artifact.
-  --fixtures-dir DIR    Fixture directory exposed to tests.
   --agent-user USER     Optional SSH user for the agent machine.
   --agent-address HOST  Optional address for the agent machine; defaults to hostname.
   --agent-workdir DIR   Existing swift/ working directory to use for the agent.
@@ -86,7 +82,6 @@ Environment:
   WENDY_E2E_AGENT_USER                Optional SSH user for the agent machine.
   WENDY_E2E_AGENT_ADDRESS             Optional address for the agent machine.
   WENDY_E2E_AGENT_WORKING_DIRECTORY   swift/ directory for the agent.
-  WENDY_E2E_FIXTURES_DIR              Defaults to .github/swift-e2e-tests.
   WENDY_E2E_ARTIFACT_DIR              Defaults to Build/e2e-report.<run-id>.
   WENDY_E2E_RECORDING_DIR             Defaults to Build/e2e-report.<run-id>/recording.
   WENDY_E2E_TEST_RECORDS_DIR          Backward-compatible alias for recording dir.
@@ -112,10 +107,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --report-zip)
       REPORT_ZIP="$2"
-      shift 2
-      ;;
-    --fixtures-dir)
-      FIXTURES_DIR="$2"
       shift 2
       ;;
     --agent-user)
@@ -223,12 +214,6 @@ else
   mkdir -p "$REPORT_RECORDING_DIR" "$RECORDING_DIR"
 fi
 
-if [[ ! -d "$FIXTURES_DIR" ]]; then
-  echo "ERROR: Swift E2E fixtures directory not found: $FIXTURES_DIR" >&2
-  exit 1
-fi
-FIXTURES_DIR="$(cd "$FIXTURES_DIR" && pwd)"
-
 ssh_target() {
   local host="$AGENT_ADDRESS"
   if [[ "$host" == *:* ]]; then
@@ -280,7 +265,6 @@ collect_reports() {
     echo "- Run ID: \`$RUN_ID\`"
     echo "- Report directory: \`$REPORT_DIR\`"
     echo "- Recording directory: \`$RECORDING_DIR\`"
-    echo "- Fixtures directory: \`$FIXTURES_DIR\`"
     echo "- Verbose: \`$VERBOSE\`"
     echo "- Parallel: \`$PARALLEL\`"
     echo "- HTML report: \`$GENERATE_REPORT\`"
@@ -325,7 +309,6 @@ echo "==> Running Swift E2E tests"
 echo "    Package:  $PACKAGE_DIR"
 echo "    Run ID:   $RUN_ID"
 echo "    Report:   $REPORT_DIR"
-echo "    Fixtures: $FIXTURES_DIR"
 echo "    Recording: $RECORDING_DIR"
 echo "    Filters:  ${TEST_FILTERS[*]}"
 echo "    Verbose:  $VERBOSE"
@@ -339,7 +322,6 @@ set +e
 (
   cd "$PACKAGE_DIR"
   WENDY_E2E_RUN_ID="$RUN_ID" \
-  WENDY_E2E_FIXTURES_DIR="$FIXTURES_DIR" \
   WENDY_E2E_RECORDING_DIR="$RECORDING_DIR" \
   WENDY_E2E_TEST_RECORDS_DIR="$RECORDING_DIR" \
   WENDY_E2E_AGENT_USER="$AGENT_USER" \
