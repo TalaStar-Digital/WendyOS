@@ -25,7 +25,7 @@ test: ## Run Swift package tests
 	bash ./Scripts/Test.sh
 
 test-e2e: ## Run Swift E2E tests, package records, and open the HTML report on macOS
-	bash ./Scripts/TestE2E.sh
+	bash ./Scripts/TestE2E.sh --parallel
 	@$(OPEN_E2E_REPORT)
 
 test-e2e-jetson-orin-nano: DEVICE ?= wendyos-jetson-orin-nano.local

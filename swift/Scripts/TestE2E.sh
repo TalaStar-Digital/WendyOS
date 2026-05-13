@@ -49,8 +49,10 @@ REPORT_ZIP="${WENDY_E2E_REPORT_ZIP:-}"
 AGENT_USER="${WENDY_E2E_AGENT_USER:-}"
 AGENT_ADDRESS="${WENDY_E2E_AGENT_ADDRESS:-}"
 AGENT_WORKDIR="${WENDY_E2E_AGENT_WORKING_DIRECTORY:-}"
+CLI_ADDRESS="${WENDY_E2E_CLI_ADDRESS:-}"
 VERBOSE="${WENDY_E2E_VERBOSE:-false}"
 GENERATE_REPORT="${WENDY_E2E_GENERATE_REPORT:-true}"
+PARALLEL="${WENDY_E2E_PARALLEL:-false}"
 TEST_FILTERS=()
 
 usage() {
@@ -71,6 +73,8 @@ Options:
   --agent-user USER     Optional SSH user for the agent machine.
   --agent-address HOST  Optional address for the agent machine; defaults to hostname.
   --agent-workdir DIR   Existing swift/ working directory to use for the agent.
+  --parallel            Allow SwiftPM to run tests in parallel. Only valid when
+                        both CLI and agent machines use local transport.
   --verbose             Print each E2E machine command before it runs.
   --no-report           Do not generate index.html from command recording files.
   --help                Show this help message.
@@ -86,6 +90,7 @@ Environment:
   WENDY_E2E_RECORDING_DIR             Defaults to Build/e2e-report.<run-id>/recording.
   WENDY_E2E_TEST_RECORDS_DIR          Backward-compatible alias for recording dir.
   WENDY_E2E_GENERATE_REPORT           true/false; generates index.html.
+  WENDY_E2E_PARALLEL                  true/false; enables SwiftPM parallel tests.
   WENDY_E2E_VERBOSE                   true/false; prints machine commands.
 EOF
 }
@@ -124,6 +129,10 @@ while [[ $# -gt 0 ]]; do
       AGENT_WORKDIR="$2"
       shift 2
       ;;
+    --parallel)
+      PARALLEL="true"
+      shift
+      ;;
     --verbose)
       VERBOSE="true"
       shift
@@ -154,6 +163,26 @@ fi
 
 if [[ ${#TEST_FILTERS[@]} -eq 0 ]]; then
   TEST_FILTERS+=("WendyE2ETests")
+fi
+
+parallel_normalized="$(printf '%s' "$PARALLEL" | tr '[:upper:]' '[:lower:]')"
+case "$parallel_normalized" in
+  true|1|yes|on)
+    PARALLEL="true"
+    ;;
+  false|0|no|off)
+    PARALLEL="false"
+    ;;
+  *)
+    echo "ERROR: WENDY_E2E_PARALLEL must be true or false." >&2
+    exit 64
+    ;;
+esac
+
+if [[ "$PARALLEL" == "true" && ( -n "$CLI_ADDRESS" || -n "$AGENT_ADDRESS" ) ]]; then
+  echo "ERROR: --parallel is only valid when CLI and agent machines are local." >&2
+  echo "Unset WENDY_E2E_CLI_ADDRESS and WENDY_E2E_AGENT_ADDRESS, or omit --parallel." >&2
+  exit 64
 fi
 
 absolute_dir_path() {
@@ -251,6 +280,7 @@ collect_reports() {
     echo "- Recording directory: \`$RECORDS_DIR\`"
     echo "- Fixtures directory: \`$FIXTURES_DIR\`"
     echo "- Verbose: \`$VERBOSE\`"
+    echo "- Parallel: \`$PARALLEL\`"
     echo "- HTML report: \`$GENERATE_REPORT\`"
     if [[ -n "$AGENT_ADDRESS" ]]; then
       echo "- Agent user: \`${AGENT_USER:-<none>}\`"
@@ -278,7 +308,10 @@ collect_reports() {
   echo "==> Wrote Swift E2E reports zip: $report_zip"
 }
 
-SWIFT_TEST_ARGS=("test" "--no-parallel")
+SWIFT_TEST_ARGS=("test")
+if [[ "$PARALLEL" != "true" ]]; then
+  SWIFT_TEST_ARGS+=("--no-parallel")
+fi
 if [[ ${#TEST_FILTERS[@]} -eq 1 ]]; then
   SWIFT_TEST_ARGS+=("--filter" "${TEST_FILTERS[0]}")
 else
@@ -294,6 +327,7 @@ echo "    Fixtures: $FIXTURES_DIR"
 echo "    Recording: $RECORDS_DIR"
 echo "    Filters:  ${TEST_FILTERS[*]}"
 echo "    Verbose:  $VERBOSE"
+echo "    Parallel: $PARALLEL"
 echo "    HTML:     $GENERATE_REPORT"
 if [[ -n "$AGENT_ADDRESS" ]]; then
   echo "    Agent:   $(ssh_target):${AGENT_WORKDIR:-<default>}"
@@ -309,6 +343,7 @@ set +e
   WENDY_E2E_AGENT_USER="$AGENT_USER" \
   WENDY_E2E_AGENT_ADDRESS="$AGENT_ADDRESS" \
   WENDY_E2E_AGENT_WORKING_DIRECTORY="$AGENT_WORKDIR" \
+  WENDY_E2E_PARALLEL="$PARALLEL" \
   WENDY_E2E_VERBOSE="$VERBOSE" \
   swift "${SWIFT_TEST_ARGS[@]}"
 )
