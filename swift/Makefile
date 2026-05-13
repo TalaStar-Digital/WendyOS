@@ -8,7 +8,7 @@ LIMA_E2E_UBUNTU_INSTANCE ?= wendy-e2e-ubuntu-lts
 LIMA_E2E_REPO_ROOT := $(abspath ..)
 LIMA_E2E_SWIFT_DIR := $(abspath .)
 
-.PHONY: help format lint test test-e2e test-e2e-jetson-orin-nano test-e2e-raspberry-pi-5 test-e2e-mac-mini ubuntu reference proto build build-cli build-dev run reset-mac-app-settings reset-mac-app-tcc reset-mac-app quit clean
+.PHONY: help format lint test test-e2e test-e2e-jetson-orin-nano test-e2e-raspberry-pi-5 test-e2e-mac-mini ubuntu reference proto build build-cli build-dev agent-start reset-mac-app-settings reset-mac-app-tcc reset-mac-app agent-stop clean
 
 help: ## Show this help message
 	@echo 'Usage:'
@@ -85,8 +85,8 @@ build-cli: ## Build the Go CLI in ../go
 build-dev: ## Build and package a dev-signed macOS app without notarization
 	OUTPUT_DIR='$(OUTPUT_DIR)' bash ./Scripts/Build.sh --dev
 
-run: ## Quit, build, and open the WendyAgentMac app
-	@$(MAKE) quit
+agent-start: ## Stop, build, and open the WendyAgentMac app
+	@$(MAKE) agent-stop
 	@$(MAKE) build-dev
 	open Build/WendyAgentMac.app
 
@@ -98,5 +98,5 @@ reset-mac-app-tcc: ## Reset WendyAgentMac TCC permissions
 
 reset-mac-app: reset-mac-app-settings reset-mac-app-tcc ## Reset WendyAgentMac settings and TCC permissions
 
-quit: ## Quit WendyAgentMac and fail if it is still running after 10 seconds
+agent-stop: ## Quit WendyAgentMac and fail if it is still running after 10 seconds
 	./Scripts/Quit.sh
