@@ -206,7 +206,7 @@
 
     .summary {
       display: grid;
-      grid-template-columns: repeat(4, minmax(110px, 1fr));
+      grid-template-columns: repeat(5, minmax(90px, 1fr));
       gap: 8px;
       margin: 12px 0;
     }
@@ -234,7 +234,7 @@
     }
 
     .compact-stats {
-      min-width: min(440px, 100%);
+      min-width: min(520px, 100%);
     }
 
     .filter-bar {
@@ -286,6 +286,12 @@
       color: var(--amber);
       background: var(--amber-bg);
       border-color: var(--amber-line);
+    }
+
+    .filter-button[data-filter="unknown"] {
+      color: var(--muted);
+      background: var(--soft);
+      border-color: var(--line);
     }
 
     .filter-button[data-filter="fail"],
@@ -387,7 +393,14 @@
       border: 1px solid var(--amber-line);
     }
 
-    .test-summary .badge.skipped {
+    .badge.unknown {
+      color: var(--muted);
+      background: var(--soft);
+      border: 1px solid var(--line);
+    }
+
+    .test-summary .badge.skipped,
+    .test-summary .badge.unknown {
       display: inline-block;
       width: auto;
       min-width: 0;
@@ -738,7 +751,7 @@
     sections. This template is intended to list every E2E test, including
     passed tests, disabled/skipped tests, and tests without // AI: review
     comments. For checklist and test statuses, use one of: pass, concern,
-    fail, skipped, no-ai.
+    fail, skipped, unknown, no-ai.
 
     Command run details are optional but recommended for every test that ran
     commands. Fill them from the matching Markdown command record. Render each
@@ -749,8 +762,8 @@
     skipped reasons for skipped tests.
 
     The filter bar expects every test details row to have data-test-status set
-    to pass, skipped, or fail. Rows with generated AI reports that need human
-    review should set data-has-ai-analysis to true and render the inline
+    to pass, skipped, fail, or unknown. Rows with generated AI reports that
+    need human review should set data-has-ai-analysis to true and render the inline
     TEST_AI_FILTER_ANALYSIS block. Activating the AI filter reveals that inline
     Markdown report verbatim under each matching test line. The search field filters
     against the row text content, including suite name, test title, command
@@ -776,6 +789,7 @@
           <div class="metric"><strong>{{TESTS_PASSED_COUNT}}</strong><span>Passed</span></div>
           <div class="metric"><strong>{{TESTS_SKIPPED_COUNT}}</strong><span>Skipped</span></div>
           <div class="metric"><strong>{{TESTS_FAILED_COUNT}}</strong><span>Failed</span></div>
+          <div class="metric"><strong>{{TESTS_UNKNOWN_COUNT}}</strong><span>Unknown</span></div>
           <div class="metric"><strong>{{COMMAND_RUN_COUNT}}</strong><span>Commands</span></div>
         </section>
       </div>
@@ -787,6 +801,7 @@
       <button class="filter-button" type="button" data-filter="pass" aria-pressed="false">Passed</button>
       <button class="filter-button" type="button" data-filter="skipped" aria-pressed="false">Skipped</button>
       <button class="filter-button" type="button" data-filter="fail" aria-pressed="false">Failed</button>
+      <button class="filter-button" type="button" data-filter="unknown" aria-pressed="false">Unknown</button>
       <button class="filter-button" type="button" data-filter="ai" aria-pressed="false">AI</button>
       <input class="search-field" type="search" data-search placeholder="Search tests, commands, stdout, stderr…" aria-label="Search tests, commands, stdout, and stderr" />
       <span class="filter-count" data-filter-count>{{VISIBLE_TEST_COUNT}} of {{TOTAL_TEST_COUNT}} tests shown</span>
@@ -857,7 +872,7 @@
     </section>
 
     <footer>
-      Recording: <code>{{RECORDS_DIRECTORY}}</code>
+      Recording: <code>{{RECORDING_DIRECTORY}}</code>
     </footer>
   </main>
   <script>

@@ -10,15 +10,15 @@ From this package:
 swift test --filter WendyE2ETests
 ```
 
-From `swift/`, the helper script writes command records to
-`Build/e2e-report.<run-id>/recording` and the HTML report to
+From `swift/`, the helper script writes command recordings and Swift Testing
+results to `Build/e2e-report.<run-id>/recording` and the HTML report to
 `Build/e2e-report.<run-id>/index.html`:
 
 ```bash
 bash Scripts/TestE2E.sh
 ```
 
-For reproducible command records when invoking SwiftPM directly:
+For reproducible command recordings when invoking SwiftPM directly:
 
 ```bash
 WENDY_E2E_RECORDING_DIR="$PWD/.build/e2e-recording.current" \
@@ -29,7 +29,7 @@ To render the HTML report from this package:
 
 ```bash
 swift run swift-e2e-testing report \
-  --records-dir .build/e2e-recording.current
+  --recording-dir .build/e2e-recording.current
 ```
 
 ## Behavioral spec workflow
@@ -149,7 +149,7 @@ The test body is the requirements layer. Assertions express the precise contract
 - filesystem/config side effects
 - non-mutation on failure
 - platform-specific behavior
-- command records/evidence
+- command recordings/evidence
 
 As repeated patterns emerge, evolve the E2E DSL so requirements read naturally in code. The goal is not a decorative DSL; the goal is test bodies that read like executable requirements and fail with useful diagnostics.
 

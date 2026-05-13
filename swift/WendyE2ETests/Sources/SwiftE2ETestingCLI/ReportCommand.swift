@@ -1,13 +1,17 @@
 import ArgumentParser
 import Foundation
 
+#if canImport(FoundationXML)
+    import FoundationXML
+#endif
+
 struct ReportCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "report",
-        abstract: "Generate an HTML report from Swift E2E command records.",
+        abstract: "Generate an HTML report from a Swift E2E recording.",
         discussion: """
             Generates the same static HTML report used by the E2E review skill,
-            using Swift test sources and an existing command records directory.
+            using Swift test sources and an existing E2E recording directory.
             """
     )
 
@@ -20,8 +24,11 @@ struct ReportCommand: ParsableCommand {
     @Option(name: .long, help: "HTML report template path.")
     var template: String?
 
-    @Option(name: .long, help: "Directory containing Markdown command recording files.")
-    var recordsDir: String?
+    @Option(
+        name: [.customLong("recording-dir"), .customLong("records-dir")],
+        help: "Directory containing E2E command recordings and Swift Testing results."
+    )
+    var recordingDir: String?
 
     @Option(name: [.short, .long], help: "Output HTML file path.")
     var output: String?
@@ -36,18 +43,19 @@ struct ReportCommand: ParsableCommand {
                 ?? packageURL.appendingPathComponent("Support/e2e-report.template.html")
                 .path
         )
-        let recordsURL =
-            try recordsDir.map { URL(fileURLWithPath: $0) }
-            ?? latestRecordsDirectory(packageURL: packageURL)
+        let recordingURL =
+            try recordingDir.map { URL(fileURLWithPath: $0) }
+            ?? latestRecordingDirectory(packageURL: packageURL)
         let outputURL = URL(
-            fileURLWithPath: output ?? recordsURL.appendingPathComponent("index.html").path
+            fileURLWithPath: output ?? recordingURL.appendingPathComponent("index.html").path
         )
 
-        let records = try loadRecords(in: recordsURL)
-        let files = try parseTests(in: testsURL, records: records)
+        let records = try loadRecords(in: recordingURL)
+        let testResults = try loadTestResults(in: recordingURL)
+        let files = try parseTests(in: testsURL, records: records, testResults: testResults)
         try renderReport(
             templateURL: templateURL,
-            recordsURL: recordsURL,
+            recordingURL: recordingURL,
             files: files,
             outputURL: outputURL
         )
@@ -67,12 +75,64 @@ private struct CommandRun {
     var stderr = ""
 }
 
+private struct TestResultKey: Hashable {
+    var suite: String
+    var name: String
+}
+
+private enum ReportTestStatus {
+    case passed
+    case failed(String?)
+    case skipped(String?)
+    case unknown
+
+    var statusClass: String {
+        switch self {
+        case .passed:
+            return "pass"
+        case .failed:
+            return "fail"
+        case .skipped:
+            return "skipped"
+        case .unknown:
+            return "unknown"
+        }
+    }
+
+    var statusText: String {
+        switch self {
+        case .passed:
+            return "Passed"
+        case .failed:
+            return "Failed"
+        case .skipped:
+            return "Skipped"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+
+    var detail: String? {
+        switch self {
+        case .failed(let message):
+            return message
+        case .skipped(let reason):
+            return reason
+        case .unknown:
+            return "No Swift Testing result was found for this test in the recording."
+        case .passed:
+            return nil
+        }
+    }
+}
+
 private struct ReportTestCase {
     var fileName: String
     var suite: String
     var name: String
     var funcLine: Int
     var disabled: String?
+    var status: ReportTestStatus
     var nextLine = 0
     var aiItems: [String] = []
     var recordName = ""
@@ -92,7 +152,7 @@ private func defaultTestsDir(packageURL: URL) -> URL {
     return packageURL.appendingPathComponent("Tests")
 }
 
-private func latestRecordsDirectory(packageURL: URL) throws -> URL {
+private func latestRecordingDirectory(packageURL: URL) throws -> URL {
     let buildURL = packageURL.appendingPathComponent(".build")
     let currentURL = buildURL.appendingPathComponent("e2e-recording.current")
     if FileManager.default.fileExists(atPath: currentURL.path) {
@@ -123,9 +183,9 @@ private func latestRecordsDirectory(packageURL: URL) throws -> URL {
     return latest
 }
 
-private func loadRecords(in recordsURL: URL) throws -> [String: [CommandRun]] {
+private func loadRecords(in recordingURL: URL) throws -> [String: [CommandRun]] {
     let recordURLs = try FileManager.default.contentsOfDirectory(
-        at: recordsURL,
+        at: recordingURL,
         includingPropertiesForKeys: nil
     ).filter { $0.pathExtension == "md" }
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
@@ -168,9 +228,145 @@ private func fenced(label: String, in text: String) -> String {
     firstMatch("### \(label)\\n\\n```text\\n([\\s\\S]*?)\\n```", in: text) ?? ""
 }
 
+private func loadTestResults(in recordingURL: URL) throws -> [TestResultKey: ReportTestStatus] {
+    let resultURL = recordingURL.appendingPathComponent("test-results-swift-testing.xml")
+    guard FileManager.default.fileExists(atPath: resultURL.path) else {
+        return [:]
+    }
+
+    let data = try Data(contentsOf: resultURL)
+    let parser = XUnitResultParser()
+    let xmlParser = XMLParser(data: data)
+    xmlParser.delegate = parser
+    guard xmlParser.parse() else {
+        throw ValidationError(
+            "Could not parse Swift Testing xUnit results: \(resultURL.path)"
+        )
+    }
+    return parser.results
+}
+
+private final class XUnitResultParser: NSObject, XMLParserDelegate {
+    var results: [TestResultKey: ReportTestStatus] = [:]
+
+    private var current: (key: TestResultKey, failure: String?, skipped: String?)?
+    private var currentElement: String?
+    private var currentText = ""
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String]
+    ) {
+        switch elementName {
+        case "testcase":
+            guard let classname = attributeDict["classname"], let name = attributeDict["name"],
+                let key = testResultKey(classname: classname, name: name)
+            else {
+                current = nil
+                return
+            }
+            current = (key: key, failure: nil, skipped: nil)
+        case "failure", "skipped":
+            currentElement = elementName
+            currentText = ""
+            guard var current else {
+                return
+            }
+            if elementName == "failure" {
+                current.failure = attributeDict["message"] ?? ""
+            } else {
+                current.skipped = attributeDict["message"] ?? ""
+            }
+            self.current = current
+        default:
+            break
+        }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if currentElement == "failure" || currentElement == "skipped" {
+            currentText.append(string)
+        }
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didEndElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?
+    ) {
+        switch elementName {
+        case "failure", "skipped":
+            guard var current else {
+                return
+            }
+            let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if elementName == "failure", current.failure?.isEmpty != false, !text.isEmpty {
+                current.failure = text
+            } else if elementName == "skipped", current.skipped?.isEmpty != false, !text.isEmpty {
+                current.skipped = text
+            }
+            self.current = current
+            currentElement = nil
+            currentText = ""
+        case "testcase":
+            guard let current else {
+                return
+            }
+            if let skipped = current.skipped {
+                results[current.key] = .skipped(skipped.isEmpty ? nil : skipped)
+            } else if let failure = current.failure {
+                results[current.key] = .failed(failure.isEmpty ? nil : failure)
+            } else {
+                results[current.key] = .passed
+            }
+            self.current = nil
+        default:
+            break
+        }
+    }
+}
+
+private func testResultKey(classname: String, name: String) -> TestResultKey? {
+    let suite = normalizedClassname(classname)
+    let testName = normalizedTestName(name)
+    guard !suite.isEmpty, !testName.isEmpty else {
+        return nil
+    }
+    return TestResultKey(suite: suite, name: testName)
+}
+
+private func normalizedClassname(_ classname: String) -> String {
+    if classname.last == "`", let start = classname.dropLast().lastIndex(of: "`") {
+        let suiteStart = classname.index(after: start)
+        return String(classname[suiteStart..<classname.index(before: classname.endIndex)])
+    }
+
+    return stripBackticks(String(classname.split(separator: ".").last ?? ""))
+}
+
+private func normalizedTestName(_ name: String) -> String {
+    var value = name
+    if value.hasSuffix("()") {
+        value.removeLast(2)
+    }
+    return stripBackticks(value)
+}
+
+private func stripBackticks(_ value: String) -> String {
+    if value.first == "`", value.last == "`" {
+        return String(value.dropFirst().dropLast())
+    }
+    return value
+}
+
 private func parseTests(
     in testsURL: URL,
-    records: [String: [CommandRun]]
+    records: [String: [CommandRun]],
+    testResults: [TestResultKey: ReportTestStatus]
 ) throws -> [ReportTestFile] {
     let sourceURLs = try swiftTestFiles(in: testsURL)
     var files: [ReportTestFile] = []
@@ -207,7 +403,8 @@ private func parseTests(
                         suite: suite,
                         name: functionName,
                         funcLine: lineNumber,
-                        disabled: test.disabled
+                        disabled: test.disabled,
+                        status: test.disabled.map { .skipped($0) } ?? .unknown
                     )
                 )
                 pendingTest = nil
@@ -227,6 +424,10 @@ private func parseTests(
                 command.sourceFile == sourceURL.lastPathComponent
                     && tests[testIndex].funcLine <= command.sourceLine
                     && command.sourceLine < nextLine
+            }
+            let key = TestResultKey(suite: tests[testIndex].suite, name: tests[testIndex].name)
+            if let status = testResults[key] {
+                tests[testIndex].status = status
             }
         }
 
@@ -291,15 +492,17 @@ private func extractAIItems(from lines: [String]) -> [String] {
 
 private func renderReport(
     templateURL: URL,
-    recordsURL: URL,
+    recordingURL: URL,
     files: [ReportTestFile],
     outputURL: URL
 ) throws {
-    let passed = files.flatMap(\.tests).filter { $0.disabled == nil }.count
-    let skipped = files.flatMap(\.tests).filter { $0.disabled != nil }.count
-    let failed = 0
-    let total = passed + skipped + failed
-    let commandCount = files.flatMap(\.tests).map(\.commands.count).reduce(0, +)
+    let tests = files.flatMap(\.tests)
+    let passed = tests.filter { $0.status.statusClass == "pass" }.count
+    let skipped = tests.filter { $0.status.statusClass == "skipped" }.count
+    let failed = tests.filter { $0.status.statusClass == "fail" }.count
+    let unknown = tests.filter { $0.status.statusClass == "unknown" }.count
+    let total = tests.count
+    let commandCount = tests.map(\.commands.count).reduce(0, +)
 
     var template = try String(contentsOf: templateURL, encoding: .utf8)
     template = replacingFirstMatch(
@@ -319,8 +522,8 @@ private func renderReport(
 
     let testCards = renderCards(
         files: files,
-        recordsURL: recordsURL,
-        recordLinkPrefix: recordLinkPrefix(recordsURL: recordsURL, outputURL: outputURL)
+        recordingURL: recordingURL,
+        recordLinkPrefix: recordLinkPrefix(recordingURL: recordingURL, outputURL: outputURL)
     )
 
     template.replaceSubrange(
@@ -332,20 +535,22 @@ private func renderReport(
         "{{REPORT_TITLE}}": "Wendy E2E Report",
         "{{REPORT_HEADING}}": "Wendy E2E Report",
         "{{REPORT_SUMMARY}}":
-            "Generated from Swift E2E tests. Includes active, disabled, AI-reviewed tests, and captured command records.",
+            "Generated from Swift E2E tests, Swift Testing results, and captured command recordings.",
         "{{TESTS_PASSED_COUNT}}": String(passed),
         "{{TESTS_SKIPPED_COUNT}}": String(skipped),
         "{{TESTS_FAILED_COUNT}}": String(failed),
+        "{{TESTS_UNKNOWN_COUNT}}": String(unknown),
         "{{COMMAND_RUN_COUNT}}": String(commandCount),
         "{{VISIBLE_TEST_COUNT}}": String(total),
         "{{TOTAL_TEST_COUNT}}": String(total),
-        "{{RECORDS_DIRECTORY}}": recordsURL.path,
+        "{{RECORDING_DIRECTORY}}": recordingURL.path,
     ]
     let rawPlaceholders: Set<String> = [
         "{{REPORT_TITLE}}",
         "{{TESTS_PASSED_COUNT}}",
         "{{TESTS_SKIPPED_COUNT}}",
         "{{TESTS_FAILED_COUNT}}",
+        "{{TESTS_UNKNOWN_COUNT}}",
         "{{COMMAND_RUN_COUNT}}",
         "{{VISIBLE_TEST_COUNT}}",
         "{{TOTAL_TEST_COUNT}}",
@@ -370,27 +575,27 @@ private func renderReport(
 
     print(outputURL.path)
     print(
-        "tests=\(total) passed=\(passed) skipped=\(skipped) failed=\(failed) commands=\(commandCount)"
+        "tests=\(total) passed=\(passed) skipped=\(skipped) failed=\(failed) unknown=\(unknown) commands=\(commandCount)"
     )
 }
 
-private func recordLinkPrefix(recordsURL: URL, outputURL: URL) -> String {
+private func recordLinkPrefix(recordingURL: URL, outputURL: URL) -> String {
     let outputDirectoryPath = outputURL.deletingLastPathComponent().standardizedFileURL.path
-    let recordsPath = recordsURL.standardizedFileURL.path
+    let recordingPath = recordingURL.standardizedFileURL.path
     let prefix =
         outputDirectoryPath.hasSuffix("/") ? outputDirectoryPath : outputDirectoryPath + "/"
 
-    guard recordsPath.hasPrefix(prefix) else {
+    guard recordingPath.hasPrefix(prefix) else {
         return ""
     }
 
-    let relativePath = String(recordsPath.dropFirst(prefix.count))
+    let relativePath = String(recordingPath.dropFirst(prefix.count))
     return relativePath.isEmpty ? "" : relativePath + "/"
 }
 
 private func renderCards(
     files: [ReportTestFile],
-    recordsURL: URL,
+    recordingURL: URL,
     recordLinkPrefix: String
 ) -> String {
     var cards: [String] = []
@@ -403,10 +608,10 @@ private func renderCards(
         cards.append("<div class=\"suite-group\">")
 
         for test in file.tests {
-            let statusClass = test.disabled == nil ? "pass" : "skipped"
-            let statusText = test.disabled == nil ? "Passed" : "Skipped"
+            let statusClass = test.status.statusClass
+            let statusText = test.status.statusText
             let hasAI = test.aiItems.isEmpty ? "false" : "true"
-            let recordURL = recordsURL.appendingPathComponent(test.recordName)
+            let recordURL = recordingURL.appendingPathComponent(test.recordName)
             let reportLink =
                 FileManager.default.fileExists(atPath: recordURL.path)
                 ? "<a class=\"report-button\" href=\"\(escapeHTML(recordLinkPrefix + test.recordName))\">Record</a>"
@@ -421,8 +626,8 @@ private func renderCards(
             )
 
             var body: [String] = []
-            if let disabled = test.disabled {
-                body.append("<p class=\"skip-reason\">\(escapeHTML(disabled))</p>")
+            if let detail = test.status.detail {
+                body.append("<p class=\"skip-reason\">\(escapeHTML(detail))</p>")
             }
             body.append(renderAI(test))
             body.append(renderCommands(test.commands))
