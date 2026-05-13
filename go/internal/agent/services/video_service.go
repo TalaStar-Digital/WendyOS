@@ -440,12 +440,25 @@ func (s *VideoService) streamV4L2Native(ctx context.Context, broadcast func([]by
 		unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocStreamoff, uintptr(unsafe.Pointer(&bufType))) //nolint:errcheck
 	}()
 
+	pollFds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 	var framesSent int
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+
+		// Poll with a short timeout so context cancellation is noticed quickly.
+		// VIDIOC_DQBUF blocks until a buffer arrives; without this a cancelled
+		// context can wait up to one full frame period before the producer exits,
+		// holding the device fd and delaying the next StreamVideo caller.
+		ready, err := unix.Poll(pollFds, 100)
+		if err == unix.EINTR || (err == nil && ready == 0) {
+			continue // timeout or signal — re-check ctx.Done
+		}
+		if err != nil {
+			return status.Errorf(codes.Internal, "poll %s: %v", path, err)
 		}
 
 		var dqbuf v4l2Buf
