@@ -43,21 +43,51 @@ func isElevated() (bool, error) {
 
 // relaunchElevated re-launches the current executable with the original
 // arguments through the shell's "runas" verb, which triggers a UAC consent
-// prompt. The elevated child runs in a new console window. Returns nil when
-// the child started, or an error when the user declined the UAC prompt or
-// the launch otherwise failed.
-func relaunchElevated() error {
+// prompt. The elevated child runs in a new console window. extraArgs are
+// appended when they are not already present in os.Args (used to inject
+// flags like --device that were resolved interactively before elevation).
+// extraArgs must contain an even number of elements, treated as flag/value
+// pairs. Returns nil when the child started, or an error when the user
+// declined the UAC prompt or the launch otherwise failed.
+func relaunchElevated(extraArgs ...string) error {
+	if len(extraArgs)%2 != 0 {
+		return fmt.Errorf("relaunchElevated: extraArgs must be flag/value pairs, got %d elements", len(extraArgs))
+	}
+
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolving executable path: %w", err)
 	}
 
-	var quoted []string
-	for _, a := range os.Args[1:] {
-		quoted = append(quoted, syscall.EscapeArg(a))
+	args := os.Args[1:]
+	// Inject extra args that are not already present in the original invocation.
+	// We check by flag name (e.g. "--device") so we don't duplicate flags that
+	// were already supplied on the command line.
+	for i := 0; i < len(extraArgs); i += 2 {
+		flag := extraArgs[i]
+		already := false
+		for _, a := range args {
+			if a == flag || strings.HasPrefix(a, flag+"=") {
+				already = true
+				break
+			}
+		}
+		if !already {
+			args = append(args, flag, extraArgs[i+1])
+		}
 	}
-	params := strings.Join(quoted, " ")
 
+	var quotedArgs []string
+	for _, a := range args {
+		quotedArgs = append(quotedArgs, syscall.EscapeArg(a))
+	}
+	params := strings.Join(quotedArgs, " ")
+
+	// Launch the executable directly via ShellExecute. We deliberately do NOT
+	// wrap with `cmd.exe /k` here: syscall.EscapeArg only handles
+	// CreateProcess-style quoting, not cmd.exe metacharacters (%, &, |, <, >,
+	// ^), so an arg containing those would be interpreted by cmd.exe and
+	// could expand env vars or chain commands in the elevated session.
 	verbPtr, err := syscall.UTF16PtrFromString("runas")
 	if err != nil {
 		return fmt.Errorf("encoding verb: %w", err)
@@ -85,18 +115,17 @@ func relaunchElevated() error {
 	return nil
 }
 
-// preAuthElevation ensures the current process has Administrator privileges,
-// which raw disk writes require on Windows. When not elevated, it offers a
-// UAC re-launch and, on success, exits this non-elevated process so the user
-// only has one live wendy process. When the user declines or the re-launch
-// fails, it returns a clear error so callers can abort before paying for any
-// network or disk work.
-func preAuthElevation() error {
+// requireElevation is the shared implementation for all elevation gates. It
+// checks whether the process is already elevated and, if not, prints purpose,
+// triggers a UAC re-launch via relaunchElevated, and exits so only the
+// elevated child continues. Returns an error when the user declines UAC or
+// the re-launch fails so the caller can abort cleanly.
+func requireElevation(purpose string, extraArgs ...string) error {
 	elevated, err := isElevated()
 	if err != nil {
 		// If the elevation check itself fails, don't block the caller —
-		// surface the warning and let the disk write fail with its own
-		// "Access denied" if we really were unprivileged.
+		// surface the warning and let the operation fail with its own error
+		// (e.g. "Access denied") if we really were unprivileged.
 		fmt.Fprintf(os.Stderr, "warning: could not determine elevation state: %v\n", err)
 		return nil
 	}
@@ -104,11 +133,11 @@ func preAuthElevation() error {
 		return nil
 	}
 
-	fmt.Println("Administrator privileges are required to write to a raw disk.")
+	fmt.Printf("Administrator privileges are required %s.\n", purpose)
 	fmt.Println("Requesting elevation — Windows will show a UAC consent prompt.")
 	fmt.Println("If you accept, this command will continue in a new elevated console window.")
 
-	if err := relaunchElevated(); err != nil {
+	if err := relaunchElevated(extraArgs...); err != nil {
 		return fmt.Errorf("administrator privileges required: %w. Right-click your terminal and choose \"Run as administrator\", then re-run this command", err)
 	}
 
@@ -117,6 +146,16 @@ func preAuthElevation() error {
 	fmt.Println("Elevated process started in a new window. Continuing there.")
 	os.Exit(0)
 	return nil
+}
+
+// preAuthElevation ensures the current process has Administrator privileges,
+// which raw disk writes require on Windows. When not elevated, it offers a
+// UAC re-launch and, on success, exits this non-elevated process so the user
+// only has one live wendy process. When the user declines or the re-launch
+// fails, it returns a clear error so callers can abort before paying for any
+// network or disk work.
+func preAuthElevation() error {
+	return requireElevation("to write to a raw disk")
 }
 
 // elevationHint returns a user-facing message about privilege requirements.

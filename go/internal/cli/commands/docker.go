@@ -815,16 +815,18 @@ func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, pl
 	cmd.Dir = dir
 	cmd.Stdout = streamOutput
 	cmd.Stderr = streamOutput
-	// Override DOCKER_CONFIG so the buildx client does not call the host
-	// credential helper (osxkeychain) when setting up the build session.
-	// Filter any existing DOCKER_CONFIG first so our value takes effect.
-	baseEnv := make([]string, 0, len(os.Environ()))
-	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "DOCKER_CONFIG=") {
-			baseEnv = append(baseEnv, e)
+	// On macOS/Linux, override DOCKER_CONFIG so the buildx client does not
+	// call the host credential helper when setting up the build session.
+	// On Windows we leave DOCKER_CONFIG untouched (cleanDockerConfigDir == "").
+	if cleanDockerConfigDir != "" {
+		baseEnv := make([]string, 0, len(os.Environ()))
+		for _, e := range os.Environ() {
+			if !strings.HasPrefix(e, "DOCKER_CONFIG=") {
+				baseEnv = append(baseEnv, e)
+			}
 		}
+		cmd.Env = append(baseEnv, "DOCKER_CONFIG="+cleanDockerConfigDir)
 	}
-	cmd.Env = append(baseEnv, "DOCKER_CONFIG="+cleanDockerConfigDir)
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("docker buildx build failed: %w", err)
