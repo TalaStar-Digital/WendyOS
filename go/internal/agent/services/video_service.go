@@ -31,6 +31,7 @@ const (
 	v4l2FieldNone           = 1
 
 	v4l2CapVideoCapture = 0x00000001
+	v4l2CapMetaCapture  = 0x00800000
 	v4l2CapDeviceCaps   = 0x80000000
 
 	vidiocQueryCap  = 0x80685600
@@ -97,7 +98,9 @@ func (c *v4l2Capability) hasVideoCapture() bool {
 	if caps&v4l2CapDeviceCaps != 0 {
 		caps = c.DeviceCaps
 	}
-	return caps&v4l2CapVideoCapture != 0
+	// Require VIDEO_CAPTURE and exclude metadata-only nodes (e.g. the UVC
+	// metadata companion device that some drivers expose on /dev/video1).
+	return caps&v4l2CapVideoCapture != 0 && caps&v4l2CapMetaCapture == 0
 }
 
 // nativeH264NotSupported is returned when the V4L2 device does not expose H.264 output.
@@ -119,6 +122,7 @@ type deviceHub struct {
 	nextID int
 	ctx    context.Context
 	cancel context.CancelFunc
+	done   chan struct{} // closed by runProducer after the device fd is released
 }
 
 // subscribe adds a new subscriber and returns its channel and integer ID.
@@ -240,22 +244,33 @@ func (s *VideoService) ListVideoDevices(ctx context.Context, _ *agentpb.ListVide
 // getOrCreateHub returns the existing hub for path, or starts a new producer and hub.
 // The caller receives a hub with at least one subscriber already registered (the returned id/ch).
 func (s *VideoService) getOrCreateHub(path string, req *agentpb.StreamVideoRequest) (h *deviceHub, id int, ch chan videoFrame) {
-	s.mu.Lock()
-	h, exists := s.hubs[path]
-	if exists && h.ctx.Err() == nil {
-		id, ch = h.subscribe()
+	for {
+		s.mu.Lock()
+		h, exists := s.hubs[path]
+		if !exists {
+			break
+		}
+		if h.ctx.Err() == nil {
+			id, ch = h.subscribe()
+			s.mu.Unlock()
+			return h, id, ch
+		}
+		// Hub is cancelling. Evict it and wait for the producer to release
+		// the device fd before opening a new one — otherwise VIDIOC_S_FMT
+		// returns EBUSY while the old streaming session is still active.
+		delete(s.hubs, path)
+		done := h.done
 		s.mu.Unlock()
-		return h, id, ch
+		<-done
 	}
-	// Hub is absent or its context is already cancelled (producer winding down).
-	// Evict it so runProducer's cleanup delete becomes a no-op, then start fresh.
-	delete(s.hubs, path)
+	// s.mu is held here (broke out of loop with no hub in map).
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h = &deviceHub{
 		subs:   make(map[int]chan videoFrame),
 		ctx:    ctx,
 		cancel: cancel,
+		done:   make(chan struct{}),
 	}
 	id, ch = h.subscribe()
 	s.hubs[path] = h
@@ -295,6 +310,10 @@ func (s *VideoService) runProducer(ctx context.Context, h *deviceHub, path strin
 		close(ch)
 	}
 	h.mu.Unlock()
+
+	// Signal that the device fd is fully released. getOrCreateHub waits on
+	// this before opening a new producer to avoid EBUSY on reconnect.
+	close(h.done)
 }
 
 // StreamVideo streams H.264 frames from a V4L2 camera.
