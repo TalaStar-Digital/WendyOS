@@ -22,20 +22,24 @@ lint: ## Lint Swift code using swift-format
 test: ## Run Swift package tests
 	bash ./Scripts/Test.sh
 
-test-e2e: ## Run Swift E2E tests and package command records
+test-e2e: ## Run Swift E2E tests, package records, and open the HTML report
 	bash ./Scripts/TestE2E.sh
+	open WendyE2ETests/.build/e2e-test-records.current/index.html
 
 test-e2e-jetson-orin-nano: DEVICE ?= wendyos-jetson-orin-nano.local
-test-e2e-jetson-orin-nano: ## Run Swift E2E tests against Jetson Orin Nano
+test-e2e-jetson-orin-nano: ## Run Swift E2E tests against Jetson Orin Nano and open the HTML report
 	WENDY_E2E_AGENT_OS=wendyOS bash ./Scripts/TestE2E.sh --agent-address $(DEVICE)
+	open WendyE2ETests/.build/e2e-test-records.current/index.html
 
 test-e2e-raspberry-pi-5: DEVICE ?= wendyos-raspberry-pi-5.local
-test-e2e-raspberry-pi-5: ## Run Swift E2E tests against Raspberry Pi 5
+test-e2e-raspberry-pi-5: ## Run Swift E2E tests against Raspberry Pi 5 and open the HTML report
 	WENDY_E2E_AGENT_OS=wendyOS bash ./Scripts/TestE2E.sh --agent-address $(DEVICE)
+	open WendyE2ETests/.build/e2e-test-records.current/index.html
 
 test-e2e-mac-mini: DEVICE ?= mac-mini.local
-test-e2e-mac-mini: ## Run Swift E2E tests against Mac mini
+test-e2e-mac-mini: ## Run Swift E2E tests against Mac mini and open the HTML report
 	WENDY_E2E_AGENT_OS=macOS bash ./Scripts/TestE2E.sh --agent-address $(DEVICE)
+	open WendyE2ETests/.build/e2e-test-records.current/index.html
 
 reference: ## Generate Swift E2E HTML reference documentation and open it
 	rm -rf Build/Reference
