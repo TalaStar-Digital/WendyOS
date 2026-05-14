@@ -77,15 +77,30 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 cliUsesRunDirectory
                 ? Self.runDirectoryPath("cli", "bin") ?? "\(cliSourceDirectory)/bin"
                 : "\(cliSourceDirectory)/bin"
-
-            if cliUsesRunDirectory {
-                for directory in [cliHomeDirectory, cliTemporaryDirectory, cliWorkingDirectory] {
-                    try FileManager.default.createDirectory(
-                        atPath: directory,
-                        withIntermediateDirectories: true
-                    )
-                }
-            }
+            let cliEnvironment = [
+                "HOME": cliHomeDirectory,
+                "PATH": "\(cliBinDirectory):$PATH",
+                "TMPDIR": cliTemporaryDirectory,
+                "WENDY_ANALYTICS": "false",
+            ]
+            let cliSetupMachine = Machine(
+                id: "cli-setup",
+                name: "CLI setup",
+                os: Environment.cliOS ?? .current,
+                tags: [.cli],
+                user: Environment.cliUser,
+                address: Environment.cliAddress,
+                workingDirectory: "/",
+                env: cliEnvironment
+            )
+            let cliSetup = try await Session.begin(
+                for: cliSetupMachine,
+                recorder: recorder
+            )
+            cliSession = cliSetup
+            try await cliSetup.sh(
+                "mkdir -p \"$HOME\" \"$TMPDIR\" \(Self.shellQuote(cliWorkingDirectory))"
+            )
 
             let cliMachine = Machine(
                 id: "cli",
@@ -95,12 +110,7 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 user: Environment.cliUser,
                 address: Environment.cliAddress,
                 workingDirectory: cliWorkingDirectory,
-                env: [
-                    "HOME": cliHomeDirectory,
-                    "PATH": "\(cliBinDirectory):$PATH",
-                    "TMPDIR": cliTemporaryDirectory,
-                    "WENDY_ANALYTICS": "false",
-                ]
+                env: cliEnvironment
             )
 
             var agentEnv: [String: String] = [:]
@@ -132,8 +142,6 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 recorder: recorder
             )
             agentSession = agent
-
-            try await cli.sh("mkdir -p \"$HOME\" \"$TMPDIR\"")
 
             return (cli, agent)
         } catch {
@@ -185,6 +193,10 @@ final class CLIAndAgentScenario: Scenario, Sendable {
         if let firstError {
             throw firstError
         }
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     private static func runDirectoryPath(_ components: String...) -> String? {
