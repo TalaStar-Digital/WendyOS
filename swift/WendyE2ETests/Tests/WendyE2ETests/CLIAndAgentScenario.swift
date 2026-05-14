@@ -45,7 +45,7 @@ final class CLIAndAgentScenario: Scenario, Sendable {
         var agentSession: Session?
 
         do {
-            let reporter = try Reporter(
+            let recorder = try Recorder(
                 filePath: filePath,
                 function: function,
                 line: line
@@ -84,12 +84,12 @@ final class CLIAndAgentScenario: Scenario, Sendable {
 
             let cli = try await Session.begin(
                 for: cliMachine,
-                reporter: reporter
+                recorder: recorder
             )
             cliSession = cli
             let agent = try await Session.begin(
                 for: agentMachine,
-                reporter: reporter
+                recorder: recorder
             )
             agentSession = agent
 

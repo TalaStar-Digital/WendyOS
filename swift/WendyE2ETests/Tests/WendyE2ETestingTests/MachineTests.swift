@@ -315,13 +315,13 @@ struct `session` {
 
     @Test
     func `dasherizes command record file names`() {
-        #expect(Reporter.slug("buildAgent(with:)") == "build-agent-with")
-        #expect(Reporter.slug("URLParserTests") == "url-parser-tests")
+        #expect(Recorder.slug("buildAgent(with:)") == "build-agent-with")
+        #expect(Recorder.slug("URLParserTests") == "url-parser-tests")
         #expect(
-            Reporter.slug("'--json' reports a missing device") == "json-reports-a-missing-device"
+            Recorder.slug("'--json' reports a missing device") == "json-reports-a-missing-device"
         )
         #expect(
-            Reporter.recordingFileName(
+            Recorder.recordingFileName(
                 filePath: "/tmp/WendyDeviceInfoTests.swift",
                 suite: "'wendy device info'",
                 testName: "'--device' selects an explicit device"

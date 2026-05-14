@@ -15,11 +15,11 @@ public struct Session: Sendable {
     public static func begin(
         for machine: Machine,
         verbose: Bool = false,
-        reporter: Reporter? = nil
+        recorder: Recorder? = nil
     ) async throws -> Session {
         let session = Session(
             machine: machine,
-            reporter: reporter,
+            recorder: recorder,
             verbose: verbose || Environment.verbose
         )
 
@@ -129,7 +129,7 @@ public struct Session: Sendable {
         )
         let duration = start.duration(to: .now)
 
-        self.reporter?.record(
+        self.recorder?.record(
             session: self,
             command: command,
             processIdentifier: String(describing: record.processIdentifier),
@@ -197,17 +197,17 @@ public struct Session: Sendable {
 
     private init(
         machine: Machine,
-        reporter: Reporter? = nil,
+        recorder: Recorder? = nil,
         verbose: Bool = false
     ) {
         self.machine = machine
-        self.reporter = reporter
+        self.recorder = recorder
         self.verbose = verbose
     }
 
     // MARK: - Private
 
-    private let reporter: Reporter?
+    private let recorder: Recorder?
     private let verbose: Bool
 
     private static func end(_ sessions: [Session]) async throws {

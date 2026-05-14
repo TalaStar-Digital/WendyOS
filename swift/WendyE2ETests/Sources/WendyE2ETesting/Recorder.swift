@@ -1,7 +1,7 @@
 import Foundation
 
-public struct Reporter: Sendable {
-    public let reportPath: String
+public struct Recorder: Sendable {
+    public let recordPath: String
 
     public init(
         filePath: String,
@@ -9,7 +9,7 @@ public struct Reporter: Sendable {
         line: Int
     ) throws {
         let identity = Self.testIdentity(filePath: filePath, function: function, line: line)
-        self.reportPath = try Self.reportURL(identity: identity).path
+        self.recordPath = try Self.recordURL(identity: identity).path
         self.source = Source(
             filePath: filePath,
             fileName: identity.fileName,
@@ -31,20 +31,20 @@ public struct Reporter: Sendable {
         invocationCommand: String
     ) {
         do {
-            let reportURL = URL(fileURLWithPath: self.reportPath, isDirectory: false)
-            let reportExists = FileManager.default.fileExists(atPath: reportURL.path)
+            let recordURL = URL(fileURLWithPath: self.recordPath, isDirectory: false)
+            let recordExists = FileManager.default.fileExists(atPath: recordURL.path)
 
-            if !reportExists {
-                try Self.reportHeader(source: self.source)
-                    .write(to: reportURL, atomically: true, encoding: .utf8)
+            if !recordExists {
+                try Self.recordHeader(source: self.source)
+                    .write(to: recordURL, atomically: true, encoding: .utf8)
             }
 
-            let reportHandle = try FileHandle(forWritingTo: reportURL)
-            defer { try? reportHandle.close() }
-            try reportHandle.seekToEnd()
-            try reportHandle.write(
+            let recordHandle = try FileHandle(forWritingTo: recordURL)
+            defer { try? recordHandle.close() }
+            try recordHandle.seekToEnd()
+            try recordHandle.write(
                 contentsOf: Data(
-                    Self.commandReport(
+                    Self.commandRecord(
                         session: session,
                         command: command,
                         filePath: self.source.filePath,
@@ -63,7 +63,7 @@ public struct Reporter: Sendable {
                 invocationCommand: invocationCommand
             )
         } catch {
-            Self.printToStandardError("Failed to write Wendy E2E command report: \(error)\n")
+            Self.printToStandardError("Failed to write Wendy E2E command recording: \(error)\n")
         }
     }
 
@@ -152,7 +152,7 @@ public struct Reporter: Sendable {
         return "e2e-recording.\(formatter.string(from: Date()))"
     }()
 
-    private static func reportURL(identity: TestIdentity) throws -> URL {
+    private static func recordURL(identity: TestIdentity) throws -> URL {
         let directoryURL = try Self.recordsDirectoryURL()
 
         return directoryURL.appendingPathComponent(
@@ -348,9 +348,9 @@ public struct Reporter: Sendable {
         }
     }
 
-    private static func reportHeader(source: Source) -> String {
+    private static func recordHeader(source: Source) -> String {
         """
-        # Wendy E2E test report
+        # Wendy E2E test recording
 
         - Source: `\(source.filePath)`
         - Suite: `\(source.suite)`
@@ -360,7 +360,7 @@ public struct Reporter: Sendable {
         """
     }
 
-    private static func commandReport(
+    private static func commandRecord(
         session: Session,
         command: String,
         filePath: String,
@@ -418,7 +418,7 @@ public struct Reporter: Sendable {
         session: Session,
         invocationCommand: String
     ) throws {
-        let scriptURL = URL(fileURLWithPath: self.reportPath, isDirectory: false)
+        let scriptURL = URL(fileURLWithPath: self.recordPath, isDirectory: false)
             .deletingPathExtension()
             .appendingPathExtension("sh")
         let scriptExists = FileManager.default.fileExists(atPath: scriptURL.path)
