@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/wendylabsinc/wendy/internal/agent/bluetooth"
 	"github.com/wendylabsinc/wendy/internal/agent/cdi"
@@ -238,7 +239,12 @@ func main() {
 			if brokerURL == "" {
 				brokerURL = brokerURLForCloudHost(cloudHost)
 			}
-			client := services.NewTunnelBrokerClient(logger, brokerURL, orgID, assetID)
+			_, chainPEM, _ := provisioningSvc.ProvisioningCerts()
+			if chainPEM == "" {
+				logger.Warn("CA chain PEM unavailable; cannot start tunnel broker (re-provision if this persists)")
+				return
+			}
+			client := services.NewTunnelBrokerClient(logger, brokerURL, orgID, assetID, chainPEM)
 			client.Run(ctx)
 		}()
 	}
@@ -361,6 +367,14 @@ func main() {
 		agentServer = grpc.NewServer(
 			grpc.UnaryInterceptor(interceptor.UnaryErrorInterceptor(logger)),
 			grpc.StreamInterceptor(interceptor.StreamErrorInterceptor(logger)),
+			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+				MinTime:             5 * time.Second,
+				PermitWithoutStream: true,
+			}),
+			grpc.KeepaliveParams(keepalive.ServerParameters{
+				Time:    30 * time.Second,
+				Timeout: 10 * time.Second,
+			}),
 		)
 		registerAllServices(agentServer)
 

@@ -247,6 +247,7 @@ func (s *VideoService) streamV4L2Native(ctx context.Context, stream grpc.ServerS
 		unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocStreamoff, uintptr(unsafe.Pointer(&bufType))) //nolint:errcheck
 	}()
 
+	var framesSent int
 	for {
 		select {
 		case <-ctx.Done():
@@ -259,14 +260,30 @@ func (s *VideoService) streamV4L2Native(ctx context.Context, stream grpc.ServerS
 		dqbuf.setMemory(v4l2MemoryMmap)
 
 		if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocDqbuf, uintptr(unsafe.Pointer(&dqbuf))); errno != 0 {
-			if errno == unix.EINTR {
+			if errno == unix.EINTR || errno == unix.EAGAIN {
 				continue
+			}
+			// Device accepted H264 format but failed before delivering any frame —
+			// fall back to the GStreamer software encoder path.
+			if framesSent == 0 {
+				return nativeH264NotSupported{msg: fmt.Sprintf("VIDIOC_DQBUF failed before first frame: %v", errno)}
 			}
 			return status.Errorf(codes.Internal, "VIDIOC_DQBUF: %v", errno)
 		}
 
 		idx := dqbuf.index()
 		n := dqbuf.bytesUsed()
+		if n == 0 {
+			// Empty buffer — requeue and skip.
+			var qbuf v4l2Buf
+			qbuf.setIndex(idx)
+			qbuf.setType(v4l2BufTypeVideoCapture)
+			qbuf.setMemory(v4l2MemoryMmap)
+			if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), vidiocQbuf, uintptr(unsafe.Pointer(&qbuf))); errno != 0 {
+				return status.Errorf(codes.Internal, "VIDIOC_QBUF: %v", errno)
+			}
+			continue
+		}
 		data := make([]byte, n)
 		copy(data, mapped[idx].data[:n])
 
@@ -276,6 +293,7 @@ func (s *VideoService) streamV4L2Native(ctx context.Context, stream grpc.ServerS
 		}); err != nil {
 			return err
 		}
+		framesSent++
 
 		// Re-queue the buffer.
 		var qbuf v4l2Buf
@@ -488,23 +506,32 @@ func buildGStreamerArgs(gstPath, devicePath string, req *agentpb.StreamVideoRequ
 	} else {
 		pipeline = fmt.Sprintf("%s ! %s ! fdsink fd=1", src, encoderSegment(encoder))
 	}
-	return append([]string{gstPath}, strings.Fields(pipeline)...)
+	// -q suppresses gst-launch's status messages (e.g. "Setting pipeline to PLAYING")
+	// from being written to stdout and corrupting the binary H264 stream.
+	return append([]string{gstPath, "-q"}, strings.Fields(pipeline)...)
 }
 
 // encoderSegment returns the GStreamer pipeline segment for the given encoder element.
-// H.264 encoders omit server-side h264parse — the annexb output is parsed by the client.
+// H.264 encoders force I420 (4:2:0) input to avoid 4:4:4 output paths that can make
+// encoders such as x264enc select profile 244 (High 4:4:4 Predictive), which
+// VideoToolbox and most hardware decoders reject. This input cap does not by itself
+// enforce a specific H.264 output profile; explicit profile caps are added only where needed
+// (for example, v4l2h264enc is capped to baseline below).
 func encoderSegment(encoder string) string {
 	switch encoder {
 	case "v4l2h264enc":
-		return "videoconvert ! v4l2h264enc ! video/x-h264,profile=baseline"
+		return "videoconvert ! video/x-raw,format=I420 ! v4l2h264enc ! video/x-h264,profile=baseline"
 	case "x264enc":
-		return "videoconvert ! x264enc tune=zerolatency"
+		return "videoconvert ! video/x-raw,format=I420 ! x264enc tune=zerolatency profile=high"
 	case "openh264enc":
-		return "videoconvert ! openh264enc"
+		return "videoconvert ! video/x-raw,format=I420 ! openh264enc"
+	case "avenc_h264":
+		return "videoconvert ! video/x-raw,format=I420 ! avenc_h264"
 	case "vp8enc":
 		// webmmux streamable=true writes headers that matroskademux can parse from a pipe.
 		return "videoconvert ! vp8enc deadline=1 ! webmmux streamable=true"
 	default:
-		return "videoconvert ! " + encoder
+		// For other H.264-family encoders, force I420 to avoid 4:4:4 profile selection.
+		return "videoconvert ! video/x-raw,format=I420 ! " + encoder
 	}
 }
