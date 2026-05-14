@@ -259,16 +259,31 @@ public struct Session: Sendable {
     }
 
     private static var localShellPath: String {
-        guard let shell = ProcessInfo.processInfo.environment["SHELL"], !shell.isEmpty else {
-            return "/bin/sh"
-        }
-
-        return shell
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/sh"
+        let normalizedShell = shell.isEmpty ? "/bin/sh" : shell
+        Self.preconditionPOSIXCompatibleShell(normalizedShell)
+        return normalizedShell
     }
 
     private static var localShellName: String {
         let name = URL(fileURLWithPath: Self.localShellPath, isDirectory: false).lastPathComponent
         return name.isEmpty ? "sh" : name
+    }
+
+    private static func preconditionPOSIXCompatibleShell(_ shell: String) {
+        let shellName = URL(fileURLWithPath: shell, isDirectory: false).lastPathComponent
+            .lowercased()
+        let unsupportedShells: Set<String> = ["csh", "fish", "pwsh", "powershell", "tcsh"]
+        precondition(
+            !unsupportedShells.contains(shellName),
+            """
+            Wendy E2E tests require SHELL to be a POSIX-compatible shell.
+            Unsupported SHELL: \(shell)
+            Use sh, bash, zsh, dash, or ksh. For example:
+              export SHELL=/bin/zsh
+            Then rerun the E2E command.
+            """
+        )
     }
 
     private func harnessPrefix() -> [String] {
