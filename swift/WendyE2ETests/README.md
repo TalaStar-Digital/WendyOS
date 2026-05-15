@@ -10,9 +10,10 @@ From this package:
 swift test --filter WendyE2ETests
 ```
 
-From `swift/`, the helper script writes the full run bundle to
-`Build/e2e-run.<run-id>/`, including the managed CLI binary, per-test
-sandboxes, Swift Testing results, command recordings, and `report.html`:
+From `swift/`, the helper script writes runner output to
+`Build/e2e/<run-id>/`, builds the managed CLI into the CLI run directory,
+writes isolated per-test CLI and agent sandboxes, captures Swift Testing
+results and command recordings, and renders `report.html`:
 
 ```bash
 bash Scripts/TestE2E.sh
@@ -21,11 +22,18 @@ bash Scripts/TestE2E.sh
 For reproducible command recordings when invoking SwiftPM directly:
 
 ```bash
-RUN_DIR="$PWD/.build/e2e-run.current"
-rm -rf "$RUN_DIR"
-mkdir -p "$RUN_DIR/cli/bin"
-(cd ../../go && go build -o "$RUN_DIR/cli/bin/wendy" ./cmd/wendy)
-WENDY_E2E_RUN_DIR="$RUN_DIR" swift test --filter WendyE2ETests
+RUN_ID="current"
+RUN_DIR="$PWD/.build/e2e/$RUN_ID"
+CLI_RUN_DIR="$HOME/wendy/e2e/$RUN_ID/cli"
+AGENT_RUN_DIR="$HOME/wendy/e2e/$RUN_ID/agent"
+rm -rf "$RUN_DIR" "$CLI_RUN_DIR" "$AGENT_RUN_DIR"
+mkdir -p "$CLI_RUN_DIR/bin" "$AGENT_RUN_DIR/bin"
+(cd ../../go && go build -o "$CLI_RUN_DIR/bin/wendy" ./cmd/wendy)
+WENDY_E2E_RUN_ID="$RUN_ID" \
+WENDY_E2E_RUN_DIR="$RUN_DIR" \
+WENDY_E2E_CLI_RUN_DIR="$CLI_RUN_DIR" \
+WENDY_E2E_AGENT_RUN_DIR="$AGENT_RUN_DIR" \
+swift test --filter WendyE2ETests
 ```
 
 Each implemented test writes recordings under
@@ -38,7 +46,7 @@ manual debugging while remaining browser-viewable from the HTML report.
 To render the HTML report from this package:
 
 ```bash
-swift run swift-e2e-testing report --run-dir .build/e2e-run.current
+swift run swift-e2e-testing report --run-dir .build/e2e/current
 ```
 
 ## Behavioral spec workflow

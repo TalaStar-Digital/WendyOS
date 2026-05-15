@@ -26,8 +26,12 @@ public enum Environment {
         value("WENDY_E2E_CLI_ADDRESS")
     }
 
-    public static var cliWorkingDirectory: String? {
-        value("WENDY_E2E_CLI_WORK_DIR")
+    public static var cliRunDirectory: String? {
+        value("WENDY_E2E_CLI_RUN_DIR")
+    }
+
+    public static var cliRepoDirectory: String? {
+        value("WENDY_E2E_CLI_REPO_DIR")
     }
 
     public static var agentOS: MachineOS? {
@@ -42,8 +46,12 @@ public enum Environment {
         value("WENDY_E2E_AGENT_ADDRESS")
     }
 
-    public static var agentWorkingDirectory: String? {
-        value("WENDY_E2E_AGENT_WORK_DIR")
+    public static var agentRunDirectory: String? {
+        value("WENDY_E2E_AGENT_RUN_DIR")
+    }
+
+    public static var agentRepoDirectory: String? {
+        value("WENDY_E2E_AGENT_REPO_DIR")
     }
 
     public static var testRecordsDirectory: String? {
@@ -61,6 +69,6 @@ public enum Environment {
         guard let value = value(name)?.lowercased() else {
             return false
         }
-        return ["1", "true", "yes", "on"].contains(value)
+        return ["1", "true", "yes", "on", "enabled"].contains(value)
     }
 }

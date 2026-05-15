@@ -311,7 +311,7 @@ public struct Session: Sendable {
         }
 
         if let workingDirectory = self.workingDirectory {
-            parts.append("cd \(Self.shellQuote(workingDirectory))")
+            parts.append("cd \(Self.shellEnvironmentValue(workingDirectory))")
         }
 
         return parts

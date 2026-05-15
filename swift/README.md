@@ -61,10 +61,11 @@ control:
   loopback. On Ubuntu it installs the required packages, Swift if needed, and
   SSH server settings for parallel test bursts.
 - `Scripts/TestE2E.sh` runs the Swift E2E test package, builds the managed CLI
-  into `Build/e2e-run.<run-id>/cli/bin/wendy`, writes per-test sandboxes and
-  recordings under `Build/e2e-run.<run-id>/tests`, and writes the HTML report to
-  `Build/e2e-run.<run-id>/report.html`. It accepts options such as `--filter`,
-  `--agent-address`, `--agent-user`, and `--verbose`.
+  into the CLI run directory, writes per-test sandboxes under the CLI and agent
+  run directories, writes recordings under `Build/e2e/<run-id>/tests`, and
+  writes the HTML report to `Build/e2e/<run-id>/report.html`. It accepts
+  options such as `--filter`, `--agent-address`, `--agent-user`, and
+  `--verbose`.
 
 Typical local setup and run:
 

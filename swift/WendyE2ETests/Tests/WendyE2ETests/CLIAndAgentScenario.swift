@@ -51,38 +51,46 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 line: line
             )
             let repositoryRootDirectoryURL = Self.repositoryRootDirectoryURL()
-            let cliSourceDirectory = repositoryRootDirectoryURL.appendingPathComponent("go").path
-            let testDirectoryURL = URL(
+            let testName = URL(fileURLWithPath: recorder.testDirectoryPath, isDirectory: true)
+                .lastPathComponent
+            let fallbackTestDirectory = URL(
                 fileURLWithPath: recorder.testDirectoryPath,
                 isDirectory: true
+            ).path
+            let cliTestDirectory = Self.roleTestDirectoryPath(
+                runDirectory: Environment.cliRunDirectory,
+                fallbackDirectory: Self.path(fallbackTestDirectory, "cli"),
+                testName: testName
             )
-            let cliUsesRunDirectory =
-                Environment.runDirectory != nil && Environment.cliAddress == nil
-            let cliHomeDirectory =
-                cliUsesRunDirectory
-                ? testDirectoryURL.appendingPathComponent("home", isDirectory: true).path
-                : "/tmp/wendy-e2e-cli-home-\(UUID().uuidString)"
-            let cliTemporaryDirectory =
-                cliUsesRunDirectory
-                ? testDirectoryURL.appendingPathComponent("tmp", isDirectory: true).path
-                : "/tmp/wendy-e2e-cli-tmp-\(UUID().uuidString)"
-            let defaultCLIWorkingDirectory =
-                cliUsesRunDirectory
-                ? URL(fileURLWithPath: cliHomeDirectory, isDirectory: true)
-                    .appendingPathComponent("work", isDirectory: true).path
-                : cliSourceDirectory
-            let cliWorkingDirectory =
-                Environment.cliWorkingDirectory ?? defaultCLIWorkingDirectory
-            let cliBinDirectory =
-                cliUsesRunDirectory
-                ? Self.runDirectoryPath("cli", "bin") ?? "\(cliSourceDirectory)/bin"
-                : "\(cliSourceDirectory)/bin"
-            let cliEnvironment = [
-                "HOME": cliHomeDirectory,
-                "PATH": "\(cliBinDirectory):$PATH",
-                "TMPDIR": cliTemporaryDirectory,
-                "WENDY_ANALYTICS": "false",
-            ]
+            let agentTestDirectory = Self.roleTestDirectoryPath(
+                runDirectory: Environment.agentRunDirectory,
+                fallbackDirectory: Self.path(fallbackTestDirectory, "agent"),
+                testName: testName
+            )
+            let cliHomeDirectory = Self.path(cliTestDirectory, "home")
+            let cliTemporaryDirectory = Self.path(cliTestDirectory, "tmp")
+            let cliWorkingDirectory = Self.path(cliHomeDirectory, "work")
+            let cliBinDirectory = Self.roleBinDirectory(
+                runDirectory: Environment.cliRunDirectory,
+                fallbackDirectory: repositoryRootDirectoryURL.appendingPathComponent("go/bin").path
+            )
+            let cliEnvironment = Self.roleEnvironment(
+                homeDirectory: cliHomeDirectory,
+                temporaryDirectory: cliTemporaryDirectory,
+                binDirectory: cliBinDirectory
+            )
+            let agentHomeDirectory = Self.path(agentTestDirectory, "home")
+            let agentTemporaryDirectory = Self.path(agentTestDirectory, "tmp")
+            let agentWorkingDirectory = Self.path(agentHomeDirectory, "work")
+            let agentBinDirectory = Self.roleBinDirectory(
+                runDirectory: Environment.agentRunDirectory,
+                fallbackDirectory: nil
+            )
+            let agentEnv = Self.roleEnvironment(
+                homeDirectory: agentHomeDirectory,
+                temporaryDirectory: agentTemporaryDirectory,
+                binDirectory: agentBinDirectory
+            )
             let cliSetupMachine = Machine(
                 id: "cli-setup",
                 name: "CLI setup",
@@ -98,9 +106,24 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 recorder: recorder
             )
             cliSession = cliSetup
-            try await cliSetup.sh(
-                "mkdir -p \"$HOME\" \"$TMPDIR\" \(Self.shellQuote(cliWorkingDirectory))"
+            try await cliSetup.sh("mkdir -p \"$HOME\" \"$TMPDIR\" \"$HOME/work\"")
+
+            let agentSetupMachine = Machine(
+                id: "agent-setup",
+                name: "Agent setup",
+                os: Environment.agentOS ?? .current,
+                tags: [.agent],
+                user: Environment.agentUser,
+                address: Environment.agentAddress
             )
+            let agentSetup = try await Session.begin(
+                for: agentSetupMachine,
+                workingDirectory: "/",
+                env: agentEnv,
+                recorder: recorder
+            )
+            agentSession = agentSetup
+            try await agentSetup.sh("mkdir -p \"$HOME\" \"$TMPDIR\" \"$HOME/work\"")
 
             let cliMachine = Machine(
                 id: "cli",
@@ -111,13 +134,6 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 address: Environment.cliAddress
             )
 
-            var agentEnv: [String: String] = [:]
-            if Environment.agentAddress == nil,
-                let agentBinDirectory = Self.runDirectoryPath("agent", "bin")
-            {
-                agentEnv["PATH"] = "\(agentBinDirectory):$PATH"
-            }
-
             let agentMachine = Machine(
                 id: "agent",
                 name: "Agent",
@@ -126,9 +142,6 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 user: Environment.agentUser,
                 address: Environment.agentAddress
             )
-            let agentWorkingDirectory =
-                Environment.agentWorkingDirectory
-                ?? repositoryRootDirectoryURL.appendingPathComponent("swift").path
 
             let cli = try await Session.begin(
                 for: cliMachine,
@@ -161,22 +174,6 @@ final class CLIAndAgentScenario: Scenario, Sendable {
     ) async throws {
         var firstError: (any Error)?
 
-        if let cli, Environment.runDirectory == nil {
-            do {
-                try await cli.sh(
-                    """
-                    for directory in "$HOME" "$TMPDIR"; do
-                      if [ -d "$directory" ]; then
-                        chmod -R u+w "$directory" 2>/dev/null || true
-                        rm -rf "$directory"
-                      fi
-                    done
-                    """
-                )
-            } catch {
-                firstError = firstError ?? error
-            }
-        }
         if let agent {
             do {
                 try await agent.end()
@@ -201,16 +198,50 @@ final class CLIAndAgentScenario: Scenario, Sendable {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    private static func runDirectoryPath(_ components: String...) -> String? {
-        guard let runDirectory = Environment.runDirectory else {
-            return nil
+    private static func roleTestDirectoryPath(
+        runDirectory: String?,
+        fallbackDirectory: String,
+        testName: String
+    ) -> String {
+        guard let runDirectory else {
+            return fallbackDirectory
         }
 
-        return components.reduce(
-            URL(fileURLWithPath: runDirectory, isDirectory: true)
-        ) { url, component in
-            url.appendingPathComponent(component, isDirectory: true)
-        }.path
+        return Self.path(runDirectory, "tests", testName)
+    }
+
+    private static func roleBinDirectory(
+        runDirectory: String?,
+        fallbackDirectory: String?
+    ) -> String? {
+        guard let runDirectory else {
+            return fallbackDirectory
+        }
+
+        return Self.path(runDirectory, "bin")
+    }
+
+    private static func path(_ first: String, _ rest: String...) -> String {
+        rest.reduce(first) { path, component in
+            let suffix = component.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return path.hasSuffix("/") ? "\(path)\(suffix)" : "\(path)/\(suffix)"
+        }
+    }
+
+    private static func roleEnvironment(
+        homeDirectory: String,
+        temporaryDirectory: String,
+        binDirectory: String?
+    ) -> [String: String] {
+        var environment = [
+            "HOME": homeDirectory,
+            "TMPDIR": temporaryDirectory,
+            "WENDY_ANALYTICS": "false",
+        ]
+        if let binDirectory {
+            environment["PATH"] = "\(binDirectory):$PATH"
+        }
+        return environment
     }
 
     private static func repositoryRootDirectoryURL() -> URL {
