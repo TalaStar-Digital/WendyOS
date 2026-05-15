@@ -10,13 +10,13 @@ From this package:
 swift test --filter WendyE2ETests
 ```
 
-From `swift/`, the helper script writes runner output to
-`Build/e2e/<run-id>/`, builds the managed CLI into the CLI run directory,
-writes isolated per-test CLI and agent sandboxes, captures Swift Testing
-results and command recordings, and renders `report.html`:
+From `swift/`, the helper script writes runner output under an explicit
+output directory, builds the managed CLI into the CLI run directory, writes
+isolated per-test CLI and agent sandboxes, captures Swift Testing results and
+command recordings, and renders `report.html`:
 
 ```bash
-bash Scripts/TestE2E.sh
+bash Scripts/TestE2E.sh --output-dir Build/e2e
 ```
 
 For reproducible command recordings when invoking SwiftPM directly:
@@ -24,8 +24,8 @@ For reproducible command recordings when invoking SwiftPM directly:
 ```bash
 RUN_ID="current"
 RUN_DIR="$PWD/.build/e2e/$RUN_ID"
-CLI_RUN_DIR="$HOME/wendy/e2e/$RUN_ID/cli"
-AGENT_RUN_DIR="$HOME/wendy/e2e/$RUN_ID/agent"
+CLI_RUN_DIR="$HOME/.wendy/e2e/$RUN_ID/cli"
+AGENT_RUN_DIR="$HOME/.wendy/e2e/$RUN_ID/agent"
 rm -rf "$RUN_DIR" "$CLI_RUN_DIR" "$AGENT_RUN_DIR"
 mkdir -p "$CLI_RUN_DIR/bin" "$AGENT_RUN_DIR/bin"
 (cd ../../go && go build -o "$CLI_RUN_DIR/bin/wendy" ./cmd/wendy)

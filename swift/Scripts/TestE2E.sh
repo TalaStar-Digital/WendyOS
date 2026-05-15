@@ -78,7 +78,7 @@ Options:
                         WENDY_E2E_TEST_FILTERS may contain comma-separated
                         filters, otherwise the WendyE2ETests target is run.
   --run-id ID           Run identifier used for default paths.
-  --output-dir DIR      Local root directory for runner output runs.
+  --output-dir DIR      Required local root directory for runner output runs.
   --cli-root-dir DIR    Root directory for CLI machine runs.
   --cli-repo-dir DIR    wendy-agent repo root on the CLI machine.
   --cli-user USER       Optional SSH user for the CLI machine.
@@ -99,7 +99,7 @@ Options:
 Environment:
   WENDY_E2E_TEST_FILTERS              Comma-separated SwiftPM filters.
   WENDY_E2E_RUN_ID                    Optional run identifier for default paths.
-  WENDY_E2E_OUTPUT_DIR                Local root directory for runner output runs.
+  WENDY_E2E_OUTPUT_DIR                Required local root directory for runner output runs.
   WENDY_E2E_CLI_ROOT_DIR              Root directory for CLI machine runs.
   WENDY_E2E_CLI_REPO_DIR              wendy-agent repo root on the CLI machine.
   WENDY_E2E_CLI_USER                  Optional SSH user for the CLI machine.
@@ -216,22 +216,23 @@ if [[ -z "$RUN_ID" ]]; then
 fi
 
 if [[ -z "$OUTPUT_DIR" ]]; then
-  OUTPUT_DIR="$SWIFT_DIR/Build/e2e"
+  echo "ERROR: --output-dir or WENDY_E2E_OUTPUT_DIR is required." >&2
+  exit 64
 fi
 
 if [[ -z "$CLI_ROOT_DIR" ]]; then
   if [[ -n "$CLI_ADDRESS" ]]; then
-    CLI_ROOT_DIR="\$HOME/wendy/e2e"
+    CLI_ROOT_DIR="\$HOME/.wendy/e2e"
   else
-    CLI_ROOT_DIR="${HOME:?}/wendy/e2e"
+    CLI_ROOT_DIR="${HOME:?}/.wendy/e2e"
   fi
 fi
 
 if [[ -z "$AGENT_ROOT_DIR" ]]; then
   if [[ -n "$AGENT_ADDRESS" ]]; then
-    AGENT_ROOT_DIR="\$HOME/wendy/e2e"
+    AGENT_ROOT_DIR="\$HOME/.wendy/e2e"
   else
-    AGENT_ROOT_DIR="${HOME:?}/wendy/e2e"
+    AGENT_ROOT_DIR="${HOME:?}/.wendy/e2e"
   fi
 fi
 

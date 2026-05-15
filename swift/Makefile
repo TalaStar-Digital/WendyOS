@@ -25,22 +25,22 @@ test: ## Run Swift package tests
 	bash ./Scripts/Test.sh
 
 test-e2e: ## Run Swift E2E tests and open the HTML report on macOS
-	WENDY_E2E_RUN_ID=$${WENDY_E2E_RUN_ID:-local} bash ./Scripts/TestE2E.sh --parallel
+	WENDY_E2E_RUN_ID=$${WENDY_E2E_RUN_ID:-local} bash ./Scripts/TestE2E.sh --output-dir Build/e2e --parallel
 	@$(OPEN_E2E_REPORT)
 
 test-e2e-jetson-orin-nano: DEVICE ?= wendyos-jetson-orin-nano.local
 test-e2e-jetson-orin-nano: ## Run Swift E2E tests against Jetson Orin Nano and open the HTML report on macOS
-	WENDY_E2E_RUN_ID=$${WENDY_E2E_RUN_ID:-jetson-orin-nano} WENDY_E2E_AGENT_OS=wendyOS bash ./Scripts/TestE2E.sh --agent-address $(DEVICE)
+	WENDY_E2E_RUN_ID=$${WENDY_E2E_RUN_ID:-jetson-orin-nano} WENDY_E2E_AGENT_OS=wendyOS bash ./Scripts/TestE2E.sh --output-dir Build/e2e --agent-address $(DEVICE)
 	@$(OPEN_E2E_REPORT)
 
 test-e2e-raspberry-pi-5: DEVICE ?= wendyos-raspberry-pi-5.local
 test-e2e-raspberry-pi-5: ## Run Swift E2E tests against Raspberry Pi 5 and open the HTML report on macOS
-	WENDY_E2E_RUN_ID=$${WENDY_E2E_RUN_ID:-raspberry-pi-5} WENDY_E2E_AGENT_OS=wendyOS bash ./Scripts/TestE2E.sh --agent-address $(DEVICE)
+	WENDY_E2E_RUN_ID=$${WENDY_E2E_RUN_ID:-raspberry-pi-5} WENDY_E2E_AGENT_OS=wendyOS bash ./Scripts/TestE2E.sh --output-dir Build/e2e --agent-address $(DEVICE)
 	@$(OPEN_E2E_REPORT)
 
 test-e2e-mac-mini: DEVICE ?= mac-mini.local
 test-e2e-mac-mini: ## Run Swift E2E tests against Mac mini and open the HTML report on macOS
-	WENDY_E2E_RUN_ID=$${WENDY_E2E_RUN_ID:-mac-mini} WENDY_E2E_AGENT_OS=macOS bash ./Scripts/TestE2E.sh --agent-address $(DEVICE)
+	WENDY_E2E_RUN_ID=$${WENDY_E2E_RUN_ID:-mac-mini} WENDY_E2E_AGENT_OS=macOS bash ./Scripts/TestE2E.sh --output-dir Build/e2e --agent-address $(DEVICE)
 	@$(OPEN_E2E_REPORT)
 
 reference: ## Generate Swift E2E HTML reference documentation and open it
