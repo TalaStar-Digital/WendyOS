@@ -38,9 +38,19 @@ struct `'wendy os cache list'` {
      size, and last-updated metadata. An empty cache is reported as an empty
      successful result, not an error.
      */
-    @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+    @Test
     func `lists cached items in a readable table`() async throws {
-        // TODO: implement.
+        try await self.scenario.run { cli, _ in
+            try await cli.sh("wendy os cache list") {
+                terminationStatus,
+                standardOutput,
+                standardError in
+
+                #expect(terminationStatus.isSuccess)
+                #expect(standardOutput == "No cached OS images.\n")
+                #expect(standardError == "")
+            }
+        }
     }
 
     /**
