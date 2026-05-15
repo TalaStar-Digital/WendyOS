@@ -37,9 +37,25 @@ struct `'wendy completion bash'` {
      Writes a valid bash completion script to stdout. The command emits no
      stderr, exits successfully, and does not read or write shell rc files.
      */
-    @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+    @Test
     func `prints the bash completion script`() async throws {
-        // TODO: implement.
+        try await self.scenario.run { cli, _ in
+            try await cli.sh(
+                """
+                wendy completion bash
+                test ! -e "$HOME/.bashrc"
+                """
+            ) {
+                terminationStatus,
+                standardOutput,
+                standardError in
+
+                #expect(terminationStatus.isSuccess)
+                #expect(standardOutput.contains("# bash completion V2 for wendy"))
+                #expect(standardOutput.contains("__start_wendy"))
+                #expect(standardError == "")
+            }
+        }
     }
 
     /**
