@@ -12,39 +12,35 @@ struct `machine` {
             id: "ssh",
             name: "SSH",
             user: "ai",
-            address: "example.local",
-            workingDirectory: "~/wendy-agent"
+            address: "example.local"
         )
 
         #expect(machine.name == "SSH")
         #expect(machine.isLocal == false)
         #expect(machine.user == "ai")
         #expect(machine.address == "example.local")
-        #expect(machine.workingDirectory == "~/wendy-agent")
         #expect(machine.id == "ssh")
         #expect(machine.description == "ssh")
     }
 
     @Test
-    func `defaults remote machine to user home directory`() {
+    func `creates remote machine without session state`() {
         let machine = Machine(id: "ssh", name: "SSH", user: "ai", address: "example.local")
 
         #expect(machine.isLocal == false)
         #expect(machine.user == "ai")
         #expect(machine.address == "example.local")
-        #expect(machine.workingDirectory == nil)
         #expect(machine.id == "ssh")
         #expect(machine.description == "ssh")
     }
 
     @Test
-    func `defaults machine to current host and directory`() {
+    func `defaults machine to current host`() {
         let machine = Machine(id: "local", name: "Local")
 
         #expect(machine.isLocal)
         #expect(machine.user == nil)
         #expect(!machine.address.isEmpty)
-        #expect(machine.workingDirectory == FileManager.default.currentDirectoryPath)
         #expect(machine.id == "local")
         #expect(machine.description == "local")
     }
@@ -57,25 +53,6 @@ struct `machine` {
         #expect(Machine.current.isLocal)
         #expect(Machine.current.user == nil)
         #expect(!Machine.current.address.isEmpty)
-        #expect(Machine.current.workingDirectory == FileManager.default.currentDirectoryPath)
-    }
-
-    @Test
-    func `stores shell environment variables`() {
-        let machine = Machine(
-            id: "local",
-            name: "Local",
-            env: [
-                "HOME": "/tmp/wendy-e2e-home",
-                "PATH": "/tmp/wendy-e2e-bin:$PATH",
-                "WENDY_ANALYTICS": "false",
-            ]
-        )
-
-        #expect(machine.isLocal)
-        #expect(machine.env["HOME"] == "/tmp/wendy-e2e-home")
-        #expect(machine.env["PATH"] == "/tmp/wendy-e2e-bin:$PATH")
-        #expect(machine.env["WENDY_ANALYTICS"] == "false")
     }
 
     @Test
@@ -110,12 +87,12 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(id: "local", name: "Local", workingDirectory: directory.path)
-        let session = try await Session.begin(for: machine)
+        let machine = Machine(id: "local", name: "Local")
+        let session = try await Session.begin(for: machine, workingDirectory: directory.path)
         try await session.sh("touch local.txt")
 
         #expect(!session.machine.address.isEmpty)
-        #expect(session.machine.workingDirectory == directory.path)
+        #expect(session.workingDirectory == directory.path)
         #expect(session.description == "local")
         #expect(FileManager.default.fileExists(atPath: directory.path + "/local.txt"))
     }
@@ -144,9 +121,9 @@ struct `session` {
             ofItemAtPath: wendy.path
         )
 
-        let machine = Machine(
-            id: "local",
-            name: "Local",
+        let machine = Machine(id: "local", name: "Local")
+        let session = try await Session.begin(
+            for: machine,
             workingDirectory: directory.path,
             env: [
                 "HOME": homeDirectory.path,
@@ -154,7 +131,6 @@ struct `session` {
                 "WENDY_ANALYTICS": "false",
             ]
         )
-        let session = try await Session.begin(for: machine)
 
         let record = try await session.sh(
             "wendy",
@@ -223,8 +199,8 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(id: "local", name: "Local", workingDirectory: directory.path)
-        let session = try await Session.begin(for: machine)
+        let machine = Machine(id: "local", name: "Local")
+        let session = try await Session.begin(for: machine, workingDirectory: directory.path)
         try await session.command("touch builder.txt").run()
 
         #expect(FileManager.default.fileExists(atPath: directory.path + "/builder.txt"))
@@ -249,8 +225,8 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(id: "local", name: "Local", workingDirectory: directory.path)
-        let session = try await Session.begin(for: machine)
+        let machine = Machine(id: "local", name: "Local")
+        let session = try await Session.begin(for: machine, workingDirectory: directory.path)
         try await session
             .command(
                 """
@@ -277,8 +253,8 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(id: "local", name: "Local", workingDirectory: directory.path)
-        let session = try await Session.begin(for: machine)
+        let machine = Machine(id: "local", name: "Local")
+        let session = try await Session.begin(for: machine, workingDirectory: directory.path)
         try await session
             .command(
                 """
@@ -354,7 +330,8 @@ struct `session` {
     ) async throws -> Result {
         let directory = try Self.makeTemporaryDirectory()
         let session = try await Session.begin(
-            for: Machine(id: "local", name: "Local", workingDirectory: directory.path)
+            for: Machine(id: "local", name: "Local"),
+            workingDirectory: directory.path
         )
 
         defer { try? FileManager.default.removeItem(at: directory) }

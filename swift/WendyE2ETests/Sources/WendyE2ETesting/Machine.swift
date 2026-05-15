@@ -48,8 +48,6 @@ public struct Machine: Sendable, Equatable {
     public let isLocal: Bool
     public let user: String?
     public let address: String
-    public let workingDirectory: String?
-    public let env: [String: String]
 
     // MARK: - Creating Machines
 
@@ -59,25 +57,14 @@ public struct Machine: Sendable, Equatable {
         os: MachineOS = .current,
         tags: Set<MachineTag> = [],
         user: String? = nil,
-        address: String? = nil,
-        workingDirectory: String? = nil,
-        env: [String: String] = [:]
+        address: String? = nil
     ) {
         precondition(!id.isEmpty, "id must not be empty")
         precondition(!name.isEmpty, "name must not be empty")
         precondition(user?.isEmpty != true, "user must not be empty")
         precondition(address?.isEmpty != true, "address must not be empty")
-        precondition(workingDirectory?.isEmpty != true, "workingDirectory must not be empty")
-        for key in env.keys {
-            precondition(
-                Self.isValidEnvironmentKey(key),
-                "env keys must be valid shell variable names"
-            )
-        }
 
         let resolvedAddress = address ?? Self.defaultAddress
-        let resolvedWorkingDirectory =
-            workingDirectory ?? (address == nil ? FileManager.default.currentDirectoryPath : nil)
 
         self.id = id
         self.name = name
@@ -86,8 +73,6 @@ public struct Machine: Sendable, Equatable {
         self.isLocal = address == nil
         self.user = user
         self.address = resolvedAddress
-        self.workingDirectory = resolvedWorkingDirectory
-        self.env = env
     }
 
     // MARK: - Known Machines
@@ -105,19 +90,6 @@ public struct Machine: Sendable, Equatable {
 
     private static var defaultAddress: String {
         ProcessInfo.processInfo.hostName
-    }
-
-    private static func isValidEnvironmentKey(_ key: String) -> Bool {
-        guard let first = key.first else {
-            return false
-        }
-        guard first == "_" || first.isASCII && first.isLetter else {
-            return false
-        }
-
-        return key.dropFirst().allSatisfy { character in
-            character == "_" || character.isASCII && (character.isLetter || character.isNumber)
-        }
     }
 }
 

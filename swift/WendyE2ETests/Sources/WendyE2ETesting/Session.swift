@@ -9,16 +9,22 @@ public import Subprocess
 
 public struct Session: Sendable {
     public let machine: Machine
+    public let workingDirectory: String?
+    public let env: [String: String]
 
     // MARK: - Beginning and Ending Sessions
 
     public static func begin(
         for machine: Machine,
+        workingDirectory: String? = nil,
+        env: [String: String] = [:],
         verbose: Bool = false,
         recorder: Recorder? = nil
     ) async throws -> Session {
         let session = Session(
             machine: machine,
+            workingDirectory: workingDirectory,
+            env: env,
             recorder: recorder,
             verbose: verbose || Environment.verbose
         )
@@ -198,10 +204,23 @@ public struct Session: Sendable {
 
     private init(
         machine: Machine,
+        workingDirectory: String? = nil,
+        env: [String: String] = [:],
         recorder: Recorder? = nil,
         verbose: Bool = false
     ) {
+        precondition(workingDirectory?.isEmpty != true, "workingDirectory must not be empty")
+        for key in env.keys {
+            precondition(
+                Self.isValidEnvironmentKey(key),
+                "env keys must be valid shell variable names"
+            )
+        }
+
         self.machine = machine
+        self.workingDirectory =
+            workingDirectory ?? (machine.isLocal ? FileManager.default.currentDirectoryPath : nil)
+        self.env = env
         self.recorder = recorder
         self.verbose = verbose
     }
@@ -287,11 +306,11 @@ public struct Session: Sendable {
     }
 
     private func harnessPrefix() -> [String] {
-        var parts = self.machine.env.keys.sorted().map { key in
-            "export \(key)=\(Self.shellEnvironmentValue(self.machine.env[key] ?? ""))"
+        var parts = self.env.keys.sorted().map { key in
+            "export \(key)=\(Self.shellEnvironmentValue(self.env[key] ?? ""))"
         }
 
-        if let workingDirectory = self.machine.workingDirectory {
+        if let workingDirectory = self.workingDirectory {
             parts.append("cd \(Self.shellQuote(workingDirectory))")
         }
 
@@ -377,6 +396,19 @@ public struct Session: Sendable {
 
     private static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func isValidEnvironmentKey(_ key: String) -> Bool {
+        guard let first = key.first else {
+            return false
+        }
+        guard first == "_" || first.isASCII && first.isLetter else {
+            return false
+        }
+
+        return key.dropFirst().allSatisfy { character in
+            character == "_" || character.isASCII && (character.isLetter || character.isNumber)
+        }
     }
 
     private static func isValidEnvironmentName(_ name: String) -> Bool {

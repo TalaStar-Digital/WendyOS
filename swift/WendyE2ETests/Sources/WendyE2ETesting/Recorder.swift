@@ -430,7 +430,7 @@ public struct Recorder: Sendable {
             - Tags: `\(tags.isEmpty ? "<none>" : tags)`
             - User: `\(machine.user ?? "<none>")`
             - Address: `\(machine.address)`
-            - Working directory: `\(machine.workingDirectory ?? "<none>")`
+            - Working directory: `\(session.workingDirectory ?? "<none>")`
             - Command: `\(command)`
             - Process ID: `\(processIdentifier ?? "<unavailable>")`
             - Termination status: `\(terminationStatus)`
@@ -439,7 +439,7 @@ public struct Recorder: Sendable {
             ### environment
 
             ```text
-            \(Self.environmentDescription(machine.env))
+            \(Self.environmentDescription(session.env))
             ```
 
             ### stdout

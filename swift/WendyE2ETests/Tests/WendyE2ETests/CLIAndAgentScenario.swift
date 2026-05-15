@@ -89,12 +89,12 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 os: Environment.cliOS ?? .current,
                 tags: [.cli],
                 user: Environment.cliUser,
-                address: Environment.cliAddress,
-                workingDirectory: "/",
-                env: cliEnvironment
+                address: Environment.cliAddress
             )
             let cliSetup = try await Session.begin(
                 for: cliSetupMachine,
+                workingDirectory: "/",
+                env: cliEnvironment,
                 recorder: recorder
             )
             cliSession = cliSetup
@@ -108,9 +108,7 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 os: Environment.cliOS ?? .current,
                 tags: [.cli],
                 user: Environment.cliUser,
-                address: Environment.cliAddress,
-                workingDirectory: cliWorkingDirectory,
-                env: cliEnvironment
+                address: Environment.cliAddress
             )
 
             var agentEnv: [String: String] = [:]
@@ -126,19 +124,23 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 os: Environment.agentOS ?? .current,
                 tags: [.agent],
                 user: Environment.agentUser,
-                address: Environment.agentAddress,
-                workingDirectory: Environment.agentWorkingDirectory
-                    ?? repositoryRootDirectoryURL.appendingPathComponent("swift").path,
-                env: agentEnv
+                address: Environment.agentAddress
             )
+            let agentWorkingDirectory =
+                Environment.agentWorkingDirectory
+                ?? repositoryRootDirectoryURL.appendingPathComponent("swift").path
 
             let cli = try await Session.begin(
                 for: cliMachine,
+                workingDirectory: cliWorkingDirectory,
+                env: cliEnvironment,
                 recorder: recorder
             )
             cliSession = cli
             let agent = try await Session.begin(
                 for: agentMachine,
+                workingDirectory: agentWorkingDirectory,
+                env: agentEnv,
                 recorder: recorder
             )
             agentSession = agent
