@@ -63,7 +63,7 @@ Options:
   --run-dir DIR         Directory for all generated E2E run files.
   --agent-user USER     Optional SSH user for the agent machine.
   --agent-address HOST  Optional address for the agent machine; defaults to hostname.
-  --agent-workdir DIR   Existing swift/ working directory to use for the agent.
+  --agent-work-dir DIR  Existing swift/ working directory to use for the agent.
   --parallel            Allow SwiftPM to run tests in parallel. Only valid when
                         both CLI and agent machines use local transport.
   --verbose             Print each E2E machine command before it runs.
@@ -101,7 +101,7 @@ while [[ $# -gt 0 ]]; do
       AGENT_ADDRESS="$2"
       shift 2
       ;;
-    --agent-workdir)
+    --agent-work-dir)
       AGENT_WORKDIR="$2"
       shift 2
       ;;
