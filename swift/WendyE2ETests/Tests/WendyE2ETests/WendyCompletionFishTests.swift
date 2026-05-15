@@ -37,9 +37,26 @@ struct `'wendy completion fish'` {
      Writes a valid fish completion script to stdout. The command emits no
      stderr, exits successfully, and does not read or write shell rc files.
      */
-    @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+    @Test
     func `prints the fish completion script`() async throws {
-        // TODO: implement.
+        try await self.scenario.run { cli, _ in
+            try await cli.sh(
+                """
+                wendy completion fish
+                test ! -e "$HOME/.config/fish/config.fish"
+                """
+            ) {
+                terminationStatus,
+                standardOutput,
+                standardError in
+
+                #expect(terminationStatus.isSuccess)
+                #expect(standardOutput.contains("# fish completion for wendy"))
+                #expect(standardOutput.contains("function __wendy_perform_completion"))
+                #expect(standardOutput.contains("complete -c wendy"))
+                #expect(standardError == "")
+            }
+        }
     }
 
     /**
