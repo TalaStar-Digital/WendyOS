@@ -69,9 +69,26 @@ struct `'wendy completion install'` {
      `--stdout` emits the completion script to stdout and performs no
      installation. Stderr remains empty on success.
      */
-    @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+    @Test
     func `prints the script to stdout when requested`() async throws {
-        // TODO: implement.
+        try await self.scenario.run { cli, _ in
+            try await cli.sh(
+                """
+                wendy completion install --stdout --shell zsh
+                test ! -e "$HOME/.zshrc"
+                test ! -d "$HOME/.zsh"
+                """
+            ) {
+                terminationStatus,
+                standardOutput,
+                standardError in
+
+                #expect(terminationStatus.isSuccess)
+                #expect(standardOutput.contains("#compdef wendy"))
+                #expect(standardOutput.contains("compdef _wendy wendy"))
+                #expect(standardError == "")
+            }
+        }
     }
 
     /**
