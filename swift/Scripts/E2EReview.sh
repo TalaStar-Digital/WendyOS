@@ -16,7 +16,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") --run-dir DIR [OPTIONS]
 
-Analyze WendyAgent Swift E2E run artifacts with Anthropic/Claude or OpenAI.
+Review WendyAgent Swift E2E run artifacts with Anthropic/Claude or OpenAI.
 
 Options:
   --run-dir DIR      Required E2E run directory produced by E2ETest.sh.
@@ -24,7 +24,7 @@ Options:
                      defaults to $DEFAULT_PACKAGE_DIR.
   --provider NAME    AI provider: auto, anthropic, claude, openai, or none; defaults to auto.
   --model NAME       Provider model override.
-  --overwrite        Overwrite existing per-test ai-analysis.md files.
+  --overwrite        Overwrite existing per-test ai-review.md files.
   --help             Show this help message.
 
 Environment:
@@ -101,7 +101,7 @@ RUN_DIR="$(absolute_existing_dir_path "$RUN_DIR")"
 PACKAGE_DIR="$(absolute_existing_dir_path "$PACKAGE_DIR")"
 
 COMMAND_ARGS=(
-  "run" "swift-e2e-testing" "analyze"
+  "run" "swift-e2e-testing" "review"
   "--run-dir" "$RUN_DIR"
   "--provider" "$PROVIDER"
 )
@@ -114,7 +114,7 @@ if [[ "$OVERWRITE" == "true" ]]; then
 fi
 COMMAND_ARGS+=("${EXTRA_ARGS[@]}")
 
-echo "==> Analyzing Swift E2E results"
+echo "==> Reviewing Swift E2E results"
 echo "    Package:  $PACKAGE_DIR"
 echo "    Run dir:  $RUN_DIR"
 echo "    Provider: $PROVIDER"

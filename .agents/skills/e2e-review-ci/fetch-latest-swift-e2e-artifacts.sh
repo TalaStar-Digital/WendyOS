@@ -3,7 +3,7 @@ set -euo pipefail
 
 WORKFLOW="${WORKFLOW:-swift-e2e-tests.yml}"
 ARTIFACT_PATTERN="${ARTIFACT_PATTERN:-wendy-e2e-*}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-swift/Build/e2e-ci-analysis}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-swift/Build/e2e-ci-review}"
 BRANCH="${BRANCH:-}"
 REPO="${REPO:-}"
 
@@ -11,7 +11,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [--branch NAME] [--repo OWNER/REPO] [--output-root DIR]
 
-Fetch Swift E2E artifacts for AI analysis from the latest completed CI run for
+Fetch Swift E2E artifacts for AI review from the latest completed CI run for
 the current branch/PR.
 
 Environment:
@@ -19,7 +19,7 @@ Environment:
   ARTIFACT_PATTERN  Artifact glob; defaults to wendy-e2e-*.
   BRANCH            Branch override.
   REPO              GitHub repository override (OWNER/REPO).
-  OUTPUT_ROOT       Output root; defaults to swift/Build/e2e-ci-analysis.
+  OUTPUT_ROOT       Output root; defaults to swift/Build/e2e-ci-review.
 EOF
 }
 

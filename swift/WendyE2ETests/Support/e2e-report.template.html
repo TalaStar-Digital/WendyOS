@@ -431,13 +431,13 @@
       border: 1px solid #000;
     }
 
-    .ai-filter-analysis {
+    .ai-filter-review {
       display: none;
       margin: 7px 0 2px 22px;
       user-select: text;
     }
 
-    .ai-filter-analysis pre {
+    .ai-filter-review pre {
       margin: 0;
       padding: 10px 12px;
       border: 1px solid var(--line);
@@ -449,7 +449,7 @@
       font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
 
-    body.ai-filter-active .test-details[data-has-ai-analysis="true"]:not(.is-hidden) .ai-filter-analysis {
+    body.ai-filter-active .test-details[data-has-ai-review="true"]:not(.is-hidden) .ai-filter-review {
       display: block;
     }
 
@@ -557,7 +557,7 @@
       list-style: none;
     }
 
-    .ai-analysis-checklist {
+    .ai-review-checklist {
       margin: 0 0 12px;
       padding: 12px 14px;
       border: 1px solid var(--line);
@@ -566,7 +566,7 @@
       font-size: 14px;
     }
 
-    .ai-analysis-checklist h4 {
+    .ai-review-checklist h4 {
       margin: 0 0 6px;
       color: var(--muted);
       font-size: 12px;
@@ -575,7 +575,7 @@
       text-transform: uppercase;
     }
 
-    .ai-analysis-inline {
+    .ai-review-inline {
       margin: 0 0 12px;
       padding: 12px 14px;
       border: 1px solid var(--green-line);
@@ -584,7 +584,7 @@
       font-size: 14px;
     }
 
-    .ai-analysis-inline h4 {
+    .ai-review-inline h4 {
       margin: 0 0 8px;
       color: var(--green);
       font-size: 12px;
@@ -593,7 +593,7 @@
       text-transform: uppercase;
     }
 
-    .ai-analysis-inline pre {
+    .ai-review-inline pre {
       margin: 0;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
@@ -782,7 +782,7 @@
     Fill every {{PLACEHOLDER}} with escaped text. Duplicate the marked repeat
     blocks as needed, then remove these instructions and any unused example
     sections. This template is intended to list every E2E test, including
-    passed tests, disabled/skipped tests, and tests without // AI: analysis
+    passed tests, disabled/skipped tests, and tests without // AI: review
     comments. For checklist and test statuses, use one of: pass, concern,
     fail, skipped, unknown, no-ai.
 
@@ -791,12 +791,12 @@
     command as a terminal-style run followed by captured output lines. Leave
     stdout lines unmarked. Mark stderr lines with an amber ! in the gutter.
     If a command produced no output, omit the command-output block. Test
-    details should only include command runs, AI analysis checklists when present,
-    generated AI analysis Markdown when present, and skipped reasons for skipped tests.
+    details should only include command runs, AI review checklists when present,
+    generated AI review Markdown when present, and skipped reasons for skipped tests.
 
     The filter bar expects every test details row to have data-test-status set
     to pass, skipped, fail, or unknown. Rows with generated AI reports that
-    need human analysis should set data-has-ai-analysis to true and render the inline
+    need human review should set data-has-ai-review to true and render the inline
     TEST_AI_FILTER_ANALYSIS block. Activating the AI filter reveals that inline
     Markdown report verbatim under each matching test line. The search field filters
     against the row text content, including suite name, test title, command
@@ -849,15 +849,15 @@
 
       <!-- Repeat this .suite-group once per suite in the file. Do not add a visible suite heading; the suite appears in each test sentence. -->
       <div class="suite-group">
-        <!-- Repeat this details.test-details once per test function in the suite. Set data-has-ai to true when // AI: checklist items are present, and data-has-ai-analysis to true only when a generated Markdown report needs human analysis. Render TEST_AI_BADGE only when generated AI analysis notes exist. -->
-        <details class="test-details" data-test-status="{{TEST_STATUS_CLASS}}" data-has-ai="{{TEST_HAS_AI}}" data-has-ai-analysis="{{TEST_HAS_AI_ANALYSIS}}">
+        <!-- Repeat this details.test-details once per test function in the suite. Set data-has-ai to true when // AI: checklist items are present, and data-has-ai-review to true only when a generated Markdown report needs human review. Render TEST_AI_BADGE only when generated AI review notes exist. -->
+        <details class="test-details" data-test-status="{{TEST_STATUS_CLASS}}" data-has-ai="{{TEST_HAS_AI}}" data-has-ai-review="{{TEST_HAS_AI_REVIEW}}">
           <summary class="test-summary">
             {{TEST_REPORT_LINK}}<span class="test-path">{{TEST_PATH_TEXT}}</span><span class="badge {{TEST_STATUS_CLASS}}">{{TEST_STATUS_TEXT}}</span>{{TEST_AI_BADGE}}{{TEST_AI_FILTER_ANALYSIS}}
           </summary>
           <div class="test-body">
           <!-- Optional: render when the test has // AI: checklist items. -->
-          <section class="ai-analysis-checklist">
-            <h4>AI analysis checklist</h4>
+          <section class="ai-review-checklist">
+            <h4>AI review checklist</h4>
             <ul class="checks">
               <!-- Repeat this li once per checklist item. -->
               <li><span>{{CHECKLIST_ITEM_TEXT}}</span><span class="status {{CHECKLIST_STATUS_CLASS}}" aria-label="{{CHECKLIST_STATUS_TEXT}}"></span></li>
@@ -997,7 +997,7 @@
         for (const test of tests) {
           const statusMatches = activeFilter === 'all'
             || test.dataset.testStatus === activeFilter
-            || (activeFilter === 'ai' && test.dataset.hasAiAnalysis === 'true');
+            || (activeFilter === 'ai' && test.dataset.hasAiReview === 'true');
           const searchMatches = query === '' || test.textContent.toLowerCase().includes(query);
           const matches = statusMatches && searchMatches;
           test.classList.toggle('is-hidden', !matches);

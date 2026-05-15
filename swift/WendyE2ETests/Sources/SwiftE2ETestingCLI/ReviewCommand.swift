@@ -9,10 +9,10 @@ import Foundation
     import FoundationXML
 #endif
 
-struct AnalyzeCommand: AsyncParsableCommand {
+struct ReviewCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "analyze",
-        abstract: "Analyze Swift E2E recordings with an AI provider."
+        commandName: "review",
+        abstract: "Review Swift E2E recordings with an AI provider."
     )
 
     @Option(name: .long, help: "Swift package directory.")
@@ -21,7 +21,7 @@ struct AnalyzeCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Directory containing Swift E2E test sources.")
     var testsDir: String?
 
-    @Option(name: .long, help: "E2E run directory. Reads tests/ and writes AI analysis files.")
+    @Option(name: .long, help: "E2E run directory. Reads tests/ and writes AI review files.")
     var runDir: String
 
     @Option(name: .long, help: "AI provider: auto, anthropic, claude, openai, or none.")
@@ -36,59 +36,59 @@ struct AnalyzeCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Maximum source characters to include per test.")
     var maxSourceCharacters = 20_000
 
-    @Flag(name: .long, help: "Overwrite existing per-test ai-analysis.md files.")
+    @Flag(name: .long, help: "Overwrite existing per-test ai-review.md files.")
     var overwrite = false
 
     mutating func run() async throws {
         let packageURL = URL(fileURLWithPath: packageDir)
         let testsURL = URL(
-            fileURLWithPath: testsDir ?? defaultAnalyzeTestsDir(packageURL: packageURL).path
+            fileURLWithPath: testsDir ?? defaultReviewTestsDir(packageURL: packageURL).path
         )
         let runURL = URL(fileURLWithPath: runDir, isDirectory: true)
         let recordingURL = runURL.appendingPathComponent("tests", isDirectory: true)
         let outputDirectoryURL = runURL
 
-        let records = try loadAnalyzeRecords(in: recordingURL)
-        let testResults = try loadAnalyzeTestResults(
+        let records = try loadReviewRecords(in: recordingURL)
+        let testResults = try loadReviewTestResults(
             in: recordingURL,
             outputDirectoryURL: outputDirectoryURL
         )
-        let tests = try parseAnalyzeTests(in: testsURL, records: records, testResults: testResults)
+        let tests = try parseReviewTests(in: testsURL, records: records, testResults: testResults)
         let reviewableTests = tests.filter { !$0.aiComments.isEmpty }
 
-        let analyzer = try makeAnalyzer(provider: provider, model: model)
-        if analyzer.isConfigured {
-            print("==> Running Swift E2E AI analysis")
-            print("    Provider: \(analyzer.providerName)")
-            print("    Model:    \(analyzer.modelName)")
+        let reviewer = try makeReviewer(provider: provider, model: model)
+        if reviewer.isConfigured {
+            print("==> Running Swift E2E AI review")
+            print("    Provider: \(reviewer.providerName)")
+            print("    Model:    \(reviewer.modelName)")
             print("    Tests:    \(reviewableTests.count)")
         } else {
-            print("==> Swift E2E AI analysis skipped: no provider API key configured")
+            print("==> Swift E2E AI review skipped: no provider API key configured")
         }
 
-        var results: [AnalyzeTestAIResult] = []
+        var results: [ReviewTestAIResult] = []
         for test in reviewableTests {
             guard let recordURL = test.recordURL else {
                 results.append(.missingRecord(test: test))
                 continue
             }
-            let analysisURL = recordURL.deletingLastPathComponent()
-                .appendingPathComponent("ai-analysis.md")
-            if FileManager.default.fileExists(atPath: analysisURL.path), !overwrite {
-                let existing = try String(contentsOf: analysisURL, encoding: .utf8)
+            let reviewURL = recordURL.deletingLastPathComponent()
+                .appendingPathComponent("ai-review.md")
+            if FileManager.default.fileExists(atPath: reviewURL.path), !overwrite {
+                let existing = try String(contentsOf: reviewURL, encoding: .utf8)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if !existing.isEmpty {
-                    results.append(.existing(test: test, path: analysisURL))
+                    results.append(.existing(test: test, path: reviewURL))
                     continue
                 }
             }
 
-            guard analyzer.isConfigured else {
+            guard reviewer.isConfigured else {
                 results.append(.skipped(test: test))
                 continue
             }
 
-            let request = try AnalyzeAIRequest(
+            let request = try ReviewAIRequest(
                 test: test,
                 source: clipped(test.sourceBody, limit: maxSourceCharacters),
                 recording: clipped(
@@ -96,28 +96,28 @@ struct AnalyzeCommand: AsyncParsableCommand {
                     limit: maxRecordingCharacters
                 )
             )
-            let markdown = try await analyzer.analyze(request: request)
-            try markdown.write(to: analysisURL, atomically: true, encoding: .utf8)
-            results.append(.written(test: test, path: analysisURL, markdown: markdown))
+            let markdown = try await reviewer.review(request: request)
+            try markdown.write(to: reviewURL, atomically: true, encoding: .utf8)
+            results.append(.written(test: test, path: reviewURL, markdown: markdown))
         }
 
-        try writeAnalyzeSummary(
+        try writeReviewSummary(
             runURL: runURL,
-            analyzer: analyzer,
+            reviewer: reviewer,
             tests: tests,
             reviewableTests: reviewableTests,
             results: results
         )
-        updateAnalyzeReadmeBlock(runURL: runURL)
+        updateReviewReadmeBlock(runURL: runURL)
 
         let written = results.filter(\.isWritten).count
         let skipped = results.filter(\.isSkipped).count
         print(
-            "==> Wrote Swift E2E AI analysis summary: \(runURL.appendingPathComponent("ai-analysis.md").path)"
+            "==> Wrote Swift E2E AI review summary: \(runURL.appendingPathComponent("ai-review.md").path)"
         )
-        print("    Per-test analyses written: \(written)")
+        print("    Per-test reviews written: \(written)")
         if skipped > 0 {
-            print("    Per-test analyses skipped: \(skipped)")
+            print("    Per-test reviews skipped: \(skipped)")
         }
     }
 }
@@ -138,7 +138,7 @@ enum AIProvider: String, ExpressibleByArgument {
     }
 }
 
-private struct AnalyzeTestCase {
+private struct ReviewTestCase {
     var fileName: String
     var suite: String
     var name: String
@@ -146,12 +146,12 @@ private struct AnalyzeTestCase {
     var nextLine: Int
     var sourceBody: String
     var aiComments: [String]
-    var status: AnalyzeTestStatus
+    var status: ReviewTestStatus
     var recordName: String
     var recordURL: URL?
 }
 
-private enum AnalyzeTestStatus {
+private enum ReviewTestStatus {
     case passed
     case failed(String?)
     case skipped(String?)
@@ -185,25 +185,25 @@ private enum AnalyzeTestStatus {
     }
 }
 
-private struct AnalyzeCommandRun {
+private struct ReviewCommandRun {
     var recordURL: URL
     var sourceFile: String
     var sourceLine: Int
 }
 
-private struct AnalyzeResultKey: Hashable {
+private struct ReviewResultKey: Hashable {
     var suite: String
     var name: String
 }
 
-private struct AnalyzeAIRequest {
-    var test: AnalyzeTestCase
+private struct ReviewAIRequest {
+    var test: ReviewTestCase
     var source: String
     var recording: String
 
     var prompt: String {
         var lines: [String] = []
-        lines.append("You are analyzing a WendyAgent Swift end-to-end test recording.")
+        lines.append("You are reviewing a WendyAgent Swift end-to-end test recording.")
         lines.append("Pay special attention to every // AI: comment in the test source.")
         lines.append(
             "Treat // AI: comments as prompts, notes, or instructions; they are not necessarily checklist items."
@@ -212,7 +212,7 @@ private struct AnalyzeAIRequest {
             "Use the full test source, captured recording, and failure text as context when needed."
         )
         lines.append("Return concise Markdown only using this shape:")
-        lines.append("# AI Analysis")
+        lines.append("# AI Review")
         lines.append("")
         lines.append("Status: pass|concern|fail")
         lines.append("Source: `File.swift:line`")
@@ -257,13 +257,13 @@ private struct AnalyzeAIRequest {
     }
 }
 
-private enum AnalyzeTestAIResult {
-    case written(test: AnalyzeTestCase, path: URL, markdown: String)
-    case existing(test: AnalyzeTestCase, path: URL)
-    case skipped(test: AnalyzeTestCase)
-    case missingRecord(test: AnalyzeTestCase)
+private enum ReviewTestAIResult {
+    case written(test: ReviewTestCase, path: URL, markdown: String)
+    case existing(test: ReviewTestCase, path: URL)
+    case skipped(test: ReviewTestCase)
+    case missingRecord(test: ReviewTestCase)
 
-    var test: AnalyzeTestCase {
+    var test: ReviewTestCase {
         switch self {
         case .written(let test, _, _), .existing(let test, _), .skipped(let test),
             .missingRecord(let test):
@@ -282,31 +282,31 @@ private enum AnalyzeTestAIResult {
     }
 }
 
-private protocol E2EAIAnalyzer {
+private protocol E2EAIReviewer {
     var isConfigured: Bool { get }
     var providerName: String { get }
     var modelName: String { get }
 
-    func analyze(request: AnalyzeAIRequest) async throws -> String
+    func review(request: ReviewAIRequest) async throws -> String
 }
 
-private struct UnconfiguredAnalyzer: E2EAIAnalyzer {
+private struct UnconfiguredReviewer: E2EAIReviewer {
     var isConfigured: Bool { false }
     var providerName: String { "none" }
     var modelName: String { "none" }
 
-    func analyze(request _: AnalyzeAIRequest) async throws -> String {
-        throw ValidationError("AI analyzer is not configured.")
+    func review(request _: ReviewAIRequest) async throws -> String {
+        throw ValidationError("AI reviewer is not configured.")
     }
 }
 
-private struct AnthropicAnalyzer: E2EAIAnalyzer {
+private struct AnthropicReviewer: E2EAIReviewer {
     var apiKey: String
     var modelName: String
     var isConfigured: Bool { !apiKey.isEmpty }
     var providerName: String { "anthropic" }
 
-    func analyze(request: AnalyzeAIRequest) async throws -> String {
+    func review(request: ReviewAIRequest) async throws -> String {
         let payload = AnthropicMessagesRequest(
             model: modelName,
             maxTokens: 2_000,
@@ -328,25 +328,25 @@ private struct AnthropicAnalyzer: E2EAIAnalyzer {
             in: .whitespacesAndNewlines
         )
         guard !text.isEmpty else {
-            throw ValidationError("Anthropic returned an empty analysis.")
+            throw ValidationError("Anthropic returned an empty review.")
         }
         return text
     }
 }
 
-private struct OpenAIAnalyzer: E2EAIAnalyzer {
+private struct OpenAIReviewer: E2EAIReviewer {
     var apiKey: String
     var modelName: String
     var isConfigured: Bool { !apiKey.isEmpty }
     var providerName: String { "openai" }
 
-    func analyze(request: AnalyzeAIRequest) async throws -> String {
+    func review(request: ReviewAIRequest) async throws -> String {
         let payload = OpenAIChatRequest(
             model: modelName,
             messages: [
                 .init(
                     role: "system",
-                    content: "You write concise Markdown analysis of E2E test recordings."
+                    content: "You write concise Markdown review of E2E test recordings."
                 ),
                 .init(role: "user", content: request.prompt),
             ]
@@ -365,7 +365,7 @@ private struct OpenAIAnalyzer: E2EAIAnalyzer {
                 in: .whitespacesAndNewlines
             ) ?? ""
         guard !text.isEmpty else {
-            throw ValidationError("OpenAI returned an empty analysis.")
+            throw ValidationError("OpenAI returned an empty review.")
         }
         return text
     }
@@ -419,19 +419,19 @@ private struct OpenAIChatResponse: Decodable {
     var choices: [Choice]
 }
 
-private func makeAnalyzer(provider: AIProvider, model: String?) throws -> any E2EAIAnalyzer {
+private func makeReviewer(provider: AIProvider, model: String?) throws -> any E2EAIReviewer {
     let environment = ProcessInfo.processInfo.environment
     let anthropicKey = environment["ANTHROPIC_API_KEY", default: ""]
     let openAIKey = environment["OPENAI_API_KEY", default: ""]
 
     switch provider {
     case .none:
-        return UnconfiguredAnalyzer()
+        return UnconfiguredReviewer()
     case .anthropic:
         guard !anthropicKey.isEmpty else {
             throw ValidationError("ANTHROPIC_API_KEY is required for --provider anthropic.")
         }
-        return AnthropicAnalyzer(
+        return AnthropicReviewer(
             apiKey: anthropicKey,
             modelName: model ?? environment["ANTHROPIC_MODEL", default: "claude-3-5-sonnet-latest"]
         )
@@ -439,25 +439,25 @@ private func makeAnalyzer(provider: AIProvider, model: String?) throws -> any E2
         guard !openAIKey.isEmpty else {
             throw ValidationError("OPENAI_API_KEY is required for --provider openai.")
         }
-        return OpenAIAnalyzer(
+        return OpenAIReviewer(
             apiKey: openAIKey,
             modelName: model ?? environment["OPENAI_MODEL", default: "gpt-4o-mini"]
         )
     case .auto:
         if !anthropicKey.isEmpty {
-            return AnthropicAnalyzer(
+            return AnthropicReviewer(
                 apiKey: anthropicKey,
                 modelName: model
                     ?? environment["ANTHROPIC_MODEL", default: "claude-3-5-sonnet-latest"]
             )
         }
         if !openAIKey.isEmpty {
-            return OpenAIAnalyzer(
+            return OpenAIReviewer(
                 apiKey: openAIKey,
                 modelName: model ?? environment["OPENAI_MODEL", default: "gpt-4o-mini"]
             )
         }
-        return UnconfiguredAnalyzer()
+        return UnconfiguredReviewer()
     }
 }
 
@@ -471,7 +471,7 @@ private func validateHTTP(response: URLResponse, data: Data, provider: String) t
     }
 }
 
-private func defaultAnalyzeTestsDir(packageURL: URL) -> URL {
+private func defaultReviewTestsDir(packageURL: URL) -> URL {
     let e2eTestsURL = packageURL.appendingPathComponent("Tests/WendyE2ETests")
     if FileManager.default.fileExists(atPath: e2eTestsURL.path) {
         return e2eTestsURL
@@ -479,7 +479,7 @@ private func defaultAnalyzeTestsDir(packageURL: URL) -> URL {
     return packageURL.appendingPathComponent("Tests")
 }
 
-private func loadAnalyzeRecords(in recordingURL: URL) throws -> [String: URL] {
+private func loadReviewRecords(in recordingURL: URL) throws -> [String: URL] {
     guard FileManager.default.fileExists(atPath: recordingURL.path) else {
         return [:]
     }
@@ -500,13 +500,13 @@ private func loadAnalyzeRecords(in recordingURL: URL) throws -> [String: URL] {
     return records
 }
 
-private func parseAnalyzeTests(
+private func parseReviewTests(
     in testsURL: URL,
     records: [String: URL],
-    testResults: [AnalyzeResultKey: AnalyzeTestStatus]
-) throws -> [AnalyzeTestCase] {
-    let sourceURLs = try analyzeSwiftTestFiles(in: testsURL)
-    var tests: [AnalyzeTestCase] = []
+    testResults: [ReviewResultKey: ReviewTestStatus]
+) throws -> [ReviewTestCase] {
+    let sourceURLs = try reviewSwiftTestFiles(in: testsURL)
+    var tests: [ReviewTestCase] = []
 
     for sourceURL in sourceURLs {
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
@@ -517,19 +517,19 @@ private func parseAnalyzeTests(
 
         for (offset, line) in lines.enumerated() {
             let lineNumber = offset + 1
-            if let suiteName = analyzeFirstMatch(#"\bstruct\s+`([^`]+)`\s*\{"#, in: line)
-                ?? analyzeFirstMatch(#"\bstruct\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{"#, in: line)
+            if let suiteName = reviewFirstMatch(#"\bstruct\s+`([^`]+)`\s*\{"#, in: line)
+                ?? reviewFirstMatch(#"\bstruct\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{"#, in: line)
             {
                 suite = suiteName
             }
             if line.contains("@Test") {
                 pendingTest = (
                     line: lineNumber,
-                    disabled: analyzeFirstMatch(#"\.disabled\(\"([^\"]*)\"\)"#, in: line)
+                    disabled: reviewFirstMatch(#"\.disabled\(\"([^\"]*)\"\)"#, in: line)
                 )
             }
-            if let functionName = analyzeFirstMatch(#"\bfunc\s+`([^`]+)`\s*\("#, in: line)
-                ?? analyzeFirstMatch(#"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("#, in: line),
+            if let functionName = reviewFirstMatch(#"\bfunc\s+`([^`]+)`\s*\("#, in: line)
+                ?? reviewFirstMatch(#"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("#, in: line),
                 let test = pendingTest
             {
                 discovered.append(
@@ -544,15 +544,15 @@ private func parseAnalyzeTests(
             let nextLine =
                 index + 1 < discovered.count ? discovered[index + 1].funcLine : lines.count + 1
             let bodyLines = Array(lines[(test.funcLine - 1)..<(nextLine - 1)])
-            let aiComments = extractAnalyzeAIComments(from: bodyLines)
-            let recordKey = "\(analyzeRecordFileStem(sourceURL)).\(analyzeSlug(test.name))"
-            let key = AnalyzeResultKey(suite: suite, name: test.name)
+            let aiComments = extractReviewAIComments(from: bodyLines)
+            let recordKey = "\(reviewRecordFileStem(sourceURL)).\(reviewSlug(test.name))"
+            let key = ReviewResultKey(suite: suite, name: test.name)
             let status =
-                test.disabled.map { AnalyzeTestStatus.skipped($0) }
+                test.disabled.map { ReviewTestStatus.skipped($0) }
                 ?? testResults[key]
                 ?? .unknown
             tests.append(
-                AnalyzeTestCase(
+                ReviewTestCase(
                     fileName: sourceURL.lastPathComponent,
                     suite: suite,
                     name: test.name,
@@ -571,7 +571,7 @@ private func parseAnalyzeTests(
     return tests
 }
 
-private func analyzeSwiftTestFiles(in testsURL: URL) throws -> [URL] {
+private func reviewSwiftTestFiles(in testsURL: URL) throws -> [URL] {
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: testsURL.path, isDirectory: &isDirectory) else {
         throw ValidationError("Tests directory not found: \(testsURL.path)")
@@ -590,7 +590,7 @@ private func analyzeSwiftTestFiles(in testsURL: URL) throws -> [URL] {
     }.sorted { $0.path < $1.path }
 }
 
-private func extractAnalyzeAIComments(from lines: [String]) -> [String] {
+private func extractReviewAIComments(from lines: [String]) -> [String] {
     var blocks: [String] = []
     var currentBlock: [String] = []
     var inAI = false
@@ -624,7 +624,7 @@ private func extractAnalyzeAIComments(from lines: [String]) -> [String] {
         }
 
         if trimmed.hasPrefix("//") {
-            currentBlock.append(stripAnalyzeCommentPrefix(from: trimmed))
+            currentBlock.append(stripReviewCommentPrefix(from: trimmed))
         } else {
             finishBlock()
             inAI = false
@@ -638,7 +638,7 @@ private func extractAnalyzeAIComments(from lines: [String]) -> [String] {
     return blocks
 }
 
-private func stripAnalyzeCommentPrefix(from line: String) -> String {
+private func stripReviewCommentPrefix(from line: String) -> String {
     var value = line
     if value.hasPrefix("//") {
         value.removeFirst(2)
@@ -649,12 +649,12 @@ private func stripAnalyzeCommentPrefix(from line: String) -> String {
     return value
 }
 
-private func loadAnalyzeTestResults(
+private func loadReviewTestResults(
     in recordingURL: URL,
     outputDirectoryURL: URL
-) throws -> [AnalyzeResultKey: AnalyzeTestStatus] {
+) throws -> [ReviewResultKey: ReviewTestStatus] {
     guard
-        let resultURL = try analyzeTestResultsURL(
+        let resultURL = try reviewTestResultsURL(
             in: [recordingURL, outputDirectoryURL, recordingURL.deletingLastPathComponent()]
         )
     else {
@@ -662,7 +662,7 @@ private func loadAnalyzeTestResults(
     }
 
     let data = try Data(contentsOf: resultURL)
-    let parser = AnalyzeXUnitResultParser()
+    let parser = ReviewXUnitResultParser()
     let xmlParser = XMLParser(data: data)
     xmlParser.delegate = parser
     guard xmlParser.parse() else {
@@ -671,7 +671,7 @@ private func loadAnalyzeTestResults(
     return parser.results
 }
 
-private func analyzeTestResultsURL(in searchURLs: [URL]) throws -> URL? {
+private func reviewTestResultsURL(in searchURLs: [URL]) throws -> URL? {
     var seen: Set<String> = []
     for searchURL in searchURLs {
         let path = searchURL.standardizedFileURL.path
@@ -694,10 +694,10 @@ private func analyzeTestResultsURL(in searchURLs: [URL]) throws -> URL? {
     return nil
 }
 
-private final class AnalyzeXUnitResultParser: NSObject, XMLParserDelegate {
-    var results: [AnalyzeResultKey: AnalyzeTestStatus] = [:]
+private final class ReviewXUnitResultParser: NSObject, XMLParserDelegate {
+    var results: [ReviewResultKey: ReviewTestStatus] = [:]
 
-    private var current: (key: AnalyzeResultKey, failure: String?, skipped: String?)?
+    private var current: (key: ReviewResultKey, failure: String?, skipped: String?)?
     private var currentElement: String?
     private var currentText = ""
 
@@ -711,7 +711,7 @@ private final class AnalyzeXUnitResultParser: NSObject, XMLParserDelegate {
         switch elementName {
         case "testcase":
             guard let classname = attributeDict["classname"], let name = attributeDict["name"],
-                let key = analyzeTestResultKey(classname: classname, name: name)
+                let key = reviewTestResultKey(classname: classname, name: name)
             else {
                 current = nil
                 return
@@ -772,44 +772,44 @@ private final class AnalyzeXUnitResultParser: NSObject, XMLParserDelegate {
     }
 }
 
-private func analyzeTestResultKey(classname: String, name: String) -> AnalyzeResultKey? {
-    let suite = analyzeNormalizedClassname(classname)
-    let testName = analyzeNormalizedTestName(name)
+private func reviewTestResultKey(classname: String, name: String) -> ReviewResultKey? {
+    let suite = reviewNormalizedClassname(classname)
+    let testName = reviewNormalizedTestName(name)
     guard !suite.isEmpty, !testName.isEmpty else { return nil }
-    return AnalyzeResultKey(suite: suite, name: testName)
+    return ReviewResultKey(suite: suite, name: testName)
 }
 
-private func analyzeNormalizedClassname(_ classname: String) -> String {
+private func reviewNormalizedClassname(_ classname: String) -> String {
     if classname.last == "`", let start = classname.dropLast().lastIndex(of: "`") {
         let suiteStart = classname.index(after: start)
         return String(classname[suiteStart..<classname.index(before: classname.endIndex)])
     }
-    return analyzeStripBackticks(String(classname.split(separator: ".").last ?? ""))
+    return reviewStripBackticks(String(classname.split(separator: ".").last ?? ""))
 }
 
-private func analyzeNormalizedTestName(_ name: String) -> String {
+private func reviewNormalizedTestName(_ name: String) -> String {
     var value = name
     if value.hasSuffix("()") {
         value.removeLast(2)
     }
-    return analyzeStripBackticks(value)
+    return reviewStripBackticks(value)
 }
 
-private func analyzeStripBackticks(_ value: String) -> String {
+private func reviewStripBackticks(_ value: String) -> String {
     if value.first == "`", value.last == "`" {
         return String(value.dropFirst().dropLast())
     }
     return value
 }
 
-private func writeAnalyzeSummary(
+private func writeReviewSummary(
     runURL: URL,
-    analyzer: any E2EAIAnalyzer,
-    tests: [AnalyzeTestCase],
-    reviewableTests: [AnalyzeTestCase],
-    results: [AnalyzeTestAIResult]
+    reviewer: any E2EAIReviewer,
+    tests: [ReviewTestCase],
+    reviewableTests: [ReviewTestCase],
+    results: [ReviewTestAIResult]
 ) throws {
-    let markdownURL = runURL.appendingPathComponent("ai-analysis.md")
+    let markdownURL = runURL.appendingPathComponent("ai-review.md")
     let written = results.filter(\.isWritten).count
     let skipped = results.filter(\.isSkipped).count
     let missingRecords = results.filter { result in
@@ -824,24 +824,24 @@ private func writeAnalyzeSummary(
     let failedTestCount = tests.filter(\.status.isFailed).count
 
     var markdown: [String] = []
-    markdown.append("# Swift E2E AI Analysis")
+    markdown.append("# Swift E2E AI Review")
     markdown.append("")
-    if analyzer.isConfigured {
+    if reviewer.isConfigured {
         markdown.append("Status: complete")
     } else {
         markdown.append("Status: skipped")
         markdown.append("")
-        markdown.append("AI analysis skipped: ANTHROPIC_API_KEY or OPENAI_API_KEY not configured.")
+        markdown.append("AI review skipped: ANTHROPIC_API_KEY or OPENAI_API_KEY not configured.")
     }
     markdown.append("")
-    markdown.append("- Provider: `\(analyzer.providerName)`")
-    markdown.append("- Model: `\(analyzer.modelName)`")
+    markdown.append("- Provider: `\(reviewer.providerName)`")
+    markdown.append("- Model: `\(reviewer.modelName)`")
     markdown.append("- Tests discovered: `\(tests.count)`")
     markdown.append("- Tests with `// AI:` comments: `\(aiTestCount)`")
     markdown.append("- Failed tests: `\(failedTestCount)`")
-    markdown.append("- Tests selected for analysis: `\(reviewableTests.count)`")
-    markdown.append("- Per-test analyses written: `\(written)`")
-    markdown.append("- Existing analyses kept: `\(existing)`")
+    markdown.append("- Tests selected for review: `\(reviewableTests.count)`")
+    markdown.append("- Per-test reviews written: `\(written)`")
+    markdown.append("- Existing reviews kept: `\(existing)`")
     markdown.append("- Missing recordings: `\(missingRecords)`")
     markdown.append("- Skipped: `\(skipped)`")
     markdown.append("")
@@ -860,20 +860,29 @@ private func writeAnalyzeSummary(
 
 }
 
-private func updateAnalyzeReadmeBlock(runURL: URL) {
+private func updateReviewReadmeBlock(runURL: URL) {
     let readmeURL = runURL.appendingPathComponent("README.md")
-    let start = "<!-- swift-e2e-analyze:start -->"
-    let end = "<!-- swift-e2e-analyze:end -->"
+    let start = "<!-- swift-e2e-review:start -->"
+    let end = "<!-- swift-e2e-review:end -->"
     let original = (try? String(contentsOf: readmeURL, encoding: .utf8)) ?? ""
-    let stripped = stripAnalyzeBlock(from: original, start: start, end: end).trimmingCharacters(
-        in: .whitespacesAndNewlines
+    let withoutCurrentBlock = stripReviewBlock(from: original, start: start, end: end)
+    let withoutLegacyReviewBlock = stripReviewBlock(
+        from: withoutCurrentBlock,
+        start: "<!-- swift-e2e-ai-review:start -->",
+        end: "<!-- swift-e2e-ai-review:end -->"
     )
+    let withoutLegacyAnalyzeBlock = stripReviewBlock(
+        from: withoutLegacyReviewBlock,
+        start: "<!-- swift-e2e-analyze:start -->",
+        end: "<!-- swift-e2e-analyze:end -->"
+    )
+    let stripped = withoutLegacyAnalyzeBlock.trimmingCharacters(in: .whitespacesAndNewlines)
     let block = """
 
         \(start)
-        ## AI Analysis
+        ## AI Review
 
-        - Markdown: `\(runURL.appendingPathComponent("ai-analysis.md").path)`
+        - Markdown: `\(runURL.appendingPathComponent("ai-review.md").path)`
         \(end)
         """
     let output =
@@ -882,7 +891,7 @@ private func updateAnalyzeReadmeBlock(runURL: URL) {
     try? output.appending("\n").write(to: readmeURL, atomically: true, encoding: .utf8)
 }
 
-private func stripAnalyzeBlock(from text: String, start: String, end: String) -> String {
+private func stripReviewBlock(from text: String, start: String, end: String) -> String {
     guard let startRange = text.range(of: start), let endRange = text.range(of: end) else {
         return text
     }
@@ -899,33 +908,33 @@ private func clipped(_ value: String, limit: Int) -> String {
     return String(prefix) + "\n\n[... clipped to \(limit) characters ...]"
 }
 
-private func analyzeRecordFileStem(_ sourceURL: URL) -> String {
+private func reviewRecordFileStem(_ sourceURL: URL) -> String {
     var fileName = sourceURL.deletingPathExtension().lastPathComponent
     if fileName.hasSuffix("Tests") {
         fileName.removeLast("Tests".count)
     }
-    return analyzeSlug(fileName)
+    return reviewSlug(fileName)
 }
 
-private func analyzeSlug(_ value: String) -> String {
+private func reviewSlug(_ value: String) -> String {
     var result = ""
     var needsSeparator = false
-    var previousKind: AnalyzeSlugCharacterKind?
+    var previousKind: ReviewSlugCharacterKind?
     let scalars = Array(value.unicodeScalars)
 
     for index in scalars.indices {
         let scalar = scalars[index]
-        guard let kind = AnalyzeSlugCharacterKind(scalar) else {
+        guard let kind = ReviewSlugCharacterKind(scalar) else {
             needsSeparator = !result.isEmpty
             previousKind = nil
             continue
         }
         let nextKind =
             scalars.index(after: index) < scalars.endIndex
-            ? AnalyzeSlugCharacterKind(scalars[scalars.index(after: index)]) : nil
+            ? ReviewSlugCharacterKind(scalars[scalars.index(after: index)]) : nil
         if !result.isEmpty,
             needsSeparator
-                || analyzeNeedsCamelCaseSeparator(
+                || reviewNeedsCamelCaseSeparator(
                     previousKind: previousKind,
                     currentKind: kind,
                     nextKind: nextKind
@@ -940,10 +949,10 @@ private func analyzeSlug(_ value: String) -> String {
     return result.isEmpty ? "unknown" : result
 }
 
-private func analyzeNeedsCamelCaseSeparator(
-    previousKind: AnalyzeSlugCharacterKind?,
-    currentKind: AnalyzeSlugCharacterKind,
-    nextKind: AnalyzeSlugCharacterKind?
+private func reviewNeedsCamelCaseSeparator(
+    previousKind: ReviewSlugCharacterKind?,
+    currentKind: ReviewSlugCharacterKind,
+    nextKind: ReviewSlugCharacterKind?
 ) -> Bool {
     switch (previousKind, currentKind, nextKind) {
     case (.lower?, .upper, _), (.digit?, .upper, _), (.upper?, .upper, .lower?):
@@ -953,7 +962,7 @@ private func analyzeNeedsCamelCaseSeparator(
     }
 }
 
-private enum AnalyzeSlugCharacterKind {
+private enum ReviewSlugCharacterKind {
     case digit
     case lower
     case upper
@@ -972,7 +981,7 @@ private enum AnalyzeSlugCharacterKind {
     }
 }
 
-private func analyzeFirstMatch(_ pattern: String, in text: String, group: Int = 1) -> String? {
+private func reviewFirstMatch(_ pattern: String, in text: String, group: Int = 1) -> String? {
     guard let regex = try? NSRegularExpression(pattern: pattern) else {
         return nil
     }

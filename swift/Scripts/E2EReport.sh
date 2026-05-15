@@ -72,8 +72,8 @@ update_readme_block() {
     echo
     echo "- Status: \`$status\`"
     echo "- HTML report: \`$report_path\`"
-    if [[ -f "$RUN_DIR/ai-analysis.md" ]]; then
-      echo "- AI analysis: \`$RUN_DIR/ai-analysis.md\`"
+    if [[ -f "$RUN_DIR/ai-review.md" ]]; then
+      echo "- AI review: \`$RUN_DIR/ai-review.md\`"
     fi
     echo
     echo "### Files after report rendering"

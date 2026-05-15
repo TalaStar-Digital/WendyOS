@@ -239,7 +239,7 @@ jobs:
             --output-dir Build/e2e \
             --agent-address "${{ matrix.target.device_address }}"
 
-      - name: Analyze Swift E2E results with AI
+      - name: Review Swift E2E results with AI
         if: always() && matrix.target.status == 'enabled'
         working-directory: swift
         shell: bash
@@ -248,7 +248,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-          bash ./Scripts/E2EAnalyze.sh \
+          bash ./Scripts/E2EReview.sh \
             --run-dir "Build/e2e/${{ steps.e2e-run.outputs.run_id }}"
 
       - name: Render Swift E2E report
