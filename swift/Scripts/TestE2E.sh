@@ -35,11 +35,14 @@ sanitize_run_id() {
 
 RUN_ID="${WENDY_E2E_RUN_ID:-}"
 RUN_DIR="${WENDY_E2E_RUN_DIR:-}"
+CLI_USER="${WENDY_E2E_CLI_USER:-}"
+CLI_ADDRESS="${WENDY_E2E_CLI_ADDRESS:-}"
+CLI_WORK_DIR="${WENDY_E2E_CLI_WORK_DIR:-}"
 AGENT_USER="${WENDY_E2E_AGENT_USER:-}"
 AGENT_ADDRESS="${WENDY_E2E_AGENT_ADDRESS:-}"
-AGENT_WORKDIR="${WENDY_E2E_AGENT_WORK_DIR:-}"
+AGENT_WORK_DIR="${WENDY_E2E_AGENT_WORK_DIR:-}"
 VERBOSE="${WENDY_E2E_VERBOSE:-false}"
-GENERATE_REPORT="${WENDY_E2E_GENERATE_REPORT:-true}"
+REPORT="${WENDY_E2E_GENERATE_REPORT:-true}"
 PARALLEL="${WENDY_E2E_PARALLEL:-false}"
 TEST_FILTERS=()
 
@@ -74,6 +77,9 @@ Options:
                         filters, otherwise the WendyE2ETests target is run.
   --run-id ID           Run identifier used for default paths.
   --run-dir DIR         Directory for all generated E2E run files.
+  --cli-user USER       Optional SSH user for the CLI machine.
+  --cli-address HOST    Optional address for the CLI machine.
+  --cli-work-dir DIR    Working directory to use for CLI commands.
   --agent-user USER     Optional SSH user for the agent machine.
   --agent-address HOST  Optional address for the agent machine; defaults to hostname.
   --agent-work-dir DIR  Existing swift/ working directory to use for the agent.
@@ -90,6 +96,9 @@ Environment:
   WENDY_E2E_TEST_FILTERS              Comma-separated SwiftPM filters.
   WENDY_E2E_RUN_ID                    Optional run identifier for default paths.
   WENDY_E2E_RUN_DIR                   Defaults to Build/e2e-run.<run-id>.
+  WENDY_E2E_CLI_USER                  Optional SSH user for the CLI machine.
+  WENDY_E2E_CLI_ADDRESS               Optional address for the CLI machine.
+  WENDY_E2E_CLI_WORK_DIR              Working directory to use for CLI commands.
   WENDY_E2E_AGENT_USER                Optional SSH user for the agent machine.
   WENDY_E2E_AGENT_ADDRESS             Optional address for the agent machine.
   WENDY_E2E_AGENT_WORK_DIR            swift/ directory for the agent.
@@ -115,6 +124,18 @@ while [[ $# -gt 0 ]]; do
       RUN_DIR="$2"
       shift 2
       ;;
+    --cli-user)
+      CLI_USER="$2"
+      shift 2
+      ;;
+    --cli-address)
+      CLI_ADDRESS="$2"
+      shift 2
+      ;;
+    --cli-work-dir)
+      CLI_WORK_DIR="$2"
+      shift 2
+      ;;
     --agent-user)
       AGENT_USER="$2"
       shift 2
@@ -124,7 +145,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --agent-work-dir)
-      AGENT_WORKDIR="$2"
+      AGENT_WORK_DIR="$2"
       shift 2
       ;;
     --parallel)
@@ -136,11 +157,11 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --report)
-      GENERATE_REPORT="true"
+      REPORT="true"
       shift
       ;;
     --no-report)
-      GENERATE_REPORT="false"
+      REPORT="false"
       shift
       ;;
     --verbose)
@@ -185,12 +206,18 @@ if [[ -z "$RUN_DIR" ]]; then
 fi
 
 PARALLEL="$(normalize_bool "WENDY_E2E_PARALLEL" "$PARALLEL")"
-GENERATE_REPORT="$(normalize_bool "WENDY_E2E_GENERATE_REPORT" "$GENERATE_REPORT")"
+REPORT="$(normalize_bool "WENDY_E2E_GENERATE_REPORT" "$REPORT")"
 VERBOSE="$(normalize_bool "WENDY_E2E_VERBOSE" "$VERBOSE")"
 
-if [[ "$PARALLEL" == "true" && -n "$AGENT_ADDRESS" ]]; then
+if [[ "$PARALLEL" == "true" && ( -n "$CLI_ADDRESS" || -n "$AGENT_ADDRESS" ) ]]; then
   echo "ERROR: --parallel is only valid when CLI and agent machines are local." >&2
-  echo "Unset WENDY_E2E_AGENT_ADDRESS, or omit --parallel." >&2
+  echo "Unset WENDY_E2E_CLI_ADDRESS and WENDY_E2E_AGENT_ADDRESS, or omit --parallel." >&2
+  exit 64
+fi
+
+if [[ -n "$CLI_ADDRESS" ]]; then
+  echo "ERROR: remote CLI machines are not supported yet." >&2
+  echo "Remote CLI support needs target-side wendy provisioning before tests run." >&2
   exit 64
 fi
 
@@ -248,7 +275,7 @@ build_cli() {
 }
 
 generate_html_report() {
-  if [[ "$GENERATE_REPORT" != "true" ]]; then
+  if [[ "$REPORT" != "true" ]]; then
     return
   fi
 
@@ -271,14 +298,19 @@ write_run_summary() {
     echo "- Run ID: \`$RUN_ID\`"
     echo "- Run directory: \`$RUN_DIR\`"
     echo "- CLI binary: \`$CLI_BIN_DIR/wendy\`"
+    if [[ -n "$CLI_USER" || -n "$CLI_ADDRESS" || -n "$CLI_WORK_DIR" ]]; then
+      echo "- CLI user: \`${CLI_USER:-<none>}\`"
+      echo "- CLI address: \`${CLI_ADDRESS:-<local>}\`"
+      echo "- CLI working directory: \`${CLI_WORK_DIR:-<default>}\`"
+    fi
     echo "- Tests directory: \`$TESTS_DIR\`"
     echo "- Verbose: \`$VERBOSE\`"
     echo "- Parallel: \`$PARALLEL\`"
-    echo "- HTML report: \`$GENERATE_REPORT\`"
+    echo "- HTML report: \`$REPORT\`"
     if [[ -n "$AGENT_ADDRESS" ]]; then
       echo "- Agent user: \`${AGENT_USER:-<none>}\`"
       echo "- Agent address: \`$AGENT_ADDRESS\`"
-      echo "- Agent working directory: \`${AGENT_WORKDIR:-<default>}\`"
+      echo "- Agent working directory: \`${AGENT_WORK_DIR:-<default>}\`"
     fi
     echo
     echo "## Files"
@@ -304,13 +336,13 @@ build_cli
 SWIFT_TEST_ENV=(
   "WENDY_E2E_RUN_ID=$RUN_ID"
   "WENDY_E2E_RUN_DIR=$RUN_DIR"
+  "WENDY_E2E_CLI_USER=$CLI_USER"
+  "WENDY_E2E_CLI_ADDRESS=$CLI_ADDRESS"
+  "WENDY_E2E_CLI_WORK_DIR=$CLI_WORK_DIR"
   "WENDY_E2E_AGENT_USER=$AGENT_USER"
   "WENDY_E2E_AGENT_ADDRESS=$AGENT_ADDRESS"
-  "WENDY_E2E_AGENT_WORK_DIR=$AGENT_WORKDIR"
+  "WENDY_E2E_AGENT_WORK_DIR=$AGENT_WORK_DIR"
   "WENDY_E2E_CLI_OS="
-  "WENDY_E2E_CLI_USER="
-  "WENDY_E2E_CLI_ADDRESS="
-  "WENDY_E2E_CLI_WORKING_DIRECTORY="
   "WENDY_E2E_PARALLEL=$PARALLEL"
   "WENDY_E2E_VERBOSE=$VERBOSE"
 )
@@ -324,9 +356,12 @@ echo "    Report:   $RUN_DIR/report.html"
 echo "    Filters:  ${TEST_FILTERS[*]}"
 echo "    Verbose:  $VERBOSE"
 echo "    Parallel: $PARALLEL"
-echo "    HTML:     $GENERATE_REPORT"
+echo "    HTML:     $REPORT"
+if [[ -n "$CLI_USER" || -n "$CLI_ADDRESS" || -n "$CLI_WORK_DIR" ]]; then
+  echo "    CLI target: ${CLI_USER:+$CLI_USER@}${CLI_ADDRESS:-<local>}:${CLI_WORK_DIR:-<default>}"
+fi
 if [[ -n "$AGENT_ADDRESS" ]]; then
-  echo "    Agent:   $(ssh_target):${AGENT_WORKDIR:-<default>}"
+  echo "    Agent:   $(ssh_target):${AGENT_WORK_DIR:-<default>}"
 fi
 
 set +e

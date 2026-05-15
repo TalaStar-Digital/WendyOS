@@ -27,7 +27,7 @@ public enum Environment {
     }
 
     public static var cliWorkingDirectory: String? {
-        value("WENDY_E2E_CLI_WORKING_DIRECTORY")
+        value("WENDY_E2E_CLI_WORK_DIR")
     }
 
     public static var agentOS: MachineOS? {
