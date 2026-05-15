@@ -1,12 +1,12 @@
 public import Subprocess
 
-public struct SessionCommand: Sendable {
+public struct WendyE2ESessionCommand: Sendable {
     public enum PollCondition: Sendable {
         case success
         case failure
     }
 
-    public let session: Session
+    public let session: WendyE2ESession
     public let command: String
 
     public func poll(
@@ -14,11 +14,11 @@ public struct SessionCommand: Sendable {
         step: Duration = .milliseconds(250),
         timeout: Duration = .seconds(10),
         timeoutMessage: String? = nil
-    ) -> SessionCommand {
+    ) -> WendyE2ESessionCommand {
         precondition(step > .zero, "step must be greater than zero")
         precondition(timeout >= .zero, "timeout must be greater than or equal to zero")
 
-        return SessionCommand(
+        return WendyE2ESessionCommand(
             session: self.session,
             command: self.command,
             pollConfiguration: PollConfiguration(
@@ -71,7 +71,7 @@ public struct SessionCommand: Sendable {
 
     // MARK: - Internal
 
-    init(session: Session, command: String) {
+    init(session: WendyE2ESession, command: String) {
         self.session = session
         self.command = command
         self.pollConfiguration = nil
@@ -82,7 +82,7 @@ public struct SessionCommand: Sendable {
     private let pollConfiguration: PollConfiguration?
 
     private init(
-        session: Session,
+        session: WendyE2ESession,
         command: String,
         pollConfiguration: PollConfiguration?
     ) {
@@ -114,7 +114,7 @@ public struct SessionCommand: Sendable {
 
             let elapsed = start.duration(to: clock.now)
             guard elapsed < configuration.timeout else {
-                throw MachineError.pollTimedOut(
+                throw WendyE2EMachineError.pollTimedOut(
                     machine: self.session.description,
                     command: self.command,
                     condition: configuration.condition.description,
@@ -131,7 +131,7 @@ public struct SessionCommand: Sendable {
 
 // MARK: - CustomStringConvertible
 
-extension SessionCommand.PollCondition: CustomStringConvertible {
+extension WendyE2ESessionCommand.PollCondition: CustomStringConvertible {
     public var description: String {
         switch self {
         case .success:
@@ -145,13 +145,13 @@ extension SessionCommand.PollCondition: CustomStringConvertible {
 // MARK: - Private
 
 private struct PollConfiguration: Sendable {
-    let condition: SessionCommand.PollCondition
+    let condition: WendyE2ESessionCommand.PollCondition
     let step: Duration
     let timeout: Duration
     let timeoutMessage: String?
 }
 
-extension SessionCommand.PollCondition {
+extension WendyE2ESessionCommand.PollCondition {
     fileprivate func matches(_ status: TerminationStatus) -> Bool {
         switch self {
         case .success:

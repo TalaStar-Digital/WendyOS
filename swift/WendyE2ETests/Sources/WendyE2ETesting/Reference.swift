@@ -1,6 +1,6 @@
 import Foundation
 
-public enum Reference {
+public enum WendyE2EReference {
     public struct Document: Sendable, Equatable {
         public var title: String
         public var overview: String

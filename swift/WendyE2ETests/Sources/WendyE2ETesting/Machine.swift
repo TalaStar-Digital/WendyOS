@@ -1,12 +1,12 @@
 import Foundation
 
-public enum MachineOS: String, Sendable {
+public enum WendyE2EMachineOS: String, Sendable {
     case macOS
     case linux
     case windows
     case wendyOS
 
-    public static var current: MachineOS {
+    public static var current: WendyE2EMachineOS {
         #if os(macOS)
             .macOS
         #elseif os(Linux)
@@ -34,17 +34,17 @@ public enum MachineOS: String, Sendable {
     }
 }
 
-public enum MachineTag: String, Sendable {
+public enum WendyE2EMachineTag: String, Sendable {
     case cli
     case agent
     case runner
 }
 
-public struct Machine: Sendable, Equatable {
+public struct WendyE2EMachine: Sendable, Equatable {
     public let id: String
     public let name: String
-    public let os: MachineOS
-    public let tags: Set<MachineTag>
+    public let os: WendyE2EMachineOS
+    public let tags: Set<WendyE2EMachineTag>
     public let isLocal: Bool
     public let user: String?
     public let address: String
@@ -54,8 +54,8 @@ public struct Machine: Sendable, Equatable {
     public init(
         id: String,
         name: String,
-        os: MachineOS = .current,
-        tags: Set<MachineTag> = [],
+        os: WendyE2EMachineOS = .current,
+        tags: Set<WendyE2EMachineTag> = [],
         user: String? = nil,
         address: String? = nil
     ) {
@@ -77,8 +77,8 @@ public struct Machine: Sendable, Equatable {
 
     // MARK: - Known Machines
 
-    public static var current: Machine {
-        Machine(
+    public static var current: WendyE2EMachine {
+        WendyE2EMachine(
             id: "current",
             name: "Current",
             os: .current,
@@ -95,7 +95,7 @@ public struct Machine: Sendable, Equatable {
 
 // MARK: - CustomStringConvertible
 
-extension Machine: CustomStringConvertible {
+extension WendyE2EMachine: CustomStringConvertible {
     public var description: String {
         self.id
     }

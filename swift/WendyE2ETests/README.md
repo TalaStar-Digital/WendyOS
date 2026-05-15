@@ -299,12 +299,12 @@ In a future session, use:
 
 ## Machine and session overview
 
-`Machine` is static metadata: identity, OS, tags, optional SSH user/address, and working directory. It does not run commands.
+`WendyE2EMachine` is static metadata: identity, OS, tags, optional SSH user/address, and working directory. It does not run commands.
 
 ```swift
-@Test(.enabled(if: Machine.cli.os == .linux))
+@Test(.enabled(if: WendyE2EMachine.cli.os == .linux))
 func `uses linux behavior`() async throws {
-    let cli = try await Session.begin(for: .cli)
+    let cli = try await WendyE2ESession.begin(for: .cli)
     try await cli.sh("./bin/wendy --version")
     try await cli.end()
 }
@@ -313,26 +313,26 @@ func `uses linux behavior`() async throws {
 Known machines are declared as static properties:
 
 ```swift
-Machine.current  // the test runner, tagged `.runner`
-Machine.cli
-Machine.agent
+WendyE2EMachine.current  // the test runner, tagged `.runner`
+WendyE2EMachine.cli
+WendyE2EMachine.agent
 ```
 
 Predefined machine OS values are `.macOS`, `.linux`, `.windows`, and `.wendyOS`.
 Use `WENDY_E2E_CLI_OS` or `WENDY_E2E_AGENT_OS` to override a known
 machine's declared OS for a run.
 
-`Session` is the runtime command executor for a machine:
+`WendyE2ESession` is the runtime command executor for a machine:
 
 ```swift
-let cli = try await Session.begin(for: .cli)
+let cli = try await WendyE2ESession.begin(for: .cli)
 try await cli.sh("./bin/wendy --version")
 ```
 
-Use `Session.with` when a spec needs cleanup-safe session lifetimes:
+Use `WendyE2ESession.with` when a spec needs cleanup-safe session lifetimes:
 
 ```swift
-try await Session.with(.cli, .agent) { cli, agent in
+try await WendyE2ESession.with(.cli, .agent) { cli, agent in
     try await cli.sh("./bin/wendy --version")
     try await agent.sh("make agent-build")
 }
@@ -347,4 +347,4 @@ try await agent
     .run()
 ```
 
-Sessions run locally when `address` is omitted. If `address` is provided, commands run over SSH; `user` is included in the SSH target when provided. Local sessions still execute commands through a shell and honor configured working directories and environment. `Session.begin(for:verbose:)` enables command echoing for that session; `WENDY_E2E_VERBOSE=1` enables it globally.
+Sessions run locally when `address` is omitted. If `address` is provided, commands run over SSH; `user` is included in the SSH target when provided. Local sessions still execute commands through a shell and honor configured working directories and environment. `WendyE2ESession.begin(for:verbose:)` enables command echoing for that session; `WENDY_E2E_VERBOSE=1` enables it globally.

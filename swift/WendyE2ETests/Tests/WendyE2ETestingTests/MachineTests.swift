@@ -8,7 +8,7 @@ import Testing
 struct `machine` {
     @Test
     func `creates remote machine metadata`() {
-        let machine = Machine(
+        let machine = WendyE2EMachine(
             id: "ssh",
             name: "SSH",
             user: "ai",
@@ -25,7 +25,7 @@ struct `machine` {
 
     @Test
     func `creates remote machine without session state`() {
-        let machine = Machine(id: "ssh", name: "SSH", user: "ai", address: "example.local")
+        let machine = WendyE2EMachine(id: "ssh", name: "SSH", user: "ai", address: "example.local")
 
         #expect(machine.isLocal == false)
         #expect(machine.user == "ai")
@@ -36,7 +36,7 @@ struct `machine` {
 
     @Test
     func `defaults machine to current host`() {
-        let machine = Machine(id: "local", name: "Local")
+        let machine = WendyE2EMachine(id: "local", name: "Local")
 
         #expect(machine.isLocal)
         #expect(machine.user == nil)
@@ -47,17 +47,17 @@ struct `machine` {
 
     @Test
     func `declares current runner machine`() {
-        #expect(Machine.current.id == "current")
-        #expect(Machine.current.name == "Current")
-        #expect(Machine.current.tags == [.runner])
-        #expect(Machine.current.isLocal)
-        #expect(Machine.current.user == nil)
-        #expect(!Machine.current.address.isEmpty)
+        #expect(WendyE2EMachine.current.id == "current")
+        #expect(WendyE2EMachine.current.name == "Current")
+        #expect(WendyE2EMachine.current.tags == [.runner])
+        #expect(WendyE2EMachine.current.isLocal)
+        #expect(WendyE2EMachine.current.user == nil)
+        #expect(!WendyE2EMachine.current.address.isEmpty)
     }
 
     @Test
     func `stores a routable address`() {
-        let machine = Machine(id: "remote", name: "Remote", address: "192.168.64.2")
+        let machine = WendyE2EMachine(id: "remote", name: "Remote", address: "192.168.64.2")
 
         #expect(machine.isLocal == false)
         #expect(machine.address == "192.168.64.2")
@@ -68,7 +68,9 @@ struct `machine` {
 struct `session` {
     @Test
     func `runs a simple shell command`() async throws {
-        let session = try await Session.begin(for: Machine(id: "local", name: "Local"))
+        let session = try await WendyE2ESession.begin(
+            for: WendyE2EMachine(id: "local", name: "Local")
+        )
         let record = try await session.sh(
             "printf 'wendy-machine-smoke'",
             output: .string(limit: .max),
@@ -87,8 +89,11 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(id: "local", name: "Local")
-        let session = try await Session.begin(for: machine, workingDirectory: directory.path)
+        let machine = WendyE2EMachine(id: "local", name: "Local")
+        let session = try await WendyE2ESession.begin(
+            for: machine,
+            workingDirectory: directory.path
+        )
         try await session.sh("touch local.txt")
 
         #expect(!session.machine.address.isEmpty)
@@ -121,8 +126,8 @@ struct `session` {
             ofItemAtPath: wendy.path
         )
 
-        let machine = Machine(id: "local", name: "Local")
-        let session = try await Session.begin(
+        let machine = WendyE2EMachine(id: "local", name: "Local")
+        let session = try await WendyE2ESession.begin(
             for: machine,
             workingDirectory: directory.path,
             env: [
@@ -185,7 +190,7 @@ struct `session` {
     @Test
     func `simple shell command throws when the command exits non-zero`() async throws {
         try await Self.withTemporarySession { session, _ in
-            await #expect(throws: MachineError.self) {
+            await #expect(throws: WendyE2EMachineError.self) {
                 try await session.sh("exit 7")
             }
             return ()
@@ -199,8 +204,11 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(id: "local", name: "Local")
-        let session = try await Session.begin(for: machine, workingDirectory: directory.path)
+        let machine = WendyE2EMachine(id: "local", name: "Local")
+        let session = try await WendyE2ESession.begin(
+            for: machine,
+            workingDirectory: directory.path
+        )
         try await session.command("touch builder.txt").run()
 
         #expect(FileManager.default.fileExists(atPath: directory.path + "/builder.txt"))
@@ -208,7 +216,9 @@ struct `session` {
 
     @Test
     func `command builder callback receives command output`() async throws {
-        let session = try await Session.begin(for: Machine(id: "local", name: "Local"))
+        let session = try await WendyE2ESession.begin(
+            for: WendyE2EMachine(id: "local", name: "Local")
+        )
 
         try await session.command("printf 'hello'; printf 'oops' >&2").run {
             standardOutput,
@@ -225,8 +235,11 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(id: "local", name: "Local")
-        let session = try await Session.begin(for: machine, workingDirectory: directory.path)
+        let machine = WendyE2EMachine(id: "local", name: "Local")
+        let session = try await WendyE2ESession.begin(
+            for: machine,
+            workingDirectory: directory.path
+        )
         try await session
             .command(
                 """
@@ -253,8 +266,11 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(id: "local", name: "Local")
-        let session = try await Session.begin(for: machine, workingDirectory: directory.path)
+        let machine = WendyE2EMachine(id: "local", name: "Local")
+        let session = try await WendyE2ESession.begin(
+            for: machine,
+            workingDirectory: directory.path
+        )
         try await session
             .command(
                 """
@@ -275,9 +291,11 @@ struct `session` {
 
     @Test
     func `poll throws timeout error with timeout message`() async throws {
-        let session = try await Session.begin(for: Machine(id: "local", name: "Local"))
+        let session = try await WendyE2ESession.begin(
+            for: WendyE2EMachine(id: "local", name: "Local")
+        )
 
-        await #expect(throws: MachineError.self) {
+        await #expect(throws: WendyE2EMachineError.self) {
             try await session
                 .command("exit 1")
                 .poll(
@@ -293,19 +311,20 @@ struct `session` {
     @Test
     func `requires command recordings to start from test bodies`() {
         #expect(throws: (any Error).self) {
-            _ = try Recorder(filePath: #filePath, function: "init()", line: #line)
+            _ = try WendyE2ERecorder(filePath: #filePath, function: "init()", line: #line)
         }
     }
 
     @Test
     func `dasherizes command record file names`() {
-        #expect(Recorder.slug("buildAgent(with:)") == "build-agent-with")
-        #expect(Recorder.slug("URLParserTests") == "url-parser-tests")
+        #expect(WendyE2ERecorder.slug("buildAgent(with:)") == "build-agent-with")
+        #expect(WendyE2ERecorder.slug("URLParserTests") == "url-parser-tests")
         #expect(
-            Recorder.slug("'--json' reports a missing device") == "json-reports-a-missing-device"
+            WendyE2ERecorder.slug("'--json' reports a missing device")
+                == "json-reports-a-missing-device"
         )
         #expect(
-            Recorder.recordingFileName(
+            WendyE2ERecorder.recordingFileName(
                 filePath: "/tmp/WendyDeviceInfoTests.swift",
                 suite: "'wendy device info'",
                 testName: "'--device' selects an explicit device"
@@ -316,9 +335,9 @@ struct `session` {
 
     @Test
     func `with begins sessions and ends them after the body`() async throws {
-        try await Session.with(
-            Machine(id: "first", name: "Local"),
-            Machine(id: "second", name: "Local")
+        try await WendyE2ESession.with(
+            WendyE2EMachine(id: "first", name: "Local"),
+            WendyE2EMachine(id: "second", name: "Local")
         ) { first, second in
             #expect(first.machine.name == "Local")
             #expect(second.machine.name == "Local")
@@ -326,11 +345,11 @@ struct `session` {
     }
 
     private static func withTemporarySession<Result>(
-        _ body: (Session, URL) async throws -> Result
+        _ body: (WendyE2ESession, URL) async throws -> Result
     ) async throws -> Result {
         let directory = try Self.makeTemporaryDirectory()
-        let session = try await Session.begin(
-            for: Machine(id: "local", name: "Local"),
+        let session = try await WendyE2ESession.begin(
+            for: WendyE2EMachine(id: "local", name: "Local"),
             workingDirectory: directory.path
         )
 

@@ -1,6 +1,6 @@
 public import Subprocess
 
-public enum MachineError: Error {
+public enum WendyE2EMachineError: Error {
     case commandFailed(machine: String, command: String, terminationStatus: TerminationStatus)
     case pollTimedOut(
         machine: String,
@@ -14,7 +14,7 @@ public enum MachineError: Error {
 
 // MARK: - CustomStringConvertible
 
-extension MachineError: CustomStringConvertible {
+extension WendyE2EMachineError: CustomStringConvertible {
     public var description: String {
         switch self {
         case .commandFailed(let machine, let command, let terminationStatus):

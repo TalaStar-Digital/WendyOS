@@ -1,14 +1,14 @@
 import Foundation
 import WendyE2ETesting
 
-final class CLIAndAgentScenario: Scenario, Sendable {
+final class CLIAndAgentScenario: WendyE2EScenario, Sendable {
     // MARK: - Internal
 
     func run<Result>(
         filePath: String = #filePath,
         function: String = #function,
         line: Int = #line,
-        _ body: @Sendable (_ cli: Session, _ agent: Session) async throws -> Result
+        _ body: @Sendable (_ cli: WendyE2ESession, _ agent: WendyE2ESession) async throws -> Result
     ) async throws -> Result {
         let (cli, agent) = try await self.setUp(
             filePath: filePath,
@@ -40,12 +40,12 @@ final class CLIAndAgentScenario: Scenario, Sendable {
         filePath: String,
         function: String,
         line: Int
-    ) async throws -> (cli: Session, agent: Session) {
-        var cliSession: Session?
-        var agentSession: Session?
+    ) async throws -> (cli: WendyE2ESession, agent: WendyE2ESession) {
+        var cliSession: WendyE2ESession?
+        var agentSession: WendyE2ESession?
 
         do {
-            let recorder = try Recorder(
+            let recorder = try WendyE2ERecorder(
                 filePath: filePath,
                 function: function,
                 line: line
@@ -58,12 +58,12 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 isDirectory: true
             ).path
             let cliTestDirectory = Self.roleTestDirectoryPath(
-                runDirectory: Environment.cliRunDirectory,
+                runDirectory: WendyE2EEnvironment.cliRunDirectory,
                 fallbackDirectory: Self.path(fallbackTestDirectory, "cli"),
                 testName: testName
             )
             let agentTestDirectory = Self.roleTestDirectoryPath(
-                runDirectory: Environment.agentRunDirectory,
+                runDirectory: WendyE2EEnvironment.agentRunDirectory,
                 fallbackDirectory: Self.path(fallbackTestDirectory, "agent"),
                 testName: testName
             )
@@ -71,7 +71,7 @@ final class CLIAndAgentScenario: Scenario, Sendable {
             let cliTemporaryDirectory = Self.path(cliTestDirectory, "tmp")
             let cliWorkingDirectory = Self.path(cliHomeDirectory, "work")
             let cliBinDirectory = Self.roleBinDirectory(
-                runDirectory: Environment.cliRunDirectory,
+                runDirectory: WendyE2EEnvironment.cliRunDirectory,
                 fallbackDirectory: repositoryRootDirectoryURL.appendingPathComponent("go/bin").path
             )
             let cliEnvironment = Self.roleEnvironment(
@@ -83,7 +83,7 @@ final class CLIAndAgentScenario: Scenario, Sendable {
             let agentTemporaryDirectory = Self.path(agentTestDirectory, "tmp")
             let agentWorkingDirectory = Self.path(agentHomeDirectory, "work")
             let agentBinDirectory = Self.roleBinDirectory(
-                runDirectory: Environment.agentRunDirectory,
+                runDirectory: WendyE2EEnvironment.agentRunDirectory,
                 fallbackDirectory: nil
             )
             let agentEnv = Self.roleEnvironment(
@@ -91,15 +91,15 @@ final class CLIAndAgentScenario: Scenario, Sendable {
                 temporaryDirectory: agentTemporaryDirectory,
                 binDirectory: agentBinDirectory
             )
-            let cliSetupMachine = Machine(
+            let cliSetupMachine = WendyE2EMachine(
                 id: "cli-setup",
                 name: "CLI setup",
-                os: Environment.cliOS ?? .current,
+                os: WendyE2EEnvironment.cliOS ?? .current,
                 tags: [.cli],
-                user: Environment.cliUser,
-                address: Environment.cliAddress
+                user: WendyE2EEnvironment.cliUser,
+                address: WendyE2EEnvironment.cliAddress
             )
-            let cliSetup = try await Session.begin(
+            let cliSetup = try await WendyE2ESession.begin(
                 for: cliSetupMachine,
                 workingDirectory: "/",
                 env: cliEnvironment,
@@ -108,15 +108,15 @@ final class CLIAndAgentScenario: Scenario, Sendable {
             cliSession = cliSetup
             try await cliSetup.sh("mkdir -p \"$HOME\" \"$TMPDIR\" \"$HOME/work\"")
 
-            let agentSetupMachine = Machine(
+            let agentSetupMachine = WendyE2EMachine(
                 id: "agent-setup",
                 name: "Agent setup",
-                os: Environment.agentOS ?? .current,
+                os: WendyE2EEnvironment.agentOS ?? .current,
                 tags: [.agent],
-                user: Environment.agentUser,
-                address: Environment.agentAddress
+                user: WendyE2EEnvironment.agentUser,
+                address: WendyE2EEnvironment.agentAddress
             )
-            let agentSetup = try await Session.begin(
+            let agentSetup = try await WendyE2ESession.begin(
                 for: agentSetupMachine,
                 workingDirectory: "/",
                 env: agentEnv,
@@ -125,32 +125,32 @@ final class CLIAndAgentScenario: Scenario, Sendable {
             agentSession = agentSetup
             try await agentSetup.sh("mkdir -p \"$HOME\" \"$TMPDIR\" \"$HOME/work\"")
 
-            let cliMachine = Machine(
+            let cliMachine = WendyE2EMachine(
                 id: "cli",
                 name: "CLI",
-                os: Environment.cliOS ?? .current,
+                os: WendyE2EEnvironment.cliOS ?? .current,
                 tags: [.cli],
-                user: Environment.cliUser,
-                address: Environment.cliAddress
+                user: WendyE2EEnvironment.cliUser,
+                address: WendyE2EEnvironment.cliAddress
             )
 
-            let agentMachine = Machine(
+            let agentMachine = WendyE2EMachine(
                 id: "agent",
                 name: "Agent",
-                os: Environment.agentOS ?? .current,
+                os: WendyE2EEnvironment.agentOS ?? .current,
                 tags: [.agent],
-                user: Environment.agentUser,
-                address: Environment.agentAddress
+                user: WendyE2EEnvironment.agentUser,
+                address: WendyE2EEnvironment.agentAddress
             )
 
-            let cli = try await Session.begin(
+            let cli = try await WendyE2ESession.begin(
                 for: cliMachine,
                 workingDirectory: cliWorkingDirectory,
                 env: cliEnvironment,
                 recorder: recorder
             )
             cliSession = cli
-            let agent = try await Session.begin(
+            let agent = try await WendyE2ESession.begin(
                 for: agentMachine,
                 workingDirectory: agentWorkingDirectory,
                 env: agentEnv,
@@ -169,8 +169,8 @@ final class CLIAndAgentScenario: Scenario, Sendable {
     }
 
     private static func tearDown(
-        cli: Session?,
-        agent: Session?
+        cli: WendyE2ESession?,
+        agent: WendyE2ESession?
     ) async throws {
         var firstError: (any Error)?
 

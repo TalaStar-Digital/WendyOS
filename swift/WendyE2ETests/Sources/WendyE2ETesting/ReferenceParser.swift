@@ -15,16 +15,16 @@ struct ReferenceSourceParser {
     private var pendingDocumentation: String?
     private var pendingSuiteDocumentation: String?
     private var pendingTest: PendingTest?
-    private var currentDocument: Reference.Document?
-    private var currentSections: [Reference.Section] = []
-    private var documents: [Reference.Document] = []
+    private var currentDocument: WendyE2EReference.Document?
+    private var currentSections: [WendyE2EReference.Section] = []
+    private var documents: [WendyE2EReference.Document] = []
 
     init(source: String, path: String) {
         self.lines = source.components(separatedBy: .newlines)
         self.path = path
     }
 
-    mutating func parse() -> [Reference.Document] {
+    mutating func parse() -> [WendyE2EReference.Document] {
         while index < lines.count {
             let line = lines[index]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -43,11 +43,11 @@ struct ReferenceSourceParser {
 
             if let suiteTitle = parseSuiteTitle(from: trimmed) {
                 finishCurrentDocument()
-                currentDocument = Reference.Document(
+                currentDocument = WendyE2EReference.Document(
                     title: suiteTitle,
                     overview: pendingSuiteDocumentation ?? "",
                     sections: [],
-                    sourceLocation: Reference.SourceLocation(path: path, line: index + 1)
+                    sourceLocation: WendyE2EReference.SourceLocation(path: path, line: index + 1)
                 )
                 currentSections = []
                 pendingSuiteDocumentation = nil
@@ -56,7 +56,7 @@ struct ReferenceSourceParser {
             }
 
             if let sectionTitle = parseMarkTitle(from: trimmed), currentDocument != nil {
-                currentSections.append(Reference.Section(title: sectionTitle))
+                currentSections.append(WendyE2EReference.Section(title: sectionTitle))
                 index += 1
                 continue
             }
@@ -105,15 +105,15 @@ struct ReferenceSourceParser {
         functionLine: Int
     ) {
         skipFunctionBody(startingAt: functionLine)
-        let entry = Reference.Entry(
+        let entry = WendyE2EReference.Entry(
             title: title,
             documentation: pendingTest.documentation,
-            sourceLocation: Reference.SourceLocation(path: path, line: functionLine + 1),
+            sourceLocation: WendyE2EReference.SourceLocation(path: path, line: functionLine + 1),
             isDisabled: pendingTest.isDisabled
         )
 
         if currentSections.isEmpty {
-            currentSections.append(Reference.Section(title: "Overview"))
+            currentSections.append(WendyE2EReference.Section(title: "Overview"))
         }
         currentSections[currentSections.count - 1].entries.append(entry)
     }

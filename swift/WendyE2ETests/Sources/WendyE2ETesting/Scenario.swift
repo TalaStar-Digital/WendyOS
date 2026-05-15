@@ -1,1 +1,1 @@
-public protocol Scenario {}
+public protocol WendyE2EScenario {}

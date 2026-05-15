@@ -1,6 +1,6 @@
 import Foundation
 
-public enum Environment {
+public enum WendyE2EEnvironment {
     public static let runID: String = {
         let configured = value("WENDY_E2E_RUN_ID") ?? UUID().uuidString
         return configured.replacingOccurrences(of: "-", with: "")
@@ -14,8 +14,8 @@ public enum Environment {
         value("WENDY_E2E_RUN_DIR")
     }
 
-    public static var cliOS: MachineOS? {
-        value("WENDY_E2E_CLI_OS").flatMap(MachineOS.init(environmentValue:))
+    public static var cliOS: WendyE2EMachineOS? {
+        value("WENDY_E2E_CLI_OS").flatMap(WendyE2EMachineOS.init(environmentValue:))
     }
 
     public static var cliUser: String? {
@@ -34,8 +34,8 @@ public enum Environment {
         value("WENDY_E2E_CLI_REPO_DIR")
     }
 
-    public static var agentOS: MachineOS? {
-        value("WENDY_E2E_AGENT_OS").flatMap(MachineOS.init(environmentValue:))
+    public static var agentOS: WendyE2EMachineOS? {
+        value("WENDY_E2E_AGENT_OS").flatMap(WendyE2EMachineOS.init(environmentValue:))
     }
 
     public static var agentUser: String? {

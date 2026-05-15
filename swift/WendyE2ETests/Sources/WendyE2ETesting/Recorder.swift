@@ -1,6 +1,6 @@
 import Foundation
 
-public struct Recorder: Sendable {
+public struct WendyE2ERecorder: Sendable {
     public let recordPath: String
     public let testDirectoryPath: String
 
@@ -24,7 +24,7 @@ public struct Recorder: Sendable {
     }
 
     public func record(
-        session: Session,
+        session: WendyE2ESession,
         command: String,
         processIdentifier: String?,
         terminationStatus: String,
@@ -172,7 +172,7 @@ public struct Recorder: Sendable {
     }()
 
     private static func testDirectoryURL(identity: TestIdentity) throws -> URL {
-        if let runDirectory = Environment.runDirectory {
+        if let runDirectory = WendyE2EEnvironment.runDirectory {
             let directoryURL = URL(fileURLWithPath: runDirectory, isDirectory: true)
                 .appendingPathComponent("tests", isDirectory: true)
                 .appendingPathComponent(
@@ -229,7 +229,7 @@ public struct Recorder: Sendable {
     }
 
     private static func unpreparedRecordsDirectoryURL() -> URL {
-        if let path = Environment.testRecordsDirectory {
+        if let path = WendyE2EEnvironment.testRecordsDirectory {
             return URL(fileURLWithPath: path, isDirectory: true)
         }
 
@@ -404,7 +404,7 @@ public struct Recorder: Sendable {
     }
 
     private static func commandRecord(
-        session: Session,
+        session: WendyE2ESession,
         command: String,
         filePath: String,
         line: Int,
@@ -458,7 +458,7 @@ public struct Recorder: Sendable {
     }
 
     private func recordShellScript(
-        session: Session,
+        session: WendyE2ESession,
         command: String,
         harnessPrefix: [String],
         scriptShellName: String
@@ -501,7 +501,7 @@ public struct Recorder: Sendable {
     }
 
     private static func shellScriptCommand(
-        machine: Machine,
+        machine: WendyE2EMachine,
         command: String,
         harnessPrefix: [String]
     ) -> String {
@@ -524,7 +524,7 @@ public struct Recorder: Sendable {
         "------------------------------------------------------------------------------"
 
     private static func commandSource(
-        machine: Machine,
+        machine: WendyE2EMachine,
         command: String,
         harnessPrefix: [String]
     ) -> String {
@@ -550,7 +550,7 @@ public struct Recorder: Sendable {
     }
 
     private static func remoteCommandSource(
-        machine: Machine,
+        machine: WendyE2EMachine,
         command: String,
         harnessPrefix: [String]
     ) -> String {
@@ -582,7 +582,7 @@ public struct Recorder: Sendable {
             .joined(separator: "\n")
     }
 
-    private static func sshCommandPrefix(machine: Machine) -> String {
+    private static func sshCommandPrefix(machine: WendyE2EMachine) -> String {
         """
         ssh \\
           -o BatchMode=yes \\
@@ -594,7 +594,7 @@ public struct Recorder: Sendable {
         """
     }
 
-    private static func sshTarget(machine: Machine) -> String {
+    private static func sshTarget(machine: WendyE2EMachine) -> String {
         let host = machine.address.contains(":") ? "[\(machine.address)]" : machine.address
         return machine.user.map { "\($0)@\(host)" } ?? host
     }

@@ -7,26 +7,26 @@ public import Subprocess
     import SystemPackage
 #endif
 
-public struct Session: Sendable {
-    public let machine: Machine
+public struct WendyE2ESession: Sendable {
+    public let machine: WendyE2EMachine
     public let workingDirectory: String?
     public let env: [String: String]
 
     // MARK: - Beginning and Ending Sessions
 
     public static func begin(
-        for machine: Machine,
+        for machine: WendyE2EMachine,
         workingDirectory: String? = nil,
         env: [String: String] = [:],
         verbose: Bool = false,
-        recorder: Recorder? = nil
-    ) async throws -> Session {
-        let session = Session(
+        recorder: WendyE2ERecorder? = nil
+    ) async throws -> WendyE2ESession {
+        let session = WendyE2ESession(
             machine: machine,
             workingDirectory: workingDirectory,
             env: env,
             recorder: recorder,
-            verbose: verbose || Environment.verbose
+            verbose: verbose || WendyE2EEnvironment.verbose
         )
 
         return session
@@ -38,10 +38,10 @@ public struct Session: Sendable {
     }
 
     public static func with<Result>(
-        _ machine: Machine,
-        body: @Sendable (Session) async throws -> Result
+        _ machine: WendyE2EMachine,
+        body: @Sendable (WendyE2ESession) async throws -> Result
     ) async throws -> Result {
-        var sessions: [Session] = []
+        var sessions: [WendyE2ESession] = []
         do {
             let session = try await Self.begin(for: machine)
             sessions.append(session)
@@ -55,11 +55,11 @@ public struct Session: Sendable {
     }
 
     public static func with<Result>(
-        _ first: Machine,
-        _ second: Machine,
-        body: @Sendable (Session, Session) async throws -> Result
+        _ first: WendyE2EMachine,
+        _ second: WendyE2EMachine,
+        body: @Sendable (WendyE2ESession, WendyE2ESession) async throws -> Result
     ) async throws -> Result {
-        var sessions: [Session] = []
+        var sessions: [WendyE2ESession] = []
         do {
             let firstSession = try await Self.begin(for: first)
             sessions.append(firstSession)
@@ -75,12 +75,12 @@ public struct Session: Sendable {
     }
 
     public static func with<Result>(
-        _ first: Machine,
-        _ second: Machine,
-        _ third: Machine,
-        body: @Sendable (Session, Session, Session) async throws -> Result
+        _ first: WendyE2EMachine,
+        _ second: WendyE2EMachine,
+        _ third: WendyE2EMachine,
+        body: @Sendable (WendyE2ESession, WendyE2ESession, WendyE2ESession) async throws -> Result
     ) async throws -> Result {
-        var sessions: [Session] = []
+        var sessions: [WendyE2ESession] = []
         do {
             let firstSession = try await Self.begin(for: first)
             sessions.append(firstSession)
@@ -107,7 +107,7 @@ public struct Session: Sendable {
         )
 
         guard record.terminationStatus.isSuccess else {
-            throw MachineError.commandFailed(
+            throw WendyE2EMachineError.commandFailed(
                 machine: self.description,
                 command: command,
                 terminationStatus: record.terminationStatus
@@ -163,7 +163,7 @@ public struct Session: Sendable {
         )
 
         guard record.terminationStatus.isSuccess else {
-            throw MachineError.commandFailed(
+            throw WendyE2EMachineError.commandFailed(
                 machine: self.description,
                 command: command,
                 terminationStatus: record.terminationStatus
@@ -203,10 +203,10 @@ public struct Session: Sendable {
     // MARK: - Internal
 
     private init(
-        machine: Machine,
+        machine: WendyE2EMachine,
         workingDirectory: String? = nil,
         env: [String: String] = [:],
-        recorder: Recorder? = nil,
+        recorder: WendyE2ERecorder? = nil,
         verbose: Bool = false
     ) {
         precondition(workingDirectory?.isEmpty != true, "workingDirectory must not be empty")
@@ -227,10 +227,10 @@ public struct Session: Sendable {
 
     // MARK: - Private
 
-    private let recorder: Recorder?
+    private let recorder: WendyE2ERecorder?
     private let verbose: Bool
 
-    private static func end(_ sessions: [Session]) async throws {
+    private static func end(_ sessions: [WendyE2ESession]) async throws {
         for session in sessions.reversed() {
             try await session.end()
         }
@@ -473,7 +473,7 @@ private struct Invocation: Sendable {
 
 // MARK: - CustomStringConvertible
 
-extension Session: CustomStringConvertible {
+extension WendyE2ESession: CustomStringConvertible {
     public var description: String {
         self.machine.description
     }

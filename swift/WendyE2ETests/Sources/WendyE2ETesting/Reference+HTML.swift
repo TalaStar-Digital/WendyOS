@@ -1,6 +1,6 @@
 import Foundation
 
-extension Reference {
+extension WendyE2EReference {
     // MARK: - Rendering HTML
 
     public static func htmlFileName(forTitle title: String) -> String {
@@ -48,12 +48,12 @@ extension Reference {
 // MARK: - HTML Rendering
 
 private func renderHTMLBody(
-    _ document: Reference.Document,
-    options: Reference.RenderOptions
+    _ document: WendyE2EReference.Document,
+    options: WendyE2EReference.RenderOptions
 ) -> String {
     var html: [String] = []
     html.append(
-        "<h1 id=\"\(escapeHTMLAttribute(Reference.markdownAnchor(forTitle: document.title)))\">\(renderInlineHTML(document.title))</h1>"
+        "<h1 id=\"\(escapeHTMLAttribute(WendyE2EReference.markdownAnchor(forTitle: document.title)))\">\(renderInlineHTML(document.title))</h1>"
     )
     appendHTMLBlocks(document.overview, to: &html)
     appendHTMLMetadata(
@@ -65,7 +65,7 @@ private func renderHTMLBody(
 
     for section in document.sections where !section.entries.isEmpty {
         html.append(
-            "<h2 id=\"\(escapeHTMLAttribute(Reference.markdownAnchor(forTitle: section.title)))\">\(renderInlineHTML(section.title))</h2>"
+            "<h2 id=\"\(escapeHTMLAttribute(WendyE2EReference.markdownAnchor(forTitle: section.title)))\">\(renderInlineHTML(section.title))</h2>"
         )
 
         for entry in section.entries {
@@ -74,7 +74,7 @@ private func renderHTMLBody(
                 entryTitle: entry.title
             )
             html.append(
-                "<h3 id=\"\(escapeHTMLAttribute(Reference.markdownAnchor(forTitle: title)))\">\(renderInlineHTML(title))</h3>"
+                "<h3 id=\"\(escapeHTMLAttribute(WendyE2EReference.markdownAnchor(forTitle: title)))\">\(renderInlineHTML(title))</h3>"
             )
             appendHTMLMetadata(
                 isDisabled: entry.isDisabled,
@@ -542,8 +542,8 @@ private func appendHTMLBlocks(_ text: String, to html: inout [String]) {
 
 private func appendHTMLMetadata(
     isDisabled: Bool?,
-    sourceLocation: Reference.SourceLocation,
-    options: Reference.RenderOptions,
+    sourceLocation: WendyE2EReference.SourceLocation,
+    options: WendyE2EReference.RenderOptions,
     to html: inout [String]
 ) {
     var metadata: [String] = []

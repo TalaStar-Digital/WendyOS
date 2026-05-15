@@ -6,7 +6,10 @@ import WendyE2ETesting
 struct `reference documentation extraction` {
     @Test
     func `parses suite overview and title`() throws {
-        let documents = Reference.parseSource(Self.fixtureSource, path: "DeviceInfoTests.swift")
+        let documents = WendyE2EReference.parseSource(
+            Self.fixtureSource,
+            path: "DeviceInfoTests.swift"
+        )
 
         let document = try #require(documents.first)
         #expect(document.title == "`wendy device info`")
@@ -18,7 +21,7 @@ struct `reference documentation extraction` {
 
     @Test
     func `extracts mark sections in source order`() throws {
-        let document = try #require(Reference.parseSource(Self.fixtureSource).first)
+        let document = try #require(WendyE2EReference.parseSource(Self.fixtureSource).first)
 
         #expect(
             document.sections.map(\.title) == [
@@ -30,7 +33,7 @@ struct `reference documentation extraction` {
 
     @Test
     func `extracts test entries into their containing sections`() throws {
-        let document = try #require(Reference.parseSource(Self.fixtureSource).first)
+        let document = try #require(WendyE2EReference.parseSource(Self.fixtureSource).first)
         let selectingDevices = try #require(document.sections.first)
         let printingOutput = try #require(document.sections.dropFirst().first)
 
@@ -50,7 +53,7 @@ struct `reference documentation extraction` {
     @Test
     func `extracts test documentation`() throws {
         let entry = try #require(
-            Reference.parseSource(Self.fixtureSource).first?.sections.first?.entries.first
+            WendyE2EReference.parseSource(Self.fixtureSource).first?.sections.first?.entries.first
         )
 
         #expect(entry.documentation.contains("Selects a device explicitly with `--device`."))
@@ -61,7 +64,7 @@ struct `reference documentation extraction` {
 
     @Test
     func `extracts disabled test state`() throws {
-        let document = try #require(Reference.parseSource(Self.fixtureSource).first)
+        let document = try #require(WendyE2EReference.parseSource(Self.fixtureSource).first)
         let entries = document.sections.flatMap(\.entries)
 
         #expect(entries.map(\.isDisabled) == [true, true, false])
@@ -69,7 +72,7 @@ struct `reference documentation extraction` {
 
     @Test
     func `parses multiple suites in one source file`() throws {
-        let documents = Reference.parseSource(Self.fixtureSource)
+        let documents = WendyE2EReference.parseSource(Self.fixtureSource)
 
         #expect(
             documents.map(\.title) == [
@@ -83,7 +86,7 @@ struct `reference documentation extraction` {
 
     @Test
     func `creates an overview section for tests before the first mark`() throws {
-        let documents = Reference.parseSource(Self.fixtureWithoutMark)
+        let documents = WendyE2EReference.parseSource(Self.fixtureWithoutMark)
 
         let document = try #require(documents.first)
         #expect(document.sections.map(\.title) == ["Overview"])
@@ -92,8 +95,8 @@ struct `reference documentation extraction` {
 
     @Test
     func `renders reference markdown without metadata`() throws {
-        let document = try #require(Reference.parseSource(Self.fixtureSource).first)
-        let markdown = Reference.renderMarkdown(document, options: .reference)
+        let document = try #require(WendyE2EReference.parseSource(Self.fixtureSource).first)
+        let markdown = WendyE2EReference.renderMarkdown(document, options: .reference)
 
         #expect(markdown.contains("# `wendy device info`"))
         #expect(markdown.contains("## Selecting Devices"))
@@ -106,9 +109,9 @@ struct `reference documentation extraction` {
     @Test
     func `renders spec review markdown with metadata`() throws {
         let document = try #require(
-            Reference.parseSource(Self.fixtureSource, path: "DeviceInfoTests.swift").first
+            WendyE2EReference.parseSource(Self.fixtureSource, path: "DeviceInfoTests.swift").first
         )
-        let markdown = Reference.renderMarkdown(document, options: .specReview)
+        let markdown = WendyE2EReference.renderMarkdown(document, options: .specReview)
 
         #expect(markdown.contains("_`DeviceInfoTests.swift:9`_"))
         #expect(markdown.contains("_disabled · `DeviceInfoTests.swift:18`_"))
@@ -117,8 +120,8 @@ struct `reference documentation extraction` {
 
     @Test
     func `renders multiple documents separated by a thematic break`() {
-        let documents = Reference.parseSource(Self.fixtureSource)
-        let markdown = Reference.renderMarkdown(documents, options: .reference)
+        let documents = WendyE2EReference.parseSource(Self.fixtureSource)
+        let markdown = WendyE2EReference.renderMarkdown(documents, options: .reference)
 
         #expect(markdown.contains("# `wendy device info`"))
         #expect(markdown.contains("\n\n---\n\n# `wendy device version`"))
@@ -127,19 +130,29 @@ struct `reference documentation extraction` {
     @Test
     func `dasherizes document titles for markdown file names`() {
         #expect(
-            Reference.markdownFileName(forTitle: "`wendy device info`") == "wendy-device-info.md"
+            WendyE2EReference.markdownFileName(forTitle: "`wendy device info`")
+                == "wendy-device-info.md"
         )
-        #expect(Reference.htmlFileName(forTitle: "`wendy device info`") == "wendy-device-info.html")
-        #expect(Reference.jsonFileName(forTitle: "`wendy device info`") == "wendy-device-info.json")
-        #expect(Reference.markdownFileName(forTitle: "wendy --version") == "wendy-version.md")
         #expect(
-            Reference.markdownAnchor(forTitle: "`wendy device version`") == "wendy-device-version"
+            WendyE2EReference.htmlFileName(forTitle: "`wendy device info`")
+                == "wendy-device-info.html"
+        )
+        #expect(
+            WendyE2EReference.jsonFileName(forTitle: "`wendy device info`")
+                == "wendy-device-info.json"
+        )
+        #expect(
+            WendyE2EReference.markdownFileName(forTitle: "wendy --version") == "wendy-version.md"
+        )
+        #expect(
+            WendyE2EReference.markdownAnchor(forTitle: "`wendy device version`")
+                == "wendy-device-version"
         )
     }
 
     @Test
     func `renders markdown index entries`() {
-        let markdown = Reference.renderMarkdownIndex(
+        let markdown = WendyE2EReference.renderMarkdownIndex(
             Self.indexEntries(fileExtension: "md"),
             title: "Wendy E2E Reference"
         )
@@ -156,8 +169,8 @@ struct `reference documentation extraction` {
 
     @Test
     func `renders html reference documents`() throws {
-        let document = try #require(Reference.parseSource(Self.fixtureSource).first)
-        let html = Reference.renderHTML(document, options: .reference)
+        let document = try #require(WendyE2EReference.parseSource(Self.fixtureSource).first)
+        let html = WendyE2EReference.renderHTML(document, options: .reference)
 
         #expect(html.contains("<!doctype html>"))
         #expect(html.contains("<title>wendy device info</title>"))
@@ -173,7 +186,7 @@ struct `reference documentation extraction` {
 
     @Test
     func `renders html index entries`() {
-        let html = Reference.renderHTMLIndex(
+        let html = WendyE2EReference.renderHTMLIndex(
             Self.indexEntries(fileExtension: "html"),
             title: "Wendy E2E Reference"
         )
@@ -191,8 +204,8 @@ struct `reference documentation extraction` {
 
     @Test
     func `renders json reference documents`() throws {
-        let document = try #require(Reference.parseSource(Self.fixtureSource).first)
-        let json = try Reference.renderJSON(document, options: .reference)
+        let document = try #require(WendyE2EReference.parseSource(Self.fixtureSource).first)
+        let json = try WendyE2EReference.renderJSON(document, options: .reference)
 
         #expect(try Self.jsonValue(from: json) is [[String: Any]])
         #expect(json.contains("\"title\" : \"`wendy device info`\""))
@@ -206,8 +219,8 @@ struct `reference documentation extraction` {
 
     @Test
     func `renders spec review json with metadata`() throws {
-        let document = try #require(Reference.parseSource(Self.fixtureSource).first)
-        let json = try Reference.renderJSON(document, options: .specReview)
+        let document = try #require(WendyE2EReference.parseSource(Self.fixtureSource).first)
+        let json = try WendyE2EReference.renderJSON(document, options: .specReview)
 
         #expect(json.contains("\"sourceLocation\""))
         #expect(json.contains("\"isDisabled\" : true"))
@@ -215,7 +228,7 @@ struct `reference documentation extraction` {
 
     @Test
     func `renders json index entries`() throws {
-        let json = try Reference.renderJSONIndex(
+        let json = try WendyE2EReference.renderJSONIndex(
             Self.indexEntries(fileExtension: "json"),
             title: "Wendy E2E Reference"
         )
@@ -230,18 +243,21 @@ struct `reference documentation extraction` {
         try JSONSerialization.jsonObject(with: Data(json.utf8))
     }
 
-    private static func indexEntries(fileExtension: String) -> [Reference.IndexEntry] {
+    private static func indexEntries(fileExtension: String) -> [WendyE2EReference.IndexEntry] {
         [
-            Reference.IndexEntry(
+            WendyE2EReference.IndexEntry(
                 title: "`wendy device info`",
                 fileName: "wendy-device-info.\(fileExtension)"
             ),
-            Reference.IndexEntry(
+            WendyE2EReference.IndexEntry(
                 title: "`wendy device version`",
                 fileName: "wendy-device-info.\(fileExtension)",
                 anchor: "wendy-device-version"
             ),
-            Reference.IndexEntry(title: "wendy help", fileName: "wendy-help.\(fileExtension)"),
+            WendyE2EReference.IndexEntry(
+                title: "wendy help",
+                fileName: "wendy-help.\(fileExtension)"
+            ),
         ]
     }
 

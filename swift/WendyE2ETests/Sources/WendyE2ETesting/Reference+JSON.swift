@@ -1,6 +1,6 @@
 import Foundation
 
-extension Reference {
+extension WendyE2EReference {
     // MARK: - Rendering JSON
 
     public static func jsonFileName(forTitle title: String) -> String {
@@ -41,7 +41,7 @@ private struct JSONIndexEntry: Encodable {
     var fileName: String
     var anchor: String?
 
-    init(_ entry: Reference.IndexEntry) {
+    init(_ entry: WendyE2EReference.IndexEntry) {
         self.title = entry.title
         self.fileName = entry.fileName
         self.anchor = entry.anchor
@@ -51,10 +51,10 @@ private struct JSONIndexEntry: Encodable {
 private struct JSONDocument: Encodable {
     var title: String
     var overview: String
-    var sourceLocation: Reference.SourceLocation?
+    var sourceLocation: WendyE2EReference.SourceLocation?
     var sections: [JSONSection]
 
-    init(_ document: Reference.Document, options: Reference.RenderOptions) {
+    init(_ document: WendyE2EReference.Document, options: WendyE2EReference.RenderOptions) {
         self.title = document.title
         self.overview = document.overview
         self.sourceLocation = options.includeSourceLocations ? document.sourceLocation : nil
@@ -69,9 +69,9 @@ private struct JSONSection: Encodable {
     var entries: [JSONEntry]
 
     init(
-        _ section: Reference.Section,
+        _ section: WendyE2EReference.Section,
         documentTitle: String,
-        options: Reference.RenderOptions
+        options: WendyE2EReference.RenderOptions
     ) {
         self.title = section.title
         self.entries = section.entries.map {
@@ -83,13 +83,13 @@ private struct JSONSection: Encodable {
 private struct JSONEntry: Encodable {
     var title: String
     var documentation: String
-    var sourceLocation: Reference.SourceLocation?
+    var sourceLocation: WendyE2EReference.SourceLocation?
     var isDisabled: Bool?
 
     init(
-        _ entry: Reference.Entry,
+        _ entry: WendyE2EReference.Entry,
         documentTitle: String,
-        options: Reference.RenderOptions
+        options: WendyE2EReference.RenderOptions
     ) {
         self.title = referenceBehaviorTitle(
             documentTitle: documentTitle,

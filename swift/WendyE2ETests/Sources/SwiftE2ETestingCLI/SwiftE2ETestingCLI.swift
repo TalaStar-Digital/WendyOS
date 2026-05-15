@@ -45,7 +45,7 @@ struct ReferenceCommand: ParsableCommand {
             throw ValidationError("Missing path.")
         }
 
-        let options = Reference.RenderOptions(
+        let options = WendyE2EReference.RenderOptions(
             includeSourceLocations: includeSourceLocations || specReview,
             includeDisabledState: includeDisabledState || specReview
         )
@@ -63,9 +63,9 @@ struct ReferenceCommand: ParsableCommand {
             return
         }
 
-        var documents: [Reference.Document] = []
+        var documents: [WendyE2EReference.Document] = []
         for sourceFile in sourceFiles {
-            documents.append(contentsOf: try Reference.parseFile(at: sourceFile))
+            documents.append(contentsOf: try WendyE2EReference.parseFile(at: sourceFile))
         }
         print(try format.render(documents, options: options), terminator: "")
     }
@@ -123,36 +123,36 @@ enum ReferenceFormat: String, ExpressibleByArgument, CustomStringConvertible {
     func fileName(forTitle title: String) -> String {
         switch self {
         case .markdown:
-            Reference.markdownFileName(forTitle: title)
+            WendyE2EReference.markdownFileName(forTitle: title)
         case .html:
-            Reference.htmlFileName(forTitle: title)
+            WendyE2EReference.htmlFileName(forTitle: title)
         case .json:
-            Reference.jsonFileName(forTitle: title)
+            WendyE2EReference.jsonFileName(forTitle: title)
         }
     }
 
     func render(
-        _ documents: [Reference.Document],
-        options: Reference.RenderOptions
+        _ documents: [WendyE2EReference.Document],
+        options: WendyE2EReference.RenderOptions
     ) throws -> String {
         switch self {
         case .markdown:
-            Reference.renderMarkdown(documents, options: options)
+            WendyE2EReference.renderMarkdown(documents, options: options)
         case .html:
-            Reference.renderHTML(documents, options: options)
+            WendyE2EReference.renderHTML(documents, options: options)
         case .json:
-            try Reference.renderJSON(documents, options: options)
+            try WendyE2EReference.renderJSON(documents, options: options)
         }
     }
 
-    func renderIndex(_ entries: [Reference.IndexEntry], title: String) throws -> String {
+    func renderIndex(_ entries: [WendyE2EReference.IndexEntry], title: String) throws -> String {
         switch self {
         case .markdown:
-            Reference.renderMarkdownIndex(entries, title: title)
+            WendyE2EReference.renderMarkdownIndex(entries, title: title)
         case .html:
-            Reference.renderHTMLIndex(entries, title: title)
+            WendyE2EReference.renderHTMLIndex(entries, title: title)
         case .json:
-            try Reference.renderJSONIndex(entries, title: title)
+            try WendyE2EReference.renderJSONIndex(entries, title: title)
         }
     }
 }
@@ -161,7 +161,7 @@ private func writeReferenceFiles(
     sourceFiles: [String],
     outputDirectory: String,
     format: ReferenceFormat,
-    options: Reference.RenderOptions
+    options: WendyE2EReference.RenderOptions
 ) throws -> Int {
     let outputURL = URL(fileURLWithPath: outputDirectory)
     try FileManager.default.createDirectory(
@@ -170,9 +170,9 @@ private func writeReferenceFiles(
     )
 
     var fileCount = 0
-    var indexEntries: [Reference.IndexEntry] = []
+    var indexEntries: [WendyE2EReference.IndexEntry] = []
     for sourceFile in sourceFiles {
-        let documents = try Reference.parseFile(at: sourceFile)
+        let documents = try WendyE2EReference.parseFile(at: sourceFile)
         guard let topLevelDocument = documents.first else {
             continue
         }
@@ -187,11 +187,11 @@ private func writeReferenceFiles(
         fileCount += 1
         for (documentIndex, document) in documents.enumerated() {
             indexEntries.append(
-                Reference.IndexEntry(
+                WendyE2EReference.IndexEntry(
                     title: document.title,
                     fileName: fileName,
                     anchor: documentIndex == 0
-                        ? nil : Reference.markdownAnchor(forTitle: document.title)
+                        ? nil : WendyE2EReference.markdownAnchor(forTitle: document.title)
                 )
             )
         }

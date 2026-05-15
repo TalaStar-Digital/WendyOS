@@ -1,6 +1,6 @@
 import Foundation
 
-extension Reference {
+extension WendyE2EReference {
     // MARK: - Rendering Markdown
 
     public static func renderMarkdown(
@@ -88,8 +88,8 @@ private func appendParagraph(_ paragraph: String, to markdown: inout [String]) {
 
 private func appendMetadata(
     isDisabled: Bool?,
-    sourceLocation: Reference.SourceLocation,
-    options: Reference.RenderOptions,
+    sourceLocation: WendyE2EReference.SourceLocation,
+    options: WendyE2EReference.RenderOptions,
     to markdown: inout [String]
 ) {
     var metadata: [String] = []
