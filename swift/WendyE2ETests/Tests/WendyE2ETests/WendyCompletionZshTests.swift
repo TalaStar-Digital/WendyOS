@@ -105,9 +105,32 @@ struct `'wendy completion zsh'` {
      Repeated invocations for the same CLI version produce identical output
      apart from line endings normalized by the platform shell conventions.
      */
-    @Test(.disabled("SPEC STUB: behavior agreed, implementation pending"))
+    @Test
     func `is deterministic across repeated runs`() async throws {
-        // TODO: implement.
+        try await self.scenario.run { cli, _ in
+            let first = try await cli.sh("wendy completion zsh") {
+                terminationStatus,
+                standardOutput,
+                standardError in
+
+                #expect(terminationStatus.isSuccess)
+                #expect(standardError == "")
+                return standardOutput
+            }
+
+            let second = try await cli.sh("wendy completion zsh") {
+                terminationStatus,
+                standardOutput,
+                standardError in
+
+                #expect(terminationStatus.isSuccess)
+                #expect(standardError == "")
+                return standardOutput
+            }
+
+            #expect(first == second)
+            #expect(!first.isEmpty)
+        }
     }
 
     /**
