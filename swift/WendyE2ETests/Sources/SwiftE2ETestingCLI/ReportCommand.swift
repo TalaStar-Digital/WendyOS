@@ -911,9 +911,175 @@ private func renderAIReview(_ markdown: String) -> String {
     return """
         <section class="ai-review-inline">
         <h4>AI review</h4>
-        <pre>\(escapeHTML(markdown))</pre>
+        <div class="ai-review-markdown">\(renderMarkdown(markdown))</div>
         </section>
         """
+}
+
+private func renderMarkdown(_ markdown: String) -> String {
+    let lines = markdown.components(separatedBy: .newlines)
+    var chunks: [String] = []
+    var paragraph: [String] = []
+    var unorderedItems: [String] = []
+    var orderedItems: [String] = []
+    var codeLines: [String] = []
+    var inCodeFence = false
+
+    func flushParagraph() {
+        guard !paragraph.isEmpty else {
+            return
+        }
+        chunks.append("<p>\(renderInlineMarkdown(paragraph.joined(separator: " ")))</p>")
+        paragraph = []
+    }
+
+    func flushUnorderedList() {
+        guard !unorderedItems.isEmpty else {
+            return
+        }
+        chunks.append("<ul>\(unorderedItems.joined())</ul>")
+        unorderedItems = []
+    }
+
+    func flushOrderedList() {
+        guard !orderedItems.isEmpty else {
+            return
+        }
+        chunks.append("<ol>\(orderedItems.joined())</ol>")
+        orderedItems = []
+    }
+
+    func flushLists() {
+        flushUnorderedList()
+        flushOrderedList()
+    }
+
+    func flushCodeFence() {
+        chunks.append("<pre><code>\(escapeHTML(codeLines.joined(separator: "\n")))</code></pre>")
+        codeLines = []
+    }
+
+    for rawLine in lines {
+        let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+
+        if trimmed.hasPrefix("```") {
+            if inCodeFence {
+                flushCodeFence()
+                inCodeFence = false
+            } else {
+                flushParagraph()
+                flushLists()
+                inCodeFence = true
+                codeLines = []
+            }
+            continue
+        }
+
+        if inCodeFence {
+            codeLines.append(rawLine)
+            continue
+        }
+
+        guard !trimmed.isEmpty else {
+            flushParagraph()
+            flushLists()
+            continue
+        }
+
+        if trimmed == "# AI Review" {
+            continue
+        }
+
+        if let heading = markdownHeading(from: trimmed) {
+            flushParagraph()
+            flushLists()
+            chunks.append("<\(heading.tag)>\(renderInlineMarkdown(heading.text))</\(heading.tag)>")
+            continue
+        }
+
+        if let item = markdownUnorderedListItem(from: trimmed) {
+            flushParagraph()
+            flushOrderedList()
+            unorderedItems.append("<li>\(renderInlineMarkdown(item))</li>")
+            continue
+        }
+
+        if let item = markdownOrderedListItem(from: trimmed) {
+            flushParagraph()
+            flushUnorderedList()
+            orderedItems.append("<li>\(renderInlineMarkdown(item))</li>")
+            continue
+        }
+
+        flushLists()
+        paragraph.append(trimmed)
+    }
+
+    if inCodeFence {
+        flushCodeFence()
+    }
+    flushParagraph()
+    flushLists()
+
+    return chunks.joined(separator: "\n")
+}
+
+private func markdownHeading(from line: String) -> (tag: String, text: String)? {
+    let hashes = line.prefix { $0 == "#" }.count
+    guard hashes > 0, hashes <= 6 else {
+        return nil
+    }
+    let text = line.dropFirst(hashes).trimmingCharacters(in: .whitespaces)
+    guard !text.isEmpty else {
+        return nil
+    }
+    return (hashes == 1 ? "h5" : "h6", text)
+}
+
+private func markdownUnorderedListItem(from line: String) -> String? {
+    guard line.hasPrefix("- ") || line.hasPrefix("* ") else {
+        return nil
+    }
+    return String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+}
+
+private func markdownOrderedListItem(from line: String) -> String? {
+    guard let match = firstMatch(#"^\d+\.\s+(.+)$"#, in: line) else {
+        return nil
+    }
+    return match.trimmingCharacters(in: .whitespaces)
+}
+
+private func renderInlineMarkdown(_ text: String) -> String {
+    var output = ""
+    var index = text.startIndex
+    var strong = false
+
+    while index < text.endIndex {
+        if text[index] == "`" {
+            let afterOpening = text.index(after: index)
+            if let closing = text[afterOpening...].firstIndex(of: "`") {
+                output += "<code>\(escapeHTML(String(text[afterOpening..<closing])))</code>"
+                index = text.index(after: closing)
+                continue
+            }
+        }
+
+        if text[index...].hasPrefix("**") {
+            output += strong ? "</strong>" : "<strong>"
+            strong.toggle()
+            index = text.index(index, offsetBy: 2)
+            continue
+        }
+
+        output += escapeHTML(String(text[index]))
+        index = text.index(after: index)
+    }
+
+    if strong {
+        output += "</strong>"
+    }
+    return output
 }
 
 private func renderCommands(_ commands: [CommandRun]) -> String {
