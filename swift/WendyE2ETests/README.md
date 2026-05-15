@@ -12,11 +12,18 @@ swift test --filter WendyE2ETests
 
 From `swift/`, the helper script writes runner output under an explicit
 output directory, builds the managed CLI into the CLI run directory, writes
-isolated CLI and agent sandboxes, captures Swift Testing results and command
-recordings, and renders `report.html`:
+isolated CLI and agent sandboxes, and captures Swift Testing results and command
+recordings:
 
 ```bash
 bash Scripts/E2ETest.sh --output-dir Build/e2e
+```
+
+For the common local workflow that also reviews `// AI:` prompts, renders
+`report.html`, and opens it on macOS:
+
+```bash
+make e2e-run
 ```
 
 For reproducible command recordings when invoking SwiftPM directly:

@@ -54,40 +54,47 @@ agent target, whether that target is the local host or a remote device. From
 the `swift/` directory, use these scripts directly when you need lower-level
 control:
 
-- `Scripts/SetupE2E.sh` dispatches to `Scripts/SetupE2E.macOS.sh` or
-  `Scripts/SetupE2E.ubuntu.sh` to check and prepare the host for E2E runs. On
+- `Scripts/E2ESetup.sh` dispatches to `Scripts/E2ESetup.macOS.sh` or
+  `Scripts/E2ESetup.ubuntu.sh` to check and prepare the host for E2E runs. On
   macOS it asks for sudo access, installs Homebrew if needed, installs required
   tools, installs Swift via swiftly if needed, and configures passwordless SSH
   loopback. On Ubuntu it installs the required packages, Swift if needed, and
   SSH server settings for parallel test bursts.
-- `Scripts/TestE2E.sh` runs the Swift E2E test package, builds the managed CLI
+- `Scripts/E2ETest.sh` runs the Swift E2E test package, builds the managed CLI
   into the CLI run directory, writes per-test sandboxes under the CLI and agent
-  run directories, writes recordings under `Build/e2e/<run-id>/tests`, and
-  writes the HTML report to `Build/e2e/<run-id>/report.html`. It accepts
-  options such as `--filter`, `--agent-address`, `--agent-user`, and
+  run directories, and writes recordings under `Build/e2e/<run-id>/tests`. It
+  accepts options such as `--filter`, `--agent-address`, `--agent-user`, and
   `--verbose`.
+- `Scripts/E2EReview.sh` reviews tests that include `// AI:` comments and writes
+  `ai-review.md` files into the run directory.
+- `Scripts/E2EReport.sh` renders `Build/e2e/<run-id>/report.html`.
 
-Typical local setup and run:
+Typical local setup and full run:
 
 ```bash
 cd swift
-bash Scripts/SetupE2E.sh
-make test-e2e
+bash Scripts/E2ESetup.sh
+make e2e-run
 ```
 
 The Makefile includes helpers for the common cases:
 
-- `make test-e2e` runs the E2E suite against the local host.
-- `make test-e2e-mac-mini` runs against `mac-mini.local`.
-- `make test-e2e-jetson-orin-nano` runs against
+- `make e2e-test` runs the E2E suite against the local host and writes raw
+  artifacts only.
+- `make e2e-run` runs local tests, reviews results, renders the HTML report, and
+  opens it in the browser on macOS.
+- `make e2e-run-mac-mini` runs the full local pipeline against
+  `mac-mini.local`.
+- `make e2e-run-jetson-orin-nano` runs the full local pipeline against
   `wendyos-jetson-orin-nano.local`.
-- `make test-e2e-raspberry-pi-5` runs against
+- `make e2e-run-raspberry-pi-5` runs the full local pipeline against
   `wendyos-raspberry-pi-5.local`.
 
-Device-targeted helpers accept a `DEVICE` override:
+The device-targeted `e2e-test-*` helpers are also available when you only need
+raw test artifacts. Device-targeted helpers accept a `DEVICE` override:
 
 ```bash
-make test-e2e-mac-mini DEVICE=my-mac.local
+make e2e-run-mac-mini DEVICE=my-mac.local
 ```
 
 ## Project structure
