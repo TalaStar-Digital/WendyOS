@@ -21,10 +21,9 @@ jobs:
   swift-e2e-tests:
     name: ${{ matrix.target.name }}
     # These entries are placeholders for the real device-to-device matrix. They
-    # intentionally run on GitHub-hosted Ubuntu while every combination is marked
-    # "Not Supported Yet" so the matrix is visible without requiring all planned
-    # self-hosted runners and devices to exist.
-    runs-on: ubuntu-latest
+    # remain marked "Not Supported Yet" so the matrix is visible without running
+    # any E2E tests yet.
+    runs-on: ${{ matrix.target.runner_id == 'macos-26' && fromJSON('["self-hosted", "macOS"]') || matrix.target.runner_id == 'ubuntu-24-04' && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     strategy:
       fail-fast: false
