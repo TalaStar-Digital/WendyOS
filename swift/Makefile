@@ -17,7 +17,7 @@ RUN_E2E_RUN = @run_id="$${WENDY_E2E_RUN_ID:-$(1)}"; \
 	$(call OPEN_E2E_REPORT,Build/e2e/$$run_id/report.html); \
 	exit $$status
 
-.PHONY: help format lint test e2e-test e2e-run e2e-review e2e-report e2e-test-jetson-orin-nano e2e-run-jetson-orin-nano e2e-test-raspberry-pi-5 e2e-run-raspberry-pi-5 e2e-test-mac-mini e2e-run-mac-mini reference proto agent-release build-cli agent-build agent-start agent-reset-settings agent-reset-permissions agent-reset agent-stop clean
+.PHONY: help format lint test e2e-test e2e-run e2e-test-jetson-orin-nano e2e-run-jetson-orin-nano e2e-test-raspberry-pi-5 e2e-run-raspberry-pi-5 e2e-test-mac-mini e2e-run-mac-mini reference proto agent-release build-cli agent-build agent-start agent-reset-settings agent-reset-permissions agent-reset agent-stop clean
 
 help: ## Show this help message
 	@echo 'Usage:'
@@ -40,15 +40,6 @@ e2e-test: ## Run Swift E2E tests locally and write raw artifacts
 
 e2e-run: ## Run Swift E2E tests locally, review results, render the report, and open it
 	$(call RUN_E2E_RUN,local,,--output-dir Build/e2e --cli-root-dir Build/e2e --agent-root-dir Build/e2e --parallel)
-
-e2e-review: ## Run Swift E2E AI review for RUN_DIR=Build/e2e/<run-id>
-	@if [ -z "$(RUN_DIR)" ]; then echo "RUN_DIR is required (for example, RUN_DIR=Build/e2e/local)" >&2; exit 64; fi
-	bash ./Scripts/E2EReview.sh --run-dir "$(RUN_DIR)"
-
-e2e-report: ## Render the Swift E2E HTML report for RUN_DIR=Build/e2e/<run-id>
-	@if [ -z "$(RUN_DIR)" ]; then echo "RUN_DIR is required (for example, RUN_DIR=Build/e2e/local)" >&2; exit 64; fi
-	bash ./Scripts/E2EReport.sh --run-dir "$(RUN_DIR)"
-	@$(call OPEN_E2E_REPORT,$(RUN_DIR)/report.html)
 
 e2e-test-jetson-orin-nano e2e-run-jetson-orin-nano: DEVICE ?= wendyos-jetson-orin-nano.local
 e2e-test-jetson-orin-nano: ## Run Swift E2E tests against Jetson Orin Nano and write raw artifacts
