@@ -9,6 +9,7 @@ struct `machine` {
     @Test
     func `creates remote machine metadata`() {
         let machine = Machine(
+            id: "ssh",
             name: "SSH",
             user: "ai",
             address: "example.local",
@@ -20,34 +21,32 @@ struct `machine` {
         #expect(machine.user == "ai")
         #expect(machine.address == "example.local")
         #expect(machine.workingDirectory == "~/wendy-agent")
-        #expect(machine.id == "ai@example.local:~/wendy-agent")
-        #expect(machine.description == "ai@example.local:~/wendy-agent")
+        #expect(machine.id == "ssh")
+        #expect(machine.description == "ssh")
     }
 
     @Test
     func `defaults remote machine to user home directory`() {
-        let machine = Machine(name: "SSH", user: "ai", address: "example.local")
+        let machine = Machine(id: "ssh", name: "SSH", user: "ai", address: "example.local")
 
         #expect(machine.isLocal == false)
         #expect(machine.user == "ai")
         #expect(machine.address == "example.local")
         #expect(machine.workingDirectory == nil)
-        #expect(machine.id == "ai@example.local:~")
-        #expect(machine.description == "ai@example.local:~")
+        #expect(machine.id == "ssh")
+        #expect(machine.description == "ssh")
     }
 
     @Test
     func `defaults machine to current host and directory`() {
-        let machine = Machine(name: "Local")
+        let machine = Machine(id: "local", name: "Local")
 
         #expect(machine.isLocal)
         #expect(machine.user == nil)
         #expect(!machine.address.isEmpty)
         #expect(machine.workingDirectory == FileManager.default.currentDirectoryPath)
-        #expect(machine.id == "\(machine.address):\(FileManager.default.currentDirectoryPath)")
-        #expect(
-            machine.description == "\(machine.address):\(FileManager.default.currentDirectoryPath)"
-        )
+        #expect(machine.id == "local")
+        #expect(machine.description == "local")
     }
 
     @Test
@@ -64,6 +63,7 @@ struct `machine` {
     @Test
     func `stores shell environment variables`() {
         let machine = Machine(
+            id: "local",
             name: "Local",
             env: [
                 "HOME": "/tmp/wendy-e2e-home",
@@ -80,7 +80,7 @@ struct `machine` {
 
     @Test
     func `stores a routable address`() {
-        let machine = Machine(name: "Remote", address: "192.168.64.2")
+        let machine = Machine(id: "remote", name: "Remote", address: "192.168.64.2")
 
         #expect(machine.isLocal == false)
         #expect(machine.address == "192.168.64.2")
@@ -91,7 +91,7 @@ struct `machine` {
 struct `session` {
     @Test
     func `runs a simple shell command`() async throws {
-        let session = try await Session.begin(for: Machine(name: "Local"))
+        let session = try await Session.begin(for: Machine(id: "local", name: "Local"))
         let record = try await session.sh(
             "printf 'wendy-machine-smoke'",
             output: .string(limit: .max),
@@ -110,13 +110,13 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(name: "Local", workingDirectory: directory.path)
+        let machine = Machine(id: "local", name: "Local", workingDirectory: directory.path)
         let session = try await Session.begin(for: machine)
         try await session.sh("touch local.txt")
 
         #expect(!session.machine.address.isEmpty)
         #expect(session.machine.workingDirectory == directory.path)
-        #expect(session.description == "\(session.machine.address):\(directory.path)")
+        #expect(session.description == "local")
         #expect(FileManager.default.fileExists(atPath: directory.path + "/local.txt"))
     }
 
@@ -145,6 +145,7 @@ struct `session` {
         )
 
         let machine = Machine(
+            id: "local",
             name: "Local",
             workingDirectory: directory.path,
             env: [
@@ -222,7 +223,7 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(name: "Local", workingDirectory: directory.path)
+        let machine = Machine(id: "local", name: "Local", workingDirectory: directory.path)
         let session = try await Session.begin(for: machine)
         try await session.command("touch builder.txt").run()
 
@@ -231,7 +232,7 @@ struct `session` {
 
     @Test
     func `command builder callback receives command output`() async throws {
-        let session = try await Session.begin(for: Machine(name: "Local"))
+        let session = try await Session.begin(for: Machine(id: "local", name: "Local"))
 
         try await session.command("printf 'hello'; printf 'oops' >&2").run {
             standardOutput,
@@ -248,7 +249,7 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(name: "Local", workingDirectory: directory.path)
+        let machine = Machine(id: "local", name: "Local", workingDirectory: directory.path)
         let session = try await Session.begin(for: machine)
         try await session
             .command(
@@ -276,7 +277,7 @@ struct `session` {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let machine = Machine(name: "Local", workingDirectory: directory.path)
+        let machine = Machine(id: "local", name: "Local", workingDirectory: directory.path)
         let session = try await Session.begin(for: machine)
         try await session
             .command(
@@ -298,7 +299,7 @@ struct `session` {
 
     @Test
     func `poll throws timeout error with timeout message`() async throws {
-        let session = try await Session.begin(for: Machine(name: "Local"))
+        let session = try await Session.begin(for: Machine(id: "local", name: "Local"))
 
         await #expect(throws: MachineError.self) {
             try await session
@@ -339,7 +340,10 @@ struct `session` {
 
     @Test
     func `with begins sessions and ends them after the body`() async throws {
-        try await Session.with(Machine(name: "Local"), Machine(name: "Local")) { first, second in
+        try await Session.with(
+            Machine(id: "first", name: "Local"),
+            Machine(id: "second", name: "Local")
+        ) { first, second in
             #expect(first.machine.name == "Local")
             #expect(second.machine.name == "Local")
         }
@@ -350,7 +354,7 @@ struct `session` {
     ) async throws -> Result {
         let directory = try Self.makeTemporaryDirectory()
         let session = try await Session.begin(
-            for: Machine(name: "Local", workingDirectory: directory.path)
+            for: Machine(id: "local", name: "Local", workingDirectory: directory.path)
         )
 
         defer { try? FileManager.default.removeItem(at: directory) }

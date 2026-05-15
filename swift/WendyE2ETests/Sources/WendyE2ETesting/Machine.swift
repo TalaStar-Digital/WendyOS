@@ -54,7 +54,7 @@ public struct Machine: Sendable, Equatable {
     // MARK: - Creating Machines
 
     public init(
-        id: String? = nil,
+        id: String,
         name: String,
         os: MachineOS = .current,
         tags: Set<MachineTag> = [],
@@ -63,7 +63,7 @@ public struct Machine: Sendable, Equatable {
         workingDirectory: String? = nil,
         env: [String: String] = [:]
     ) {
-        precondition(id?.isEmpty != true, "id must not be empty")
+        precondition(!id.isEmpty, "id must not be empty")
         precondition(!name.isEmpty, "name must not be empty")
         precondition(user?.isEmpty != true, "user must not be empty")
         precondition(address?.isEmpty != true, "address must not be empty")
@@ -79,13 +79,7 @@ public struct Machine: Sendable, Equatable {
         let resolvedWorkingDirectory =
             workingDirectory ?? (address == nil ? FileManager.default.currentDirectoryPath : nil)
 
-        self.id =
-            id
-            ?? Self.defaultID(
-                user: user,
-                address: resolvedAddress,
-                workingDirectory: resolvedWorkingDirectory
-            )
+        self.id = id
         self.name = name
         self.os = os
         self.tags = tags
@@ -124,20 +118,6 @@ public struct Machine: Sendable, Equatable {
         return key.dropFirst().allSatisfy { character in
             character == "_" || character.isASCII && (character.isLetter || character.isNumber)
         }
-    }
-
-    private static func defaultID(
-        user: String?,
-        address: String,
-        workingDirectory: String?
-    ) -> String {
-        let location = user.map { "\($0)@\(address)" } ?? address
-
-        if let workingDirectory {
-            return "\(location):\(workingDirectory)"
-        }
-
-        return "\(location):~"
     }
 }
 
