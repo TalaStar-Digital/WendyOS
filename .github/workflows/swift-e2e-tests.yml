@@ -209,13 +209,22 @@ jobs:
             swift-e2e-swiftpm-${{ runner.os }}-${{ steps.swift-toolchain.outputs.version }}-
             swift-e2e-swiftpm-${{ runner.os }}-
 
+      - name: Compute Swift E2E run ID
+        if: matrix.target.status == 'enabled'
+        id: e2e-run
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf -v attempt_suffix '%04d' "${GITHUB_RUN_ATTEMPT:-1}"
+          echo "run_id=${{ matrix.target.id }}-gh${GITHUB_RUN_ID}-${attempt_suffix}" >> "$GITHUB_OUTPUT"
+
       - name: Run Swift E2E tests
         if: matrix.target.status == 'enabled'
         working-directory: swift
         shell: bash
         env:
           WENDY_E2E_TEST_FILTERS: ${{ inputs.tests || '' }}
-          WENDY_E2E_RUN_ID: ${{ matrix.target.id }}
+          WENDY_E2E_RUN_ID: ${{ steps.e2e-run.outputs.run_id }}
           WENDY_E2E_CLI_OS: ${{ matrix.target.cli_os }}
           WENDY_E2E_AGENT_OS: ${{ matrix.target.agent_os }}
         run: |
@@ -229,7 +238,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: swift-e2e-${{ matrix.target.id }}
-          path: swift/Build/e2e/${{ matrix.target.id }}/**
+          path: swift/Build/e2e/${{ steps.e2e-run.outputs.run_id }}/**
           if-no-files-found: warn
           retention-days: 14
 
