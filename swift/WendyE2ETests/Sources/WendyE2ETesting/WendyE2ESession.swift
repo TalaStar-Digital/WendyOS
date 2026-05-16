@@ -124,72 +124,42 @@ public struct WendyE2ESession: Sendable {
 
     // MARK: - Running Shell Commands
 
-    public func sh(
-        _ dialect: WendyE2EShellDialect,
-        _ command: String
-    ) async throws -> WendyE2EShellResult {
+    public func posixShell(_ command: String) async throws -> WendyE2EShellResult {
         if self.verbose {
             Self.printCommand(machine: self.machine.name, command: command)
         }
 
         let resetDirectories = await self.commandSetupState.resetDirectoriesForNextCommand()
-        let harnessPrefix: [String]
-        let invocation: Invocation
-        let scriptShellName: String
+        let harnessPrefix = self.harnessPrefix(resetDirectories: resetDirectories)
+        let invocation = self.invocation(for: command, harnessPrefix: harnessPrefix)
 
-        switch dialect {
-        case .posix:
-            harnessPrefix = self.harnessPrefix(resetDirectories: resetDirectories)
-            invocation = self.invocation(for: command, harnessPrefix: harnessPrefix)
-            scriptShellName = Self.localShellName
-        case .power:
-            harnessPrefix = self.powerShellHarnessPrefix(resetDirectories: resetDirectories)
-            invocation = try self.powerShellInvocation(for: command, harnessPrefix: harnessPrefix)
-            scriptShellName = Self.localPowerShellName
-        }
-
-        let start = ContinuousClock.now
-        let record = try await Self.invoke(
-            invocation,
-            output: StringOutput<UTF8>.string(limit: .max),
-            error: StringOutput<UTF8>.string(limit: .max)
-        )
-        let duration = start.duration(to: .now)
-
-        self.recorder?.record(
-            session: self,
+        return try await self.runShell(
             command: command,
-            processID: String(describing: record.processIdentifier),
-            status: String(describing: record.terminationStatus),
-            duration: duration,
-            standardOutput: record.standardOutput ?? "",
-            standardError: record.standardError ?? "",
+            invocation: invocation,
             harnessPrefix: harnessPrefix,
-            scriptShellName: scriptShellName
-        )
-
-        return WendyE2EShellResult(
-            machine: self.machine,
-            dialect: dialect,
-            command: command,
-            processID: String(describing: record.processIdentifier),
-            status: record.terminationStatus,
-            duration: duration,
-            standardOutput: record.standardOutput ?? "",
-            standardError: record.standardError ?? ""
+            scriptShellName: Self.localShellName
         )
     }
 
-    public func sh<Result>(
-        _ dialect: WendyE2EShellDialect,
-        _ command: String,
-        body: @Sendable (_ result: WendyE2EShellResult) async throws -> Result
-    ) async throws -> Result {
-        try await body(try await self.sh(dialect, command))
+    public func powerShell(_ command: String) async throws -> WendyE2EShellResult {
+        if self.verbose {
+            Self.printCommand(machine: self.machine.name, command: command)
+        }
+
+        let resetDirectories = await self.commandSetupState.resetDirectoriesForNextCommand()
+        let harnessPrefix = self.powerShellHarnessPrefix(resetDirectories: resetDirectories)
+        let invocation = try self.powerShellInvocation(for: command, harnessPrefix: harnessPrefix)
+
+        return try await self.runShell(
+            command: command,
+            invocation: invocation,
+            harnessPrefix: harnessPrefix,
+            scriptShellName: Self.localPowerShellName
+        )
     }
 
     public func sh(_ command: String) async throws {
-        let result = try await self.sh(.posix, command)
+        let result = try await self.posixShell(command)
         try result.requireSuccess()
     }
 
@@ -197,7 +167,7 @@ public struct WendyE2ESession: Sendable {
         _ command: String,
         body: @Sendable (_ result: WendyE2EShellResult) async throws -> Result
     ) async throws -> Result {
-        try await body(try await self.sh(.posix, command))
+        try await body(try await self.posixShell(command))
     }
 
     public func sh<Output: OutputProtocol, Error: ErrorOutputProtocol>(
@@ -289,7 +259,7 @@ public struct WendyE2ESession: Sendable {
     // MARK: - Running PowerShell Commands
 
     public func ps(_ command: String) async throws {
-        let result = try await self.sh(.power, command)
+        let result = try await self.powerShell(command)
         try result.requireSuccess()
     }
 
@@ -297,7 +267,7 @@ public struct WendyE2ESession: Sendable {
         _ command: String,
         body: @Sendable (_ result: WendyE2EShellResult) async throws -> Result
     ) async throws -> Result {
-        try await body(try await self.sh(.power, command))
+        try await body(try await self.powerShell(command))
     }
 
     public func ps<Output: OutputProtocol, Error: ErrorOutputProtocol>(
@@ -425,6 +395,43 @@ public struct WendyE2ESession: Sendable {
         for session in sessions.reversed() {
             try await session.end()
         }
+    }
+
+    private func runShell(
+        command: String,
+        invocation: Invocation,
+        harnessPrefix: [String],
+        scriptShellName: String
+    ) async throws -> WendyE2EShellResult {
+        let start = ContinuousClock.now
+        let record = try await Self.invoke(
+            invocation,
+            output: StringOutput<UTF8>.string(limit: .max),
+            error: StringOutput<UTF8>.string(limit: .max)
+        )
+        let duration = start.duration(to: .now)
+
+        self.recorder?.record(
+            session: self,
+            command: command,
+            processID: String(describing: record.processIdentifier),
+            status: String(describing: record.terminationStatus),
+            duration: duration,
+            standardOutput: record.standardOutput ?? "",
+            standardError: record.standardError ?? "",
+            harnessPrefix: harnessPrefix,
+            scriptShellName: scriptShellName
+        )
+
+        return WendyE2EShellResult(
+            machine: self.machine,
+            command: command,
+            processID: String(describing: record.processIdentifier),
+            status: record.terminationStatus,
+            duration: duration,
+            standardOutput: record.standardOutput ?? "",
+            standardError: record.standardError ?? ""
+        )
     }
 
     private func invocation(for command: String, harnessPrefix: [String]) -> Invocation {

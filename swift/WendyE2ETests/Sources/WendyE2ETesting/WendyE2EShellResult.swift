@@ -1,14 +1,8 @@
 internal import Foundation
 public import Subprocess
 
-public enum WendyE2EShellDialect: String, Sendable {
-    case posix
-    case power
-}
-
 public struct WendyE2EShellResult: Sendable {
     public let machine: WendyE2EMachine
-    public let dialect: WendyE2EShellDialect
     public let command: String
     public let processID: String?
     public let status: TerminationStatus

@@ -87,9 +87,8 @@ struct `session` {
         let session = try await WendyE2ESession.begin(
             for: WendyE2EMachine(id: "local", name: "Local")
         )
-        let result = try await session.sh(.posix, "printf 'wendy-machine-smoke'")
+        let result = try await session.posixShell("printf 'wendy-machine-smoke'")
 
-        #expect(result.dialect == .posix)
         #expect(result.isSuccess)
         #expect(!result.isFailure)
         #expect(result.stdout == "wendy-machine-smoke")
@@ -106,18 +105,11 @@ struct `session` {
         let session = try await WendyE2ESession.begin(
             for: WendyE2EMachine(id: "local", name: "Local")
         )
-        let record = try await session.ps(
-            "Write-Output 'wendy-machine-smoke'",
-            output: .string(limit: .max),
-            error: .string(limit: .max)
-        )
+        let result = try await session.powerShell("Write-Output 'wendy-machine-smoke'")
 
-        #expect(record.terminationStatus.isSuccess)
-        #expect(
-            record.standardOutput?.replacingOccurrences(of: "\r\n", with: "\n")
-                == "wendy-machine-smoke\n"
-        )
-        #expect(record.standardError == "")
+        #expect(result.isSuccess)
+        #expect(result.normalizedStdout == "wendy-machine-smoke\n")
+        #expect(result.stderr == "")
     }
 
     @Test
