@@ -215,13 +215,37 @@ func resolvePipeWireNodeIDs(ctx context.Context, card, device uint64) []string {
 		return nil
 	}
 
+	return filterPipeWireNodeIDs(nodes, card, device)
+}
+
+// filterPipeWireNodeIDs returns the string node IDs from nodes whose type is
+// PipeWire:Interface:Node, whose media.class contains "Audio", and whose ALSA
+// card/device properties (either legacy or api.alsa.* variants) match the
+// given card and device numbers. Extracted from resolvePipeWireNodeIDs to
+// allow unit testing without executing pw-dump.
+func filterPipeWireNodeIDs(nodes []pwDumpNode, card, device uint64) []string {
 	cardStr := fmt.Sprintf("%d", card)
 	deviceStr := fmt.Sprintf("%d", device)
 
 	var ids []string
 	for _, node := range nodes {
+		// Only consider PipeWire Node objects; other types (Device, Port, etc.)
+		// can share ALSA properties but are not valid wpctl targets.
+		if node.Type != "PipeWire:Interface:Node" {
+			continue
+		}
+
 		props := node.Info.Props
 		if props == nil {
+			continue
+		}
+
+		// Only include audio nodes (Audio/Sink or Audio/Source); skip video, MIDI, etc.
+		var mediaClass string
+		if raw, ok := props["media.class"]; ok {
+			_ = json.Unmarshal(raw, &mediaClass)
+		}
+		if !strings.Contains(mediaClass, "Audio") {
 			continue
 		}
 
@@ -374,6 +398,7 @@ func (s *AudioService) SetDefaultAudioDevice(ctx context.Context, req *agentpb.S
 	var wpctlErr error
 	if len(nodeIDs) > 0 {
 		var failedIDs []string
+		var lastWpctlErr error
 		var lastWpctlOutput string
 		for _, nodeID := range nodeIDs {
 			cmd := exec.CommandContext(ctx, "wpctl", "set-default", nodeID)
@@ -382,6 +407,7 @@ func (s *AudioService) SetDefaultAudioDevice(ctx context.Context, req *agentpb.S
 					zap.String("node_id", nodeID), zap.Error(err),
 					zap.String("output", strings.TrimSpace(string(output))))
 				failedIDs = append(failedIDs, nodeID)
+				lastWpctlErr = err
 				lastWpctlOutput = strings.TrimSpace(string(output))
 			} else {
 				s.logger.Info("Default audio device set via PipeWire",
@@ -395,8 +421,8 @@ func (s *AudioService) SetDefaultAudioDevice(ctx context.Context, req *agentpb.S
 			// At least one wpctl call succeeded.
 			return &agentpb.SetDefaultAudioDeviceResponse{Success: true}, nil
 		}
-		// All wpctl calls failed; record the error for inclusion in the final message.
-		wpctlErr = fmt.Errorf("wpctl set-default failed for node(s) %v: %s", failedIDs, lastWpctlOutput)
+		// All wpctl calls failed; record both the error and output for the final message.
+		wpctlErr = fmt.Errorf("wpctl set-default %v: %w; output: %s", failedIDs, lastWpctlErr, lastWpctlOutput)
 	}
 
 	s.logger.Debug("PipeWire node not found or wpctl failed for ALSA device, trying PulseAudio",
@@ -530,7 +556,7 @@ func (s *AudioService) setPulseAudioDefaultByALSA(ctx context.Context, deviceID 
 		}
 		setCmd := exec.CommandContext(ctx, "pactl", pactlCmd, m.name)
 		if out, err := setCmd.CombinedOutput(); err != nil {
-			setErrors = append(setErrors, fmt.Sprintf("pactl %s %s: %s", pactlCmd, m.name, strings.TrimSpace(string(out))))
+			setErrors = append(setErrors, fmt.Sprintf("pactl %s %s: %v: %s", pactlCmd, m.name, err, strings.TrimSpace(string(out))))
 			continue
 		}
 		successCount++

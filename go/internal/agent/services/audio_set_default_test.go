@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"sort"
 	"testing"
 
 	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
@@ -159,5 +160,150 @@ card 1: HDMI [HDA Intel HDMI], device 3: HDMI 0 [HDMI 0]
 	card, dev = decodeALSAID(devices[1].Id)
 	if card != 1 || dev != 3 {
 		t.Errorf("devices[1]: decoded card=%d device=%d; want card=1 device=3", card, dev)
+	}
+}
+
+// makePWNode is a test helper that builds a pwDumpNode with the given id, type,
+// and property key/value pairs (alternating key, value strings).
+func makePWNode(id uint32, nodeType string, props ...string) pwDumpNode {
+	node := pwDumpNode{ID: id, Type: nodeType}
+	if len(props) > 0 {
+		node.Info.Props = make(map[string]json.RawMessage)
+		for i := 0; i+1 < len(props); i += 2 {
+			raw, _ := json.Marshal(props[i+1])
+			node.Info.Props[props[i]] = raw
+		}
+	}
+	return node
+}
+
+// TestFilterPipeWireNodeIDs_LegacyProps verifies matching via the legacy
+// alsa.card / alsa.device property names.
+func TestFilterPipeWireNodeIDs_LegacyProps(t *testing.T) {
+	nodes := []pwDumpNode{
+		makePWNode(10, "PipeWire:Interface:Node",
+			"media.class", "Audio/Sink",
+			"alsa.card", "0",
+			"alsa.device", "0",
+		),
+	}
+	got := filterPipeWireNodeIDs(nodes, 0, 0)
+	if len(got) != 1 || got[0] != "10" {
+		t.Errorf("legacy props: got %v; want [10]", got)
+	}
+}
+
+// TestFilterPipeWireNodeIDs_APIProps verifies matching via the newer
+// api.alsa.card / api.alsa.pcm.device property names.
+func TestFilterPipeWireNodeIDs_APIProps(t *testing.T) {
+	nodes := []pwDumpNode{
+		makePWNode(20, "PipeWire:Interface:Node",
+			"media.class", "Audio/Source",
+			"api.alsa.card", "1",
+			"api.alsa.pcm.device", "2",
+		),
+	}
+	got := filterPipeWireNodeIDs(nodes, 1, 2)
+	if len(got) != 1 || got[0] != "20" {
+		t.Errorf("api props: got %v; want [20]", got)
+	}
+}
+
+// TestFilterPipeWireNodeIDs_NonNodeTypeFiltered verifies that objects whose
+// type is not PipeWire:Interface:Node are excluded even when ALSA properties match.
+func TestFilterPipeWireNodeIDs_NonNodeTypeFiltered(t *testing.T) {
+	nodes := []pwDumpNode{
+		// PipeWire:Interface:Device — should be filtered out.
+		makePWNode(30, "PipeWire:Interface:Device",
+			"media.class", "Audio/Sink",
+			"alsa.card", "0",
+			"alsa.device", "0",
+		),
+		// PipeWire:Interface:Port — should be filtered out.
+		makePWNode(31, "PipeWire:Interface:Port",
+			"media.class", "Audio/Source",
+			"alsa.card", "0",
+			"alsa.device", "0",
+		),
+		// PipeWire:Interface:Node with correct props — should be included.
+		makePWNode(32, "PipeWire:Interface:Node",
+			"media.class", "Audio/Sink",
+			"alsa.card", "0",
+			"alsa.device", "0",
+		),
+	}
+	got := filterPipeWireNodeIDs(nodes, 0, 0)
+	if len(got) != 1 || got[0] != "32" {
+		t.Errorf("non-node filter: got %v; want [32]", got)
+	}
+}
+
+// TestFilterPipeWireNodeIDs_MultipleMatches verifies that both an Audio/Sink
+// and an Audio/Source node for the same ALSA card/device are returned.
+func TestFilterPipeWireNodeIDs_MultipleMatches(t *testing.T) {
+	nodes := []pwDumpNode{
+		makePWNode(40, "PipeWire:Interface:Node",
+			"media.class", "Audio/Sink",
+			"alsa.card", "2",
+			"alsa.device", "1",
+		),
+		makePWNode(41, "PipeWire:Interface:Node",
+			"media.class", "Audio/Source",
+			"alsa.card", "2",
+			"alsa.device", "1",
+		),
+		// Different card — should not be included.
+		makePWNode(42, "PipeWire:Interface:Node",
+			"media.class", "Audio/Sink",
+			"alsa.card", "3",
+			"alsa.device", "1",
+		),
+	}
+	got := filterPipeWireNodeIDs(nodes, 2, 1)
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "40" || got[1] != "41" {
+		t.Errorf("multiple matches: got %v; want [40 41]", got)
+	}
+}
+
+// TestFilterPipeWireNodeIDs_NoMatch verifies that an empty slice is returned
+// when no nodes match the requested card/device.
+func TestFilterPipeWireNodeIDs_NoMatch(t *testing.T) {
+	nodes := []pwDumpNode{
+		makePWNode(50, "PipeWire:Interface:Node",
+			"media.class", "Audio/Sink",
+			"alsa.card", "5",
+			"alsa.device", "0",
+		),
+	}
+	got := filterPipeWireNodeIDs(nodes, 0, 0)
+	if len(got) != 0 {
+		t.Errorf("no match: got %v; want []", got)
+	}
+}
+
+// TestFilterPipeWireNodeIDs_NonAudioMediaClassFiltered verifies that Node objects
+// with a non-Audio media.class (e.g. Video/Source) are excluded.
+func TestFilterPipeWireNodeIDs_NonAudioMediaClassFiltered(t *testing.T) {
+	nodes := []pwDumpNode{
+		makePWNode(60, "PipeWire:Interface:Node",
+			"media.class", "Video/Source",
+			"alsa.card", "0",
+			"alsa.device", "0",
+		),
+		makePWNode(61, "PipeWire:Interface:Node",
+			"media.class", "Midi/Sink",
+			"alsa.card", "0",
+			"alsa.device", "0",
+		),
+		makePWNode(62, "PipeWire:Interface:Node",
+			"media.class", "Audio/Sink",
+			"alsa.card", "0",
+			"alsa.device", "0",
+		),
+	}
+	got := filterPipeWireNodeIDs(nodes, 0, 0)
+	if len(got) != 1 || got[0] != "62" {
+		t.Errorf("non-audio filter: got %v; want [62]", got)
 	}
 }
