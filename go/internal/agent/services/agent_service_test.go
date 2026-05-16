@@ -79,12 +79,15 @@ func (m *mockBluetoothManager) Forget(_ context.Context, _ string) error        
 
 const bufSize = 1024 * 1024
 
-func startAgentServer(t *testing.T, nm NetworkManager, hd HardwareDiscoverer, bm BluetoothManager) (agentpb.WendyAgentServiceClient, func()) {
+func startAgentServer(t *testing.T, nm NetworkManager, hd HardwareDiscoverer, bm BluetoothManager, opts ...func(*AgentService)) (agentpb.WendyAgentServiceClient, func()) {
 	t.Helper()
 	lis := bufconn.Listen(bufSize)
 	srv := grpc.NewServer()
 	logger := zap.NewNop()
 	svc := NewAgentService(logger, nm, hd, bm)
+	for _, opt := range opts {
+		opt(svc)
+	}
 	agentpb.RegisterWendyAgentServiceServer(srv, svc)
 
 	go func() { _ = srv.Serve(lis) }()
@@ -301,6 +304,35 @@ func TestUpdateAgent_LockExclusion(t *testing.T) {
 		t.Error("expected isUpdating = false after reset")
 	}
 	svc.updateMu.Unlock()
+}
+
+func TestUpdateOS_NonWendyOSFailsBeforeMender(t *testing.T) {
+	client, cleanup := startAgentServer(t,
+		&mockNetworkManager{},
+		&mockHardwareDiscoverer{},
+		&mockBluetoothManager{},
+		func(svc *AgentService) { svc.isWendyOSHost = func() bool { return false } },
+	)
+	defer cleanup()
+
+	stream, err := client.UpdateOS(context.Background(), &agentpb.UpdateOSRequest{
+		ArtifactUrl: "http://example.invalid/update.mender",
+	})
+	if err != nil {
+		t.Fatalf("UpdateOS: %v", err)
+	}
+
+	resp, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("UpdateOS Recv: %v", err)
+	}
+	failed := resp.GetFailed()
+	if failed == nil {
+		t.Fatalf("UpdateOS response = %T, want failed", resp.GetResponseType())
+	}
+	if failed.GetErrorMessage() != osUpdateUnsupportedForHostMessage {
+		t.Fatalf("error message = %q, want %q", failed.GetErrorMessage(), osUpdateUnsupportedForHostMessage)
+	}
 }
 
 func TestUpdateAgent_ConcurrentLock(t *testing.T) {

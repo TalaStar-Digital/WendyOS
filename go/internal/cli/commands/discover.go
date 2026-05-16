@@ -207,6 +207,7 @@ type flashClearMsg struct{}
 // discoverUpdateDoneMsg is sent when a background device update completes.
 type discoverUpdateDoneMsg struct {
 	deviceName string
+	assetID    int32
 	err        error
 }
 
@@ -220,6 +221,9 @@ type discoverModel struct {
 	opts               discovery.DiscoveryOptions
 	collection         *models.DevicesCollection
 	bleSeen            map[string]time.Time // device ID -> time last seen in a BLE scan
+	usbInterval        increasingRefreshInterval
+	ethernetInterval   increasingRefreshInterval
+	externalInterval   increasingRefreshInterval
 	table              bubbleTable.Model
 	quitting           bool
 	hasResults         bool
@@ -415,12 +419,14 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.collection.USBDevices = msg.devices
 		m.hasResults = true
 		m.refreshTable()
-		return m, delayThen(env.DiscoverUSBInterval(), m.scanUSB())
+		delay := m.usbInterval.delay(env.DiscoverUSBInterval())
+		return m, delayThen(delay, m.scanUSB())
 	case ethScanMsg:
 		m.collection.EthernetInterfaces = msg.devices
 		m.hasResults = true
 		m.refreshTable()
-		return m, delayThen(env.DiscoverEthernetInterval(), m.scanEthernet())
+		delay := m.ethernetInterval.delay(env.DiscoverEthernetInterval())
+		return m, delayThen(delay, m.scanEthernet())
 	case lanScanMsg:
 		// Preserve last known AgentVersion and DeviceType when the gRPC probe
 		// failed. The probe uses a 1500 ms timeout, so transient latency can
@@ -490,7 +496,8 @@ func (m discoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.collection.ExternalDevices = msg.devices
 		m.hasResults = true
 		m.refreshTable()
-		return m, delayThen(env.DiscoverExternalInterval(), m.scanExternal())
+		delay := m.externalInterval.delay(env.DiscoverExternalInterval())
+		return m, delayThen(delay, m.scanExternal())
 	case flashClearMsg:
 		m.flashMessage = ""
 		m.flashIsError = false
@@ -843,6 +850,48 @@ type clipboardCandidate struct {
 var execLookPath = exec.LookPath
 var execCommand = exec.Command
 
+func shouldCaptureClipboardStderr(goos string) bool {
+	// wl-copy, xclip, and xsel commonly fork into the background to keep owning
+	// the clipboard selection. If os/exec captures stderr through a pipe, the
+	// daemonized child can inherit that pipe and Cmd.Wait can block indefinitely.
+	return goos != "linux"
+}
+
+func runClipboardCommand(cmd *exec.Cmd, timeout time.Duration) error {
+	cmd.WaitDelay = 500 * time.Millisecond
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		case <-time.After(cmd.WaitDelay + 100*time.Millisecond):
+		}
+		return fmt.Errorf("timed out after %s", timeout)
+	}
+}
+
+// clipboardCommandTimeout bounds clipboard helper execution. Some Linux clipboard
+// tools daemonize to own the selection; if they (or their child processes) keep
+// inherited file descriptors open, waiting on the command can otherwise hang the
+// interactive discover TUI.
+var clipboardCommandTimeout = 2 * time.Second
+
 // copyToClipboard writes text to the system clipboard using platform tools.
 func copyToClipboard(text string) error {
 	var candidates []clipboardCandidate
@@ -872,8 +921,10 @@ func copyToClipboard(text string) error {
 		var stderr bytes.Buffer
 		cmd := execCommand(c.name, c.args...)
 		cmd.Stdin = strings.NewReader(text)
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		if shouldCaptureClipboardStderr(runtime.GOOS) {
+			cmd.Stderr = &stderr
+		}
+		if err := runClipboardCommand(cmd, clipboardCommandTimeout); err != nil {
 			detail := stderr.String()
 			if detail == "" {
 				detail = err.Error()

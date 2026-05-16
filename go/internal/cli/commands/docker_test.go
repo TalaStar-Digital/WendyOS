@@ -2,7 +2,18 @@ package commands
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"errors"
+	"io"
+	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,6 +31,219 @@ func mustDetectProjectType(t *testing.T, dir string) string {
 		t.Fatalf("detectProjectType unexpected error: %v", err)
 	}
 	return got
+}
+
+func TestEnsureDockerDaemon_DarwinUsesBundledCLIWhenRuntimeInstalledButDockerMissingFromPath(t *testing.T) {
+	oldRuntimes := darwinDockerRuntimes
+	oldLookPath := dockerLookPathFn
+	oldVersionOK := dockerVersionOKFn
+	oldOpenRuntime := dockerOpenRuntimeFn
+	oldInstallRuntime := dockerInstallRuntimeFn
+	oldInteractive := isInteractiveTerminalFn
+	t.Cleanup(func() {
+		darwinDockerRuntimes = oldRuntimes
+		dockerLookPathFn = oldLookPath
+		dockerVersionOKFn = oldVersionOK
+		dockerOpenRuntimeFn = oldOpenRuntime
+		dockerInstallRuntimeFn = oldInstallRuntime
+		isInteractiveTerminalFn = oldInteractive
+	})
+
+	dir := t.TempDir()
+	appPath := filepath.Join(dir, "Docker.app")
+	cliPath := filepath.Join(appPath, "Contents", "Resources", "bin", "docker")
+	if err := os.MkdirAll(filepath.Dir(cliPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cliPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	darwinDockerRuntimes = []dockerRuntime{{
+		name:        "Docker Desktop",
+		app:         appPath,
+		cliPaths:    []string{cliPath},
+		cliLinkHint: "link Docker Desktop CLI tools",
+	}}
+	t.Setenv("PATH", filepath.Join(dir, "no-docker-on-path"))
+	cliDir := filepath.Dir(cliPath)
+
+	dockerLookPathFn = func(file string) (string, error) {
+		if file == "docker" && pathHasDir(os.Getenv("PATH"), cliDir) {
+			return cliPath, nil
+		}
+		return "", errors.New("not found")
+	}
+	versionChecks := 0
+	dockerVersionOKFn = func(context.Context) bool {
+		versionChecks++
+		return pathHasDir(os.Getenv("PATH"), cliDir)
+	}
+	dockerOpenRuntimeFn = func(context.Context, string) error {
+		t.Fatal("should not open Docker Desktop once bundled CLI works")
+		return nil
+	}
+	dockerInstallRuntimeFn = func(context.Context) error {
+		t.Fatal("should not prompt/install Docker Desktop when the app is already installed")
+		return nil
+	}
+	isInteractiveTerminalFn = func() bool { return false }
+
+	if err := ensureDockerDaemonForHostOS(context.Background(), dockerHostOSDarwin); err != nil {
+		t.Fatalf("ensureDockerDaemonForHostOS: %v", err)
+	}
+	if !pathHasDir(os.Getenv("PATH"), cliDir) {
+		t.Fatalf("PATH = %q, want bundled CLI dir %q", os.Getenv("PATH"), cliDir)
+	}
+	if versionChecks < 2 {
+		t.Fatalf("version checks = %d, want initial failure and retry after PATH update", versionChecks)
+	}
+}
+
+func TestEnsureDockerDaemon_DarwinRuntimeInstalledButDockerCLIMissingDiagnostic(t *testing.T) {
+	oldRuntimes := darwinDockerRuntimes
+	oldLookPath := dockerLookPathFn
+	oldVersionOK := dockerVersionOKFn
+	oldOpenRuntime := dockerOpenRuntimeFn
+	oldInstallRuntime := dockerInstallRuntimeFn
+	oldInteractive := isInteractiveTerminalFn
+	t.Cleanup(func() {
+		darwinDockerRuntimes = oldRuntimes
+		dockerLookPathFn = oldLookPath
+		dockerVersionOKFn = oldVersionOK
+		dockerOpenRuntimeFn = oldOpenRuntime
+		dockerInstallRuntimeFn = oldInstallRuntime
+		isInteractiveTerminalFn = oldInteractive
+	})
+
+	dir := t.TempDir()
+	appPath := filepath.Join(dir, "Docker.app")
+	if err := os.MkdirAll(appPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	darwinDockerRuntimes = []dockerRuntime{{
+		name:        "Docker Desktop",
+		app:         appPath,
+		cliPaths:    []string{filepath.Join(appPath, "Contents", "Resources", "bin", "docker")},
+		cliLinkHint: "link Docker Desktop CLI tools",
+	}}
+	t.Setenv("PATH", filepath.Join(dir, "no-docker-on-path"))
+	dockerLookPathFn = func(string) (string, error) { return "", errors.New("not found") }
+	dockerVersionOKFn = func(context.Context) bool { return false }
+	dockerOpenRuntimeFn = func(context.Context, string) error {
+		t.Fatal("should not open runtime when no docker CLI is available")
+		return nil
+	}
+	dockerInstallRuntimeFn = func(context.Context) error {
+		t.Fatal("should not prompt/install Docker Desktop when the app is already installed")
+		return nil
+	}
+	isInteractiveTerminalFn = func() bool { return false }
+
+	err := ensureDockerDaemonForHostOS(context.Background(), dockerHostOSDarwin)
+	if err == nil {
+		t.Fatal("expected docker CLI missing diagnostic")
+	}
+	msg := err.Error()
+	for _, want := range []string{"Docker Desktop is installed", "docker CLI is not on PATH", "link Docker Desktop CLI tools"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error = %q, want substring %q", msg, want)
+		}
+	}
+}
+
+func TestEnsureDockerDaemon_WindowsUsesBundledCLIWhenDockerDesktopInstalledButDockerMissingFromPath(t *testing.T) {
+	oldWindowsRuntimes := windowsDockerRuntimes
+	oldLookPath := dockerLookPathFn
+	oldVersionOK := dockerVersionOKFn
+	t.Cleanup(func() {
+		windowsDockerRuntimes = oldWindowsRuntimes
+		dockerLookPathFn = oldLookPath
+		dockerVersionOKFn = oldVersionOK
+	})
+
+	dir := t.TempDir()
+	appPath := filepath.Join(dir, "Docker Desktop.exe")
+	cliPath := filepath.Join(dir, "resources", "bin", "docker.exe")
+	if err := os.MkdirAll(filepath.Dir(cliPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(appPath, []byte("exe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cliPath, []byte("exe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	windowsDockerRuntimes = []dockerRuntime{{
+		name:        "Docker Desktop",
+		app:         appPath,
+		cliPaths:    []string{cliPath},
+		cliLinkHint: "add Docker Desktop CLI tools to PATH",
+	}}
+	t.Setenv("PATH", filepath.Join(dir, "no-docker-on-path"))
+	cliDir := filepath.Dir(cliPath)
+
+	dockerLookPathFn = func(file string) (string, error) {
+		if file == "docker" && pathHasDir(os.Getenv("PATH"), cliDir) {
+			return cliPath, nil
+		}
+		return "", errors.New("not found")
+	}
+	versionChecks := 0
+	dockerVersionOKFn = func(context.Context) bool {
+		versionChecks++
+		return pathHasDir(os.Getenv("PATH"), cliDir)
+	}
+
+	if err := ensureDockerDaemonForHostOS(context.Background(), dockerHostOSWindows); err != nil {
+		t.Fatalf("ensureDockerDaemonForHostOS: %v", err)
+	}
+	if !pathHasDir(os.Getenv("PATH"), cliDir) {
+		t.Fatalf("PATH = %q, want bundled CLI dir %q", os.Getenv("PATH"), cliDir)
+	}
+	if versionChecks < 2 {
+		t.Fatalf("version checks = %d, want initial failure and retry after PATH update", versionChecks)
+	}
+}
+
+func TestEnsureDockerDaemon_WindowsRuntimeInstalledButDockerCLIMissingDiagnostic(t *testing.T) {
+	oldWindowsRuntimes := windowsDockerRuntimes
+	oldLookPath := dockerLookPathFn
+	oldVersionOK := dockerVersionOKFn
+	t.Cleanup(func() {
+		windowsDockerRuntimes = oldWindowsRuntimes
+		dockerLookPathFn = oldLookPath
+		dockerVersionOKFn = oldVersionOK
+	})
+
+	dir := t.TempDir()
+	appPath := filepath.Join(dir, "Docker Desktop.exe")
+	if err := os.WriteFile(appPath, []byte("exe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	windowsDockerRuntimes = []dockerRuntime{{
+		name:        "Docker Desktop",
+		app:         appPath,
+		cliPaths:    []string{filepath.Join(dir, "resources", "bin", "docker.exe")},
+		cliLinkHint: "repair Docker Desktop CLI tools",
+	}}
+	t.Setenv("PATH", filepath.Join(dir, "no-docker-on-path"))
+	dockerLookPathFn = func(string) (string, error) { return "", errors.New("not found") }
+	dockerVersionOKFn = func(context.Context) bool { return false }
+
+	err := ensureDockerDaemonForHostOS(context.Background(), dockerHostOSWindows)
+	if err == nil {
+		t.Fatal("expected docker CLI missing diagnostic")
+	}
+	msg := err.Error()
+	for _, want := range []string{"Docker Desktop is installed", "docker CLI is not on PATH", "repair Docker Desktop CLI tools"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error = %q, want substring %q", msg, want)
+		}
+	}
 }
 
 func TestDetectProjectType_Dockerfile(t *testing.T) {
@@ -527,7 +751,7 @@ func TestStartRegistryProxy(t *testing.T) {
 	// Start the proxy pointing at the fake registry.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	proxy, err := startRegistryProxy(ctx, ln.Addr().String())
+	proxy, err := startRegistryProxy(ctx, "127.0.0.1:0", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,4 +776,332 @@ func TestFindIPv4ViaNeighborTable_UnknownAddress(t *testing.T) {
 	// commands and read the host's neighbor tables, making it environment-dependent.
 	// Skip it to avoid flakiness/timeouts in unit test environments.
 	t.Skip("disabled: findIPv4ViaNeighborTable depends on host neighbor tables and OS commands")
+}
+
+// testCert holds a certificate and its signing key for use in TLS test setups.
+type testCert struct {
+	cert   *x509.Certificate
+	key    *ecdsa.PrivateKey
+	pemStr string
+}
+
+// generateTestCA creates a self-signed CA certificate.
+func generateTestCA(t *testing.T) *testCert {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test-root-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create CA cert: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse CA cert: %v", err)
+	}
+	return &testCert{
+		cert:   cert,
+		key:    key,
+		pemStr: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+	}
+}
+
+// generateTestIntermediate creates an intermediate CA signed by the given parent CA.
+func generateTestIntermediate(t *testing.T, parent *testCert) *testCert {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate intermediate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: "test-intermediate-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent.cert, &key.PublicKey, parent.key)
+	if err != nil {
+		t.Fatalf("create intermediate cert: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse intermediate cert: %v", err)
+	}
+	return &testCert{
+		cert:   cert,
+		key:    key,
+		pemStr: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+	}
+}
+
+// generateTestLeafNoSAN creates a server-auth leaf certificate with no SANs,
+// simulating a device cert that lacks a hostname or IP SAN (the common Wendy case).
+func generateTestLeafNoSAN(t *testing.T, issuer *testCert) *testCert {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate leaf key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(99),
+		Subject:      pkix.Name{CommonName: "test-leaf-no-san"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		// Deliberately no IPAddresses or DNSNames.
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, issuer.cert, &key.PublicKey, issuer.key)
+	if err != nil {
+		t.Fatalf("create leaf cert: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse leaf cert: %v", err)
+	}
+	return &testCert{
+		cert:   cert,
+		key:    key,
+		pemStr: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+	}
+}
+
+// generateTestLeaf creates a leaf certificate signed by the given issuer.
+// eku controls the ExtKeyUsage (use x509.ExtKeyUsageServerAuth or x509.ExtKeyUsageClientAuth).
+// IPAddresses is populated only for server certs (ServerAuth) so hostname verification works.
+func generateTestLeaf(t *testing.T, issuer *testCert, eku x509.ExtKeyUsage) *testCert {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate leaf key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: "test-leaf"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{eku},
+	}
+	if eku == x509.ExtKeyUsageServerAuth {
+		tmpl.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, issuer.cert, &key.PublicKey, issuer.key)
+	if err != nil {
+		t.Fatalf("create leaf cert: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse leaf cert: %v", err)
+	}
+	return &testCert{
+		cert:   cert,
+		key:    key,
+		pemStr: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+	}
+}
+
+// marshalKeyPEM encodes an ECDSA private key to PEM.
+func marshalKeyPEM(t *testing.T, key *ecdsa.PrivateKey) string {
+	t.Helper()
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}))
+}
+
+// startTestTLSServer starts a TLS HTTPS server that responds with 200 OK.
+// tlsCert configures the server's certificate chain (leaf + optional intermediates).
+// clientCA, if non-nil, enables mutual TLS and requires client certs signed by it.
+func startTestTLSServer(t *testing.T, tlsCert tls.Certificate, clientCA *testCert) string {
+	t.Helper()
+	cfg := &tls.Config{Certificates: []tls.Certificate{tlsCert}}
+	if clientCA != nil {
+		pool := x509.NewCertPool()
+		pool.AddCert(clientCA.cert)
+		cfg.ClientCAs = pool
+		cfg.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
+	if err != nil {
+		t.Fatalf("tls.Listen: %v", err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return ln.Addr().String()
+}
+
+func TestStartMTLSRegistryHTTPProxy_DirectCA(t *testing.T) {
+	ca := generateTestCA(t)
+	serverLeaf := generateTestLeaf(t, ca, x509.ExtKeyUsageServerAuth)
+	clientLeaf := generateTestLeaf(t, ca, x509.ExtKeyUsageClientAuth)
+
+	serverTLSCert, err := tls.X509KeyPair([]byte(serverLeaf.pemStr), []byte(marshalKeyPEM(t, serverLeaf.key)))
+	if err != nil {
+		t.Fatalf("X509KeyPair: %v", err)
+	}
+	addr := startTestTLSServer(t, serverTLSCert, ca)
+
+	proxy, err := startMTLSRegistryHTTPProxy(addr, clientLeaf.pemStr, marshalKeyPEM(t, clientLeaf.key), ca.pemStr)
+	if err != nil {
+		t.Fatalf("startMTLSRegistryHTTPProxy: %v", err)
+	}
+	defer proxy.Close()
+
+	resp, err := http.Get("http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(proxy.Port())))
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestStartMTLSRegistryHTTPProxy_IntermediateChain(t *testing.T) {
+	root := generateTestCA(t)
+	intermediate := generateTestIntermediate(t, root)
+	serverLeaf := generateTestLeaf(t, intermediate, x509.ExtKeyUsageServerAuth)
+	clientLeaf := generateTestLeaf(t, root, x509.ExtKeyUsageClientAuth)
+
+	// Server sends leaf + intermediate in the TLS handshake.
+	serverTLSCert := tls.Certificate{
+		Certificate: [][]byte{serverLeaf.cert.Raw, intermediate.cert.Raw},
+		PrivateKey:  serverLeaf.key,
+	}
+	addr := startTestTLSServer(t, serverTLSCert, root)
+
+	proxy, err := startMTLSRegistryHTTPProxy(addr, clientLeaf.pemStr, marshalKeyPEM(t, clientLeaf.key), root.pemStr)
+	if err != nil {
+		t.Fatalf("startMTLSRegistryHTTPProxy: %v", err)
+	}
+	defer proxy.Close()
+
+	resp, err := http.Get("http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(proxy.Port())))
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestStartMTLSRegistryHTTPProxy_WrongCA(t *testing.T) {
+	trustedCA := generateTestCA(t)
+	untrustedCA := generateTestCA(t)
+	serverLeaf := generateTestLeaf(t, untrustedCA, x509.ExtKeyUsageServerAuth)
+	clientLeaf := generateTestLeaf(t, trustedCA, x509.ExtKeyUsageClientAuth)
+
+	serverTLSCert, err := tls.X509KeyPair([]byte(serverLeaf.pemStr), []byte(marshalKeyPEM(t, serverLeaf.key)))
+	if err != nil {
+		t.Fatalf("X509KeyPair: %v", err)
+	}
+	// Don't require client certs on the server side so we test the proxy's cert verification.
+	addr := startTestTLSServer(t, serverTLSCert, nil)
+
+	proxy, err := startMTLSRegistryHTTPProxy(addr, clientLeaf.pemStr, marshalKeyPEM(t, clientLeaf.key), trustedCA.pemStr)
+	if err != nil {
+		t.Fatalf("startMTLSRegistryHTTPProxy: %v", err)
+	}
+	defer proxy.Close()
+
+	resp, err := http.Get("http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(proxy.Port())))
+	if err != nil {
+		// Transport-level TLS rejection surfaces as a connection error via the proxy.
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode == http.StatusOK {
+		t.Errorf("expected non-200 when server cert is signed by untrusted CA, got 200")
+	}
+}
+
+func TestStartMTLSRegistryHTTPProxy_NoSAN(t *testing.T) {
+	// Device certs signed by the Wendy CA often lack a SAN for the target
+	// mDNS hostname. Verify the proxy accepts such certs via chain validation
+	// (VerifyConnection) while InsecureSkipVerify bypasses hostname checks.
+	ca := generateTestCA(t)
+	serverLeaf := generateTestLeafNoSAN(t, ca)
+	clientLeaf := generateTestLeaf(t, ca, x509.ExtKeyUsageClientAuth)
+
+	serverTLSCert, err := tls.X509KeyPair([]byte(serverLeaf.pemStr), []byte(marshalKeyPEM(t, serverLeaf.key)))
+	if err != nil {
+		t.Fatalf("X509KeyPair: %v", err)
+	}
+	addr := startTestTLSServer(t, serverTLSCert, ca)
+
+	proxy, err := startMTLSRegistryHTTPProxy(addr, clientLeaf.pemStr, marshalKeyPEM(t, clientLeaf.key), ca.pemStr)
+	if err != nil {
+		t.Fatalf("startMTLSRegistryHTTPProxy: %v", err)
+	}
+	defer proxy.Close()
+
+	resp, err := http.Get("http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(proxy.Port())))
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 (cert without SAN should be accepted via chain validation)", resp.StatusCode)
+	}
+}
+
+func TestStartMTLSRegistryHTTPProxy_UntrustedClientCert(t *testing.T) {
+	// The server requires a client cert from trustedCA, but the proxy presents
+	// one from untrustedCA. The server should reject the connection.
+	trustedCA := generateTestCA(t)
+	untrustedCA := generateTestCA(t)
+	serverLeaf := generateTestLeaf(t, trustedCA, x509.ExtKeyUsageServerAuth)
+	clientLeaf := generateTestLeaf(t, untrustedCA, x509.ExtKeyUsageClientAuth)
+
+	serverTLSCert, err := tls.X509KeyPair([]byte(serverLeaf.pemStr), []byte(marshalKeyPEM(t, serverLeaf.key)))
+	if err != nil {
+		t.Fatalf("X509KeyPair: %v", err)
+	}
+	// Server requires client certs signed by trustedCA.
+	addr := startTestTLSServer(t, serverTLSCert, trustedCA)
+
+	proxy, err := startMTLSRegistryHTTPProxy(addr, clientLeaf.pemStr, marshalKeyPEM(t, clientLeaf.key), trustedCA.pemStr)
+	if err != nil {
+		t.Fatalf("startMTLSRegistryHTTPProxy: %v", err)
+	}
+	defer proxy.Close()
+
+	resp, err := http.Get("http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(proxy.Port())))
+	if err != nil {
+		// Transport-level rejection from the server is acceptable.
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode == http.StatusOK {
+		t.Errorf("expected non-200 when proxy presents a client cert from an untrusted CA, got 200")
+	}
 }

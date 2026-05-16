@@ -70,7 +70,7 @@ func cloudTunnelCommand(ctx context.Context, cloudGRPC, deviceName, brokerURL st
 	}
 
 	cliLogln("Fetching device list from cloud...")
-	asset, err := pickCloudDevice(ctx, auth, deviceName)
+	asset, err := pickCloudDevice(ctx, auth, deviceName, brokerURL)
 	if err != nil {
 		return err
 	}
@@ -125,4 +125,5 @@ func serveTunnelConn(ctx context.Context, tcpConn net.Conn, brokerConn *grpc.Cli
 	go relay(tunnelConn, tcpConn)
 	go relay(tcpConn, tunnelConn)
 	<-done
+	<-done // wait for both directions before closing connections
 }
