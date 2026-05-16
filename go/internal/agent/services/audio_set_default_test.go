@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -519,6 +520,29 @@ func TestFilterPipeWireNodeIDs_VirtualSourceFiltered(t *testing.T) {
 	}
 }
 
+// TestFilterPipeWireNodeIDs_ZeroIDFiltered verifies that nodes with ID 0 are
+// excluded because valid PipeWire node IDs are positive.
+func TestFilterPipeWireNodeIDs_ZeroIDFiltered(t *testing.T) {
+	nodes := []pwDumpNode{
+		// ID 0 — must be excluded.
+		makePWNode(0, "PipeWire:Interface:Node",
+			"media.class", "Audio/Sink",
+			"alsa.card", "0",
+			"alsa.device", "0",
+		),
+		// ID 1 — must be included.
+		makePWNode(1, "PipeWire:Interface:Node",
+			"media.class", "Audio/Source",
+			"alsa.card", "0",
+			"alsa.device", "0",
+		),
+	}
+	got := filterPipeWireNodeIDs(nodes, 0, 0)
+	if len(got) != 1 || got[0] != "1" {
+		t.Errorf("zero ID filter: got %v; want [1]", got)
+	}
+}
+
 // TestFilterPipeWireNodeIDs_CrossFamilyMixingRejected verifies that a node whose
 // properties span both property families (e.g. "alsa.card" from the legacy family
 // but "api.alsa.pcm.device" from the native PipeWire family) is NOT matched.
@@ -571,6 +595,36 @@ func restoreSetDefaultVars(t *testing.T) {
 		resolvePipeWireNodeIDsFn = origPW
 		resolvePulseAudioSinkOrSourceFn = origPA
 	})
+}
+
+// TestSetDefaultAudioDevice_OutOfRangeIDReturnsInvalidArgument verifies that a
+// device ID encoding a card number > 255 (outside the ALSA encoding range) is
+// rejected with codes.InvalidArgument before any system commands are attempted.
+func TestSetDefaultAudioDevice_OutOfRangeIDReturnsInvalidArgument(t *testing.T) {
+	restoreSetDefaultVars(t)
+
+	resolvePipeWireNodeIDsFn = func(_ context.Context, _, _ uint64) []string {
+		t.Error("resolvePipeWireNodeIDsFn should not be called for out-of-range device ID")
+		return nil
+	}
+	resolvePulseAudioSinkOrSourceFn = func(_ context.Context, _, _ uint64) []pulseAudioMatch {
+		t.Error("resolvePulseAudioSinkOrSourceFn should not be called for out-of-range device ID")
+		return nil
+	}
+
+	svc := NewAudioService(zap.NewNop())
+	// ID 65537: encoded = 65536 = 0x10000, card = 256 (out of range), device = 0.
+	_, err := svc.SetDefaultAudioDevice(context.Background(), &agentpb.SetDefaultAudioDeviceRequest{DeviceId: 65537})
+	if err == nil {
+		t.Fatal("expected error for out-of-range device ID, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got %T: %v", err, err)
+	}
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("got code %v; want %v", st.Code(), codes.InvalidArgument)
+	}
 }
 
 // TestSetDefaultAudioDevice_ZeroIDReturnsInvalidArgument verifies that passing
@@ -744,6 +798,53 @@ func TestSetDefaultAudioDevice_AllFail(t *testing.T) {
 	}
 	if resp.ErrorMessage == nil || *resp.ErrorMessage == "" {
 		t.Error("expected a non-empty ErrorMessage when all attempts fail")
+	}
+}
+
+// TestSetDefaultAudioDevice_AllWpctlFailPulseAudioResponseFail verifies that
+// when PipeWire nodes are found but all wpctl calls fail, and PulseAudio
+// subsequently finds matches but all pactl calls also fail, the response
+// includes context from both the PipeWire and PulseAudio failures.
+func TestSetDefaultAudioDevice_AllWpctlFailPulseAudioResponseFail(t *testing.T) {
+	restoreSetDefaultVars(t)
+
+	resolvePipeWireNodeIDsFn = func(_ context.Context, card, device uint64) []string {
+		if card == 0 && device == 0 {
+			return []string{"10"}
+		}
+		return nil
+	}
+	wpctlSetDefault = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte("wpctl: no such node"), errors.New("wpctl failed")
+	}
+
+	resolvePulseAudioSinkOrSourceFn = func(_ context.Context, card, device uint64) []pulseAudioMatch {
+		if card == 0 && device == 0 {
+			return []pulseAudioMatch{{name: "alsa_output.test", category: "sinks"}}
+		}
+		return nil
+	}
+	pactlSetDefault = func(_ context.Context, _, _ string) ([]byte, error) {
+		return []byte("pactl: error"), errors.New("pactl failed")
+	}
+
+	svc := NewAudioService(zap.NewNop())
+	resp, err := svc.SetDefaultAudioDevice(context.Background(), &agentpb.SetDefaultAudioDeviceRequest{DeviceId: 1})
+	if err != nil {
+		t.Fatalf("expected nil gRPC error, got: %v", err)
+	}
+	if resp.GetSuccess() {
+		t.Error("expected Success=false when both PipeWire and PulseAudio fail")
+	}
+	if resp.ErrorMessage == nil || *resp.ErrorMessage == "" {
+		t.Fatal("expected non-empty ErrorMessage")
+	}
+	// The error message must reference both failure contexts.
+	if !strings.Contains(*resp.ErrorMessage, "PipeWire") {
+		t.Errorf("error message missing PipeWire context: %s", *resp.ErrorMessage)
+	}
+	if !strings.Contains(*resp.ErrorMessage, "PulseAudio") {
+		t.Errorf("error message missing PulseAudio context: %s", *resp.ErrorMessage)
 	}
 }
 

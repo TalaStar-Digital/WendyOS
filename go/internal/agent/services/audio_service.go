@@ -202,6 +202,8 @@ func parseALSAOutput(output string, devType agentpb.AudioDeviceType) []*agentpb.
 // decodeALSAID decodes an ALSA-encoded device ID (as produced by ListAudioDevices)
 // into its constituent ALSA card and device numbers.
 // The encoding is: id = ((card << 8) | device) + 1.
+// Card occupies bits 15–8 and device occupies bits 7–0; both are in [0, 255].
+// The caller is responsible for validating that the decoded card is ≤ 255.
 func decodeALSAID(id uint32) (card, device uint64) {
 	encoded := uint64(id) - 1
 	return encoded >> 8, encoded & 0xFF
@@ -227,7 +229,9 @@ type pwDumpNode struct {
 // nodes (e.g. one Audio/Sink and one Audio/Source), so we return all matches.
 // Returns nil if no matching nodes are found or pw-dump is unavailable.
 func resolvePipeWireNodeIDs(ctx context.Context, card, device uint64) []string {
-	cmd := exec.CommandContext(ctx, "pw-dump")
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cmdCtx, "pw-dump")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -257,6 +261,10 @@ func filterPipeWireNodeIDs(nodes []pwDumpNode, card, device uint64) []string {
 
 	var ids []string
 	for _, node := range nodes {
+		// Reject ID 0; valid PipeWire node IDs are positive integers.
+		if node.ID == 0 {
+			continue
+		}
 		// Only consider PipeWire Node objects; other types (Device, Port, etc.)
 		// can share ALSA properties but are not valid wpctl targets.
 		if node.Type != "PipeWire:Interface:Node" {
@@ -401,8 +409,10 @@ func resolvePulseAudioSinkOrSource(ctx context.Context, card, device uint64) []p
 	var matches []pulseAudioMatch
 
 	for _, cat := range []string{"sinks", "sources"} {
-		cmd := exec.CommandContext(ctx, "pactl", "list", cat)
+		cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		cmd := exec.CommandContext(cmdCtx, "pactl", "list", cat)
 		out, err := cmd.Output()
+		cancel()
 		if err != nil {
 			continue
 		}
@@ -438,6 +448,10 @@ func (s *AudioService) SetDefaultAudioDevice(ctx context.Context, req *agentpb.S
 	}
 
 	alsaCard, alsaDevice := decodeALSAID(req.GetDeviceId())
+	if alsaCard > 255 {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"device ID %d encodes out-of-range ALSA card %d (max 255)", req.GetDeviceId(), alsaCard)
+	}
 
 	// Try PipeWire first: resolve the ALSA card/device to all matching PipeWire
 	// node IDs (a device may appear as both a sink and a source in PipeWire).
@@ -485,6 +499,13 @@ func (s *AudioService) SetDefaultAudioDevice(ctx context.Context, req *agentpb.S
 			errMsg = fmt.Sprintf("no PipeWire node or PulseAudio sink/source found for ALSA card %d device %d: %v", alsaCard, alsaDevice, paErr)
 		}
 		return &agentpb.SetDefaultAudioDeviceResponse{Success: false, ErrorMessage: &errMsg}, nil
+	}
+	// If PA returned a failure response (not error) and PW had also failed,
+	// augment the error message so callers see both failure contexts.
+	if !resp.GetSuccess() && len(nodeIDs) > 0 && wpctlErr != nil {
+		combined := fmt.Sprintf("PipeWire node(s) found (%v) but wpctl failed (%v); PulseAudio also reported failure: %s",
+			nodeIDs, wpctlErr, resp.GetErrorMessage())
+		return &agentpb.SetDefaultAudioDeviceResponse{Success: false, ErrorMessage: &combined}, nil
 	}
 	return resp, nil
 }
