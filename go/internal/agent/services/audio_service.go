@@ -218,14 +218,14 @@ type pwDumpNode struct {
 }
 
 // resolvePipeWireNodeIDs uses pw-dump to find all PipeWire node IDs whose
-// ALSA card/device properties match the given card/device numbers. It checks
-// both the legacy property names (alsa.card / alsa.device) and the newer
-// api.alsa.* names (api.alsa.card / api.alsa.pcm.device) that are common on
-// native PipeWire installations, so that a node matches if either variant of
-// each property is present and equals the expected value. A single ALSA
-// card/device pair may appear as multiple PipeWire nodes (e.g. one Audio/Sink
-// and one Audio/Source), so we return all matches. Returns nil if no matching
-// nodes are found or pw-dump is unavailable.
+// ALSA card/device properties match the given card/device numbers. Matching
+// requires a paired-family approach: BOTH alsa.card AND alsa.device must match
+// (legacy family), OR BOTH api.alsa.card AND api.alsa.pcm.device must match
+// (native PipeWire family). Cross-family mixing — e.g. alsa.card from the
+// legacy family paired with api.alsa.pcm.device from the native family — is
+// rejected. A single ALSA card/device pair may appear as multiple PipeWire
+// nodes (e.g. one Audio/Sink and one Audio/Source), so we return all matches.
+// Returns nil if no matching nodes are found or pw-dump is unavailable.
 func resolvePipeWireNodeIDs(ctx context.Context, card, device uint64) []string {
 	cmd := exec.CommandContext(ctx, "pw-dump")
 	out, err := cmd.Output()
@@ -244,9 +244,13 @@ func resolvePipeWireNodeIDs(ctx context.Context, card, device uint64) []string {
 // filterPipeWireNodeIDs returns the string node IDs from nodes whose type is
 // PipeWire:Interface:Node, whose media.class is exactly "Audio/Sink" or
 // "Audio/Source" (excluding virtual/monitor nodes such as "Audio/Source/Virtual"),
-// and whose ALSA card/device properties (either legacy or api.alsa.* variants)
-// match the given card and device numbers. Extracted from resolvePipeWireNodeIDs
-// to allow unit testing without executing pw-dump.
+// and whose ALSA card/device properties match the given card and device numbers
+// using a paired-family approach: BOTH alsa.card AND alsa.device must match
+// (legacy family), OR BOTH api.alsa.card AND api.alsa.pcm.device must match
+// (native PipeWire family). Cross-family mixing — e.g. alsa.card matched with
+// api.alsa.pcm.device — is explicitly rejected to avoid false positives.
+// Extracted from resolvePipeWireNodeIDs to allow unit testing without executing
+// pw-dump.
 func filterPipeWireNodeIDs(nodes []pwDumpNode, card, device uint64) []string {
 	cardStr := fmt.Sprintf("%d", card)
 	deviceStr := fmt.Sprintf("%d", device)

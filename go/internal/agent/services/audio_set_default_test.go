@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
 )
@@ -569,6 +571,44 @@ func restoreSetDefaultVars(t *testing.T) {
 		resolvePipeWireNodeIDsFn = origPW
 		resolvePulseAudioSinkOrSourceFn = origPA
 	})
+}
+
+// TestSetDefaultAudioDevice_ZeroIDReturnsInvalidArgument verifies that passing
+// DeviceId 0 — which is not a valid encoded ALSA device ID — causes
+// SetDefaultAudioDevice to return a gRPC status error with code
+// codes.InvalidArgument without invoking any system commands.
+func TestSetDefaultAudioDevice_ZeroIDReturnsInvalidArgument(t *testing.T) {
+	restoreSetDefaultVars(t)
+
+	resolvePipeWireNodeIDsFn = func(_ context.Context, _, _ uint64) []string {
+		t.Error("resolvePipeWireNodeIDsFn should not be called for device_id=0")
+		return nil
+	}
+	resolvePulseAudioSinkOrSourceFn = func(_ context.Context, _, _ uint64) []pulseAudioMatch {
+		t.Error("resolvePulseAudioSinkOrSourceFn should not be called for device_id=0")
+		return nil
+	}
+	wpctlSetDefault = func(_ context.Context, _ string) ([]byte, error) {
+		t.Error("wpctlSetDefault should not be called for device_id=0")
+		return nil, nil
+	}
+	pactlSetDefault = func(_ context.Context, _, _ string) ([]byte, error) {
+		t.Error("pactlSetDefault should not be called for device_id=0")
+		return nil, nil
+	}
+
+	svc := NewAudioService(zap.NewNop())
+	_, err := svc.SetDefaultAudioDevice(context.Background(), &agentpb.SetDefaultAudioDeviceRequest{DeviceId: 0})
+	if err == nil {
+		t.Fatal("SetDefaultAudioDevice(DeviceId=0): expected error, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("SetDefaultAudioDevice(DeviceId=0): expected gRPC status error, got %T: %v", err, err)
+	}
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("SetDefaultAudioDevice(DeviceId=0): got status code %v; want %v", st.Code(), codes.InvalidArgument)
+	}
 }
 
 // TestSetDefaultAudioDevice_AllPipeWireSucceed verifies that when all wpctl
