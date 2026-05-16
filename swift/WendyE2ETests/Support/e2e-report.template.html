@@ -979,7 +979,13 @@
       const themeToggleIcon = document.querySelector('[data-theme-toggle-icon]');
       const themeToggleLabel = document.querySelector('[data-theme-toggle-label]');
       const reportButtons = Array.from(document.querySelectorAll('.report-button'));
-      let activeFilter = 'all';
+      let activeFilter = defaultFilter();
+
+      function defaultFilter() {
+        if (tests.some(test => test.dataset.testStatus === 'fail')) return 'fail';
+        if (tests.some(test => test.dataset.hasAiReview === 'true')) return 'ai';
+        return 'all';
+      }
 
       function currentTheme() {
         return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
