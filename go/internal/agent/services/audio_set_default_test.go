@@ -132,6 +132,142 @@ func TestExtractPactlPropertyValue(t *testing.T) {
 	}
 }
 
+// samplePactlSinksOutput returns a representative "pactl list sinks" block
+// containing two sink entries: one for ALSA card 0 device 0 and one for card 1
+// device 2. It is shared across TestParsePulseAudioOutput sub-tests.
+const samplePactlSinksOutput = `
+Sink #0
+	State: RUNNING
+	Name: alsa_output.pci-0000_00_1f.3.analog-stereo
+	Description: Built-in Audio Analog Stereo
+	Driver: module-alsa-card.c
+	Properties:
+		alsa.card = "0"
+		alsa.device = "0"
+		alsa.card_name = "HDA Intel PCH"
+
+Sink #1
+	State: SUSPENDED
+	Name: alsa_output.pci-0000_01_00.1.hdmi-stereo
+	Description: HDMI / DisplayPort
+	Driver: module-alsa-card.c
+	Properties:
+		alsa.card = "1"
+		alsa.device = "2"
+		alsa.card_name = "HDA Intel HDMI"
+`
+
+const samplePactlSourcesOutput = `
+Source #0
+	State: RUNNING
+	Name: alsa_input.pci-0000_00_1f.3.analog-stereo
+	Description: Built-in Audio Analog Stereo (microphone)
+	Driver: module-alsa-card.c
+	Properties:
+		alsa.card = "0"
+		alsa.device = "0"
+		alsa.card_name = "HDA Intel PCH"
+
+Source #1
+	State: SUSPENDED
+	Name: alsa_input.pci-0000_00_1f.3.analog-mono
+	Description: Some other input
+	Driver: module-alsa-card.c
+	Properties:
+		alsa.card = "0"
+		alsa.device = "1"
+		alsa.card_name = "HDA Intel PCH"
+`
+
+// TestParsePulseAudioOutput verifies that parsePulseAudioOutput correctly
+// extracts matching sink/source names from representative pactl list output.
+func TestParsePulseAudioOutput(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		card     uint64
+		device   uint64
+		category string
+		want     []string // expected .name fields in order
+	}{
+		{
+			name:     "matches first sink by alsa.card and alsa.device",
+			output:   samplePactlSinksOutput,
+			card:     0,
+			device:   0,
+			category: "sinks",
+			want:     []string{"alsa_output.pci-0000_00_1f.3.analog-stereo"},
+		},
+		{
+			name:     "matches second sink by alsa.card and alsa.device",
+			output:   samplePactlSinksOutput,
+			card:     1,
+			device:   2,
+			category: "sinks",
+			want:     []string{"alsa_output.pci-0000_01_00.1.hdmi-stereo"},
+		},
+		{
+			name:     "no match when card does not exist",
+			output:   samplePactlSinksOutput,
+			card:     99,
+			device:   0,
+			category: "sinks",
+			want:     nil,
+		},
+		{
+			name:     "no match when device does not match",
+			output:   samplePactlSinksOutput,
+			card:     0,
+			device:   5,
+			category: "sinks",
+			want:     nil,
+		},
+		{
+			name:     "source match returned with correct category",
+			output:   samplePactlSourcesOutput,
+			card:     0,
+			device:   0,
+			category: "sources",
+			want:     []string{"alsa_input.pci-0000_00_1f.3.analog-stereo"},
+		},
+		{
+			name:     "source match on device 1 not device 0",
+			output:   samplePactlSourcesOutput,
+			card:     0,
+			device:   1,
+			category: "sources",
+			want:     []string{"alsa_input.pci-0000_00_1f.3.analog-mono"},
+		},
+		{
+			name:     "empty output returns no matches",
+			output:   "",
+			card:     0,
+			device:   0,
+			category: "sinks",
+			want:     nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parsePulseAudioOutput(tt.output, tt.card, tt.device, tt.category)
+
+			if len(got) != len(tt.want) {
+				t.Fatalf("parsePulseAudioOutput: got %d match(es) %v; want %d %v",
+					len(got), got, len(tt.want), tt.want)
+			}
+			for i, m := range got {
+				if m.name != tt.want[i] {
+					t.Errorf("match[%d].name = %q; want %q", i, m.name, tt.want[i])
+				}
+				if m.category != tt.category {
+					t.Errorf("match[%d].category = %q; want %q", i, m.category, tt.category)
+				}
+			}
+		})
+	}
+}
+
 // TestParseALSAOutputIDEncoding verifies that parseALSAOutput uses the same
 // encoding that decodeALSAID expects.
 func TestParseALSAOutputIDEncoding(t *testing.T) {

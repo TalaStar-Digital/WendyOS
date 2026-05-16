@@ -296,6 +296,61 @@ type pulseAudioMatch struct {
 	category string
 }
 
+// parsePulseAudioOutput scans a raw "pactl list sinks" or "pactl list sources"
+// output string and returns the names of all entries whose alsa.card and
+// alsa.device properties match the given card and device numbers. category is
+// only used to populate the returned pulseAudioMatch entries; it does not affect
+// filtering logic. Extracted from resolvePulseAudioSinkOrSource to allow unit
+// testing without executing pactl.
+func parsePulseAudioOutput(output string, card, device uint64, category string) []pulseAudioMatch {
+	cardStr := fmt.Sprintf("%d", card)
+	deviceStr := fmt.Sprintf("%d", device)
+
+	var matches []pulseAudioMatch
+	var currentName string
+	var currentCard, currentDevice string
+
+	flush := func() {
+		if currentName != "" && currentCard == cardStr && currentDevice == deviceStr {
+			matches = append(matches, pulseAudioMatch{name: currentName, category: category})
+		}
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if strings.HasPrefix(line, "Name:") {
+			// Flush previous entry before starting a new one.
+			flush()
+			currentName = strings.TrimSpace(strings.TrimPrefix(line, "Name:"))
+			currentCard = ""
+			currentDevice = ""
+			continue
+		}
+
+		// ALSA properties appear in the Properties section as:
+		//   alsa.card = "N"
+		//   alsa.device = "M"
+		if strings.Contains(line, "alsa.card") && strings.Contains(line, "=") {
+			val := extractPactlPropertyValue(line)
+			if val == cardStr {
+				currentCard = val
+			}
+		}
+		if strings.Contains(line, "alsa.device") && strings.Contains(line, "=") {
+			val := extractPactlPropertyValue(line)
+			if val == deviceStr {
+				currentDevice = val
+			}
+		}
+	}
+	// Flush last entry.
+	flush()
+
+	return matches
+}
+
 // resolvePulseAudioSinkOrSource finds all PulseAudio sinks and sources whose
 // ALSA card/device properties match the given values. It inspects
 // "pactl list sinks" and "pactl list sources" for alsa.card and alsa.device
@@ -304,9 +359,6 @@ type pulseAudioMatch struct {
 // same encoded ID: callers can then set the correct default for each category.
 // Returns nil if no match is found.
 func resolvePulseAudioSinkOrSource(ctx context.Context, card, device uint64) []pulseAudioMatch {
-	cardStr := fmt.Sprintf("%d", card)
-	deviceStr := fmt.Sprintf("%d", device)
-
 	var matches []pulseAudioMatch
 
 	for _, cat := range []string{"sinks", "sources"} {
@@ -316,51 +368,7 @@ func resolvePulseAudioSinkOrSource(ctx context.Context, card, device uint64) []p
 			continue
 		}
 
-		// Parse blocks separated by blank lines. Each sink/source block contains:
-		//   Name: <name>
-		//   Properties:
-		//     alsa.card = "N"
-		//     alsa.device = "M"
-		var currentName string
-		var currentCard, currentDevice string
-
-		flush := func() {
-			if currentName != "" && currentCard == cardStr && currentDevice == deviceStr {
-				matches = append(matches, pulseAudioMatch{name: currentName, category: cat})
-			}
-		}
-
-		scanner := bufio.NewScanner(strings.NewReader(string(out)))
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-
-			if strings.HasPrefix(line, "Name:") {
-				// Flush previous entry.
-				flush()
-				currentName = strings.TrimSpace(strings.TrimPrefix(line, "Name:"))
-				currentCard = ""
-				currentDevice = ""
-				continue
-			}
-
-			// ALSA properties appear in the Properties section as:
-			//   alsa.card = "N"
-			//   alsa.device = "M"
-			if strings.Contains(line, "alsa.card") && strings.Contains(line, "=") {
-				val := extractPactlPropertyValue(line)
-				if val == cardStr {
-					currentCard = val
-				}
-			}
-			if strings.Contains(line, "alsa.device") && strings.Contains(line, "=") {
-				val := extractPactlPropertyValue(line)
-				if val == deviceStr {
-					currentDevice = val
-				}
-			}
-		}
-		// Flush last entry.
-		flush()
+		matches = append(matches, parsePulseAudioOutput(string(out), card, device, cat)...)
 	}
 	return matches
 }
@@ -417,11 +425,12 @@ func (s *AudioService) SetDefaultAudioDevice(ctx context.Context, req *agentpb.S
 					zap.String("pw_node_id", nodeID))
 			}
 		}
-		if len(failedIDs) < len(nodeIDs) {
-			// At least one wpctl call succeeded.
+		if len(failedIDs) == 0 {
+			// All wpctl calls succeeded.
 			return &agentpb.SetDefaultAudioDeviceResponse{Success: true}, nil
 		}
-		// All wpctl calls failed; record both the error and output for the final message.
+		// One or more wpctl calls failed; fall through to PulseAudio so a partial
+		// failure (e.g. sink set but source failed) does not silently report success.
 		wpctlErr = fmt.Errorf("wpctl set-default %v: %w; output: %s", failedIDs, lastWpctlErr, lastWpctlOutput)
 	}
 
@@ -546,7 +555,6 @@ func (s *AudioService) setPulseAudioDefaultByALSA(ctx context.Context, deviceID 
 	}
 
 	var setErrors []string
-	successCount := 0
 	for _, m := range matches {
 		var pactlCmd string
 		if m.category == "sinks" {
@@ -559,7 +567,6 @@ func (s *AudioService) setPulseAudioDefaultByALSA(ctx context.Context, deviceID 
 			setErrors = append(setErrors, fmt.Sprintf("pactl %s %s: %v: %s", pactlCmd, m.name, err, strings.TrimSpace(string(out))))
 			continue
 		}
-		successCount++
 		s.logger.Info("Default audio device set via PulseAudio",
 			zap.Uint32("device_id", deviceID),
 			zap.Uint64("alsa_card", card),
@@ -568,7 +575,9 @@ func (s *AudioService) setPulseAudioDefaultByALSA(ctx context.Context, deviceID 
 			zap.String("category", m.category))
 	}
 
-	if successCount == 0 {
+	if len(setErrors) > 0 {
+		// All matches must succeed; any failure means the device was not fully
+		// set as default (e.g. sink succeeded but source failed).
 		errMsg := fmt.Sprintf("pactl set-default failed: %s", strings.Join(setErrors, "; "))
 		return &agentpb.SetDefaultAudioDeviceResponse{Success: false, ErrorMessage: &errMsg}, nil
 	}
