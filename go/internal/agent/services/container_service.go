@@ -240,7 +240,9 @@ func monitorPolicyIntFromLabel(label string) (policy int, maxRetries int, ok boo
 	}
 	policyStr, retries := parseRestartPolicyLabel(label)
 	switch policyStr {
-	case "unless-stopped", "always":
+	case "always":
+		return RestartPolicyAlways, 0, true
+	case "unless-stopped":
 		return RestartPolicyUnlessStopped, 0, true
 	case "on-failure":
 		if retries < 0 {
@@ -248,7 +250,7 @@ func monitorPolicyIntFromLabel(label string) (policy int, maxRetries int, ok boo
 		}
 		return RestartPolicyOnFailure, retries, true
 	default:
-		return RestartPolicyUnlessStopped, 0, true
+		return 0, 0, false
 	}
 }
 
@@ -322,8 +324,14 @@ func (s *ContainerService) streamContainerOutput(
 		} else {
 			// restartPolicy is nil: look up the persisted label from containerd.
 			if label, labelErr := s.containerd.GetContainerRestartPolicyLabel(ctx, appName); labelErr == nil {
-				if policy, maxRetries, ok := monitorPolicyIntFromLabel(label); ok {
+				if label == "" || label == "no" {
+					// No restart policy persisted — clear any stale registration.
+					s.monitor.Unregister(appName)
+				} else if policy, maxRetries, ok := monitorPolicyIntFromLabel(label); ok {
 					s.monitor.Register(appName, policy, maxRetries)
+				} else {
+					// Unknown label value — treat as no restart policy.
+					s.monitor.Unregister(appName)
 				}
 			} else {
 				s.logger.Warn("failed to read restart policy label; monitor registration skipped",
