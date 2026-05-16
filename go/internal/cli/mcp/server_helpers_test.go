@@ -100,8 +100,10 @@ func (s *mcpServer) callTool(ctx context.Context, name string, args map[string]a
 		return s.handleCloudEnrollDevice(ctx, req)
 	case "cloud_tunnel":
 		return s.handleCloudTunnel(ctx, req)
+	case "run":
+		return s.handleRun(ctx, req)
 	case "cloud_run":
-		return s.handleCloudRun(ctx, req)
+		return s.handleRun(ctx, req)
 	default:
 		return mcpgo.NewToolResultError("unknown tool: " + name), nil
 	}
