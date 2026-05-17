@@ -60,14 +60,24 @@ func (s *AgentUpdateService) UpdateAgent(stream grpc.BidiStreamingServer[agentpb
 	}
 	originalPerm := info.Mode()
 
-	tmpPath := execPath + ".update"
-	tmpFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, originalPerm)
+	tmpFile, err := os.CreateTemp(filepath.Dir(execPath), ".agent-update-*")
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to create update temp file: %v", err)
 	}
-	cleanupTmp := true
-	defer func() {
+	tmpPath := tmpFile.Name()
+	if err := tmpFile.Chmod(originalPerm); err != nil {
 		tmpFile.Close()
+		os.Remove(tmpPath)
+		return status.Errorf(codes.Internal, "failed to set update file permissions: %v", err)
+	}
+	cleanupTmp := true
+	fileClosed := false
+	defer func() {
+		if !fileClosed {
+			if err := tmpFile.Close(); err != nil {
+				s.logger.Warn("Failed to close update temp file during cleanup", zap.Error(err))
+			}
+		}
 		if cleanupTmp {
 			os.Remove(tmpPath)
 		}
@@ -109,6 +119,7 @@ func (s *AgentUpdateService) UpdateAgent(stream grpc.BidiStreamingServer[agentpb
 				if err := tmpFile.Close(); err != nil {
 					return status.Errorf(codes.Internal, "failed to close update file: %v", err)
 				}
+				fileClosed = true
 
 				backupPath := execPath + ".backup"
 				if err := os.Rename(execPath, backupPath); err != nil {
@@ -126,8 +137,20 @@ func (s *AgentUpdateService) UpdateAgent(stream grpc.BidiStreamingServer[agentpb
 				}
 				cleanupTmp = false // renamed successfully, don't remove
 
+				// fsync the directory so the rename is durable on power loss.
+				if dir, err := os.Open(filepath.Dir(execPath)); err == nil {
+					_ = dir.Sync()
+					dir.Close()
+				}
+
+				info, _ := os.Stat(execPath)
+				var size int64
+				if info != nil {
+					size = info.Size()
+				}
 				s.logger.Info("Agent binary updated successfully",
 					zap.String("sha256", computedHash),
+					zap.Int64("size", size),
 				)
 
 				if err := stream.Send(&agentpbv2.UpdateAgentResponse{

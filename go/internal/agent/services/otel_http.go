@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -123,9 +124,13 @@ func (r *OTELHTTPReceiver) writeBodyError(w http.ResponseWriter, err error) {
 }
 
 func (r *OTELHTTPReceiver) readBody(req *http.Request) ([]byte, error) {
-	reader := req.Body
-	if req.Header.Get("Content-Encoding") == "gzip" {
-		gz, err := gzip.NewReader(req.Body)
+	reader := io.Reader(req.Body)
+	// Content-Encoding is case-insensitive per RFC 7231.
+	if strings.EqualFold(req.Header.Get("Content-Encoding"), "gzip") {
+		// Limit the compressed input before feeding it to the gzip reader to
+		// prevent decompression-bomb attacks (a tiny gzip that expands to GBs).
+		compressedLimit := io.LimitReader(req.Body, maxOTELHTTPBodySize+1)
+		gz, err := gzip.NewReader(compressedLimit)
 		if err != nil {
 			return nil, fmt.Errorf("gzip reader: %w", err)
 		}

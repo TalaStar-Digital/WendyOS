@@ -359,8 +359,8 @@ func TestBroadcaster_SubscribeLogs_ChronologicalOrder(t *testing.T) {
 func TestBroadcaster_PublishMetrics_PerServiceKey(t *testing.T) {
 	b := NewTelemetryBroadcaster()
 
-	// Build a request with two resource metrics for the same service, each with
-	// multiple scope metrics and individual metrics.
+	// Build two requests for different services to verify they are cached under
+	// separate keys.
 	makeAttr := func(key, val string) *otelpb.KeyValue {
 		return &otelpb.KeyValue{
 			Key:   key,
@@ -388,28 +388,38 @@ func TestBroadcaster_PublishMetrics_PerServiceKey(t *testing.T) {
 	}
 	req2 := &otelpb.ExportMetricsServiceRequest{
 		ResourceMetrics: []*otelpb.ResourceMetrics{
-			{Resource: makeResource("svc-b")},
+			{
+				Resource: makeResource("svc-b"),
+				ScopeMetrics: []*otelpb.ScopeMetrics{
+					{Metrics: []*otelpb.Metric{{Name: "metric.three"}}},
+				},
+			},
 		},
 	}
 
 	b.PublishMetrics(req1)
 	b.PublishMetrics(req2)
 
-	// latestMetrics should have exactly 2 keys ("svc-a" and "svc-b"), not more.
+	// latestMetrics is keyed by "service:metric"; req1 produces 2 entries (metric.one,
+	// metric.two) and req2 produces 1 entry (metric.three), so 3 total.
 	b.mu.RLock()
 	mapLen := len(b.latestMetrics)
-	gotA := b.latestMetrics["svc-a"]
-	gotB := b.latestMetrics["svc-b"]
+	gotA1 := b.latestMetrics["svc-a:metric.one"]
+	gotA2 := b.latestMetrics["svc-a:metric.two"]
+	gotB := b.latestMetrics["svc-b:metric.three"]
 	b.mu.RUnlock()
 
-	if mapLen != 2 {
-		t.Errorf("latestMetrics has %d entries; want 2", mapLen)
+	if mapLen != 3 {
+		t.Errorf("latestMetrics has %d entries; want 3", mapLen)
 	}
-	if gotA != req1 {
-		t.Errorf("latestMetrics[\"svc-a\"] = %p; want req1 (%p)", gotA, req1)
+	if gotA1 != req1 {
+		t.Errorf("latestMetrics[\"svc-a:metric.one\"] = %p; want req1 (%p)", gotA1, req1)
+	}
+	if gotA2 != req1 {
+		t.Errorf("latestMetrics[\"svc-a:metric.two\"] = %p; want req1 (%p)", gotA2, req1)
 	}
 	if gotB != req2 {
-		t.Errorf("latestMetrics[\"svc-b\"] = %p; want req2 (%p)", gotB, req2)
+		t.Errorf("latestMetrics[\"svc-b:metric.three\"] = %p; want req2 (%p)", gotB, req2)
 	}
 }
 

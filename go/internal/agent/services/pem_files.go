@@ -7,23 +7,53 @@ import (
 	"time"
 )
 
-// syncWriteFile writes data to path and calls fsync before closing,
-// ensuring the data is on disk before returning. Used for security-critical
-// files (private keys, certificates) where partial writes would break enrollment.
+// syncWriteFile atomically writes data to path: write to a temp file, fsync,
+// rename over the target, then fsync the directory. This ensures that a power
+// loss mid-write cannot leave the target file empty or partially written —
+// critical for security files (private keys, certificates) on embedded devices.
 func syncWriteFile(path string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".pem-tmp-*")
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
+	tmpName := tmp.Name()
+	removeOnFail := true
+	tmpClosed := false
+	defer func() {
+		if !tmpClosed {
+			_ = tmp.Close() // best-effort: file will be removed in error paths
+		}
+		if removeOnFail {
+			os.Remove(tmpName)
+		}
+	}()
+
+	if err := tmp.Chmod(perm); err != nil {
 		return err
 	}
-	if err := f.Sync(); err != nil {
-		f.Close()
+	if _, err := tmp.Write(data); err != nil {
 		return err
 	}
-	return f.Close()
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	tmpClosed = true
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	removeOnFail = false
+
+	// fsync the directory so the rename is durable on power loss.
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // WritePEMFiles writes device certificate PEM files and a provisioned marker to
