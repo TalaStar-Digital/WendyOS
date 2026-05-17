@@ -48,12 +48,13 @@ func syncWriteFile(path string, data []byte, perm os.FileMode) error {
 	removeOnFail = false
 
 	// fsync the directory so the rename is durable on power loss.
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
+	// The file contents are already safe after the rename; a dir-fsync
+	// failure is non-fatal (only the directory-entry durability is at risk).
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		d.Close()
 	}
-	defer d.Close()
-	return d.Sync()
+	return nil
 }
 
 // WritePEMFiles writes device certificate PEM files and a provisioned marker to

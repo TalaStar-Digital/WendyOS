@@ -139,7 +139,10 @@ func (s *AgentUpdateService) UpdateAgent(stream grpc.BidiStreamingServer[agentpb
 
 				// fsync the directory so the rename is durable on power loss.
 				if dir, err := os.Open(filepath.Dir(execPath)); err == nil {
-					_ = dir.Sync()
+					if syncErr := dir.Sync(); syncErr != nil {
+						s.logger.Warn("Failed to fsync update directory; rename may not survive power loss",
+							zap.Error(syncErr))
+					}
 					dir.Close()
 				}
 
