@@ -61,6 +61,9 @@ func Connect(ctx context.Context, address string) (*AgentConnection, error) {
 			Timeout:             grpcKeepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
+		// Compress outbound RPCs. Requires the agent to be running this release
+		// or later (which imports and registers the gzip codec in main.go).
+		grpc.WithDefaultCallOptions(grpc.UseCompressor("gzip")),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to agent at %s: %w", address, err)
@@ -103,6 +106,7 @@ func ConnectWithTLS(ctx context.Context, address string, certInfo *config.Certif
 			Timeout:             grpcKeepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
+		grpc.WithDefaultCallOptions(grpc.UseCompressor("gzip")),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to agent at %s with TLS: %w", address, err)

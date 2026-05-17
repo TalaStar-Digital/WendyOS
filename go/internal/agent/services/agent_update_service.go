@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
-	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -18,29 +17,19 @@ import (
 
 type AgentUpdateService struct {
 	agentpbv2.UnimplementedWendyAgentUpdateServiceServer
-	logger     *zap.Logger
-	updateMu   sync.Mutex
-	isUpdating bool
+	logger    *zap.Logger
+	installer *AgentInstaller
 }
 
-func NewAgentUpdateService(logger *zap.Logger) *AgentUpdateService {
-	return &AgentUpdateService{logger: logger}
+func NewAgentUpdateService(logger *zap.Logger, installer *AgentInstaller) *AgentUpdateService {
+	return &AgentUpdateService{logger: logger, installer: installer}
 }
 
 func (s *AgentUpdateService) UpdateAgent(stream grpc.BidiStreamingServer[agentpbv2.UpdateAgentRequest, agentpbv2.UpdateAgentResponse]) error {
-	s.updateMu.Lock()
-	if s.isUpdating {
-		s.updateMu.Unlock()
+	if !s.installer.TryLock() {
 		return status.Error(codes.FailedPrecondition, "an update is already in progress")
 	}
-	s.isUpdating = true
-	s.updateMu.Unlock()
-
-	defer func() {
-		s.updateMu.Lock()
-		s.isUpdating = false
-		s.updateMu.Unlock()
-	}()
+	defer s.installer.Unlock()
 
 	s.logger.Info("UpdateAgent stream started")
 

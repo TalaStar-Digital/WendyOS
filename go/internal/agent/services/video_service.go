@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unsafe"
 
@@ -22,10 +21,6 @@ import (
 
 	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
 )
-
-var framePool = sync.Pool{
-	New: func() any { b := make([]byte, 0, 512*1024); return &b },
-}
 
 // V4L2 ioctl constants for Linux kernel video capture interface.
 const (
@@ -289,23 +284,15 @@ func (s *VideoService) streamV4L2Native(ctx context.Context, stream grpc.ServerS
 			}
 			continue
 		}
-		bp := framePool.Get().(*[]byte)
-		*bp = (*bp)[:0]
-		*bp = append(*bp, mapped[idx].data[:n]...)
-		// Copy into a dedicated allocation owned by the proto message.
-		// Return the pool buffer only after Send so no other goroutine can
-		// write into it between the copy and the serialisation.
-		frameData := make([]byte, len(*bp))
-		copy(frameData, *bp)
+		frameData := make([]byte, n)
+		copy(frameData, mapped[idx].data[:n])
 
 		if err := stream.Send(&agentpb.VideoFrame{
 			Data:        frameData,
 			TimestampNs: uint64(time.Now().UnixNano()),
 		}); err != nil {
-			framePool.Put(bp)
 			return err
 		}
-		framePool.Put(bp)
 		framesSent++
 
 		// Re-queue the buffer.

@@ -141,6 +141,9 @@ func (b *TelemetryBroadcaster) UnsubscribeMetrics(id string) {
 }
 
 // PublishMetrics sends a metrics export request to all metrics subscribers and updates the cache.
+// latestMetrics is keyed by service name, not by metric name, so only the most recent
+// ExportMetricsServiceRequest per service is retained. Subscribers that join late receive
+// one pre-fill message per service reflecting its latest known state.
 func (b *TelemetryBroadcaster) PublishMetrics(req *otelpb.ExportMetricsServiceRequest) {
 	b.mu.Lock()
 	for _, rm := range req.GetResourceMetrics() {

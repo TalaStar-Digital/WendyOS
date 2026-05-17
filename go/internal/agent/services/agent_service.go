@@ -34,8 +34,7 @@ type AgentService struct {
 	networkManager     NetworkManager
 	hardwareDiscoverer HardwareDiscoverer
 	bluetoothManager   BluetoothManager
-	updateMu           sync.Mutex
-	isUpdating         bool
+	installer          *AgentInstaller
 	isWendyOSHost      func() bool
 }
 
@@ -45,12 +44,14 @@ func NewAgentService(
 	nm NetworkManager,
 	hd HardwareDiscoverer,
 	bm BluetoothManager,
+	installer *AgentInstaller,
 ) *AgentService {
 	return &AgentService{
 		logger:             logger,
 		networkManager:     nm,
 		hardwareDiscoverer: hd,
 		bluetoothManager:   bm,
+		installer:          installer,
 		isWendyOSHost:      defaultIsWendyOSHost,
 	}
 }
@@ -294,19 +295,10 @@ func (s *AgentService) RunContainer(stream grpc.BidiStreamingServer[agentpb.RunC
 
 // UpdateAgent handles streaming binary updates with SHA256 verification and atomic replacement.
 func (s *AgentService) UpdateAgent(stream grpc.BidiStreamingServer[agentpb.UpdateAgentRequest, agentpb.UpdateAgentResponse]) error {
-	s.updateMu.Lock()
-	if s.isUpdating {
-		s.updateMu.Unlock()
+	if !s.installer.TryLock() {
 		return status.Error(codes.FailedPrecondition, "an update is already in progress")
 	}
-	s.isUpdating = true
-	s.updateMu.Unlock()
-
-	defer func() {
-		s.updateMu.Lock()
-		s.isUpdating = false
-		s.updateMu.Unlock()
-	}()
+	defer s.installer.Unlock()
 
 	s.logger.Info("UpdateAgent stream started")
 

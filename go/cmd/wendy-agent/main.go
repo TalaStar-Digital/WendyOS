@@ -154,13 +154,15 @@ func main() {
 
 	logManager := services.NewContainerLogManager(logger, broadcaster)
 
+	installer := &services.AgentInstaller{}
+	agentSvc := services.NewAgentService(logger, networkMgr, hwDiscoverer, btManager, installer)
+
 	// Start container monitor only when containerd is available.
 	var monitor *container.ContainerMonitor
 	if containerdClient != nil {
 		monitor = container.NewContainerMonitor(logger, containerdClient, 15*time.Second)
 	}
 
-	agentSvc := services.NewAgentService(logger, networkMgr, hwDiscoverer, btManager)
 	containerSvcOpts := []services.ContainerServiceOption{
 		services.WithLogManager(logManager),
 	}
@@ -180,7 +182,7 @@ func main() {
 	deviceInfoSvc := services.NewDeviceInfoService(logger, hwDiscoverer)
 	wifiSvc := services.NewWiFiService(logger, networkMgr)
 	bluetoothSvc := services.NewBluetoothService(logger, btManager)
-	agentUpdateSvc := services.NewAgentUpdateService(logger)
+	agentUpdateSvc := services.NewAgentUpdateService(logger, installer)
 	osUpdateSvc := services.NewOSUpdateService(logger)
 	containerSvcV2 := services.NewContainerServiceV2(containerSvc)
 	provisioningSvcV2 := services.NewProvisioningServiceV2(provisioningSvc)

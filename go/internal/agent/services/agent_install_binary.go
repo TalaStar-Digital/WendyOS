@@ -45,8 +45,10 @@ func createUpdateTempFile(execPath string, perm os.FileMode) (*os.File, string, 
 }
 
 // commitBinaryUpdate syncs and closes tmpFile, then atomically installs it over
-// execPath via a backup rename. On success it returns the installed binary's
-// size. The caller is responsible for removing tmpPath if this returns an error.
+// execPath via a single rename(2). On same-filesystem paths, rename is atomic:
+// execPath is never absent, and a crash before the rename leaves the old binary
+// intact. On success it returns the installed binary's size. The caller is
+// responsible for removing tmpPath if this returns an error.
 func commitBinaryUpdate(tmpFile *os.File, tmpPath, execPath, sha256Hash string, logger *zap.Logger) (int64, error) {
 	if err := tmpFile.Sync(); err != nil {
 		return 0, status.Errorf(codes.Internal, "failed to sync update file: %v", err)
@@ -55,18 +57,9 @@ func commitBinaryUpdate(tmpFile *os.File, tmpPath, execPath, sha256Hash string, 
 		return 0, status.Errorf(codes.Internal, "failed to close update file: %v", err)
 	}
 
-	backupPath := execPath + ".backup"
-	if err := os.Rename(execPath, backupPath); err != nil {
-		return 0, status.Errorf(codes.Internal, "failed to create backup: %v", err)
-	}
-
+	// Single atomic rename over the live binary — no intermediate backup so
+	// execPath is never absent between two renames.
 	if err := os.Rename(tmpPath, execPath); err != nil {
-		if rbErr := os.Rename(backupPath, execPath); rbErr != nil {
-			logger.Error("Failed to rollback from backup",
-				zap.Error(rbErr),
-				zap.String("backup_path", backupPath),
-			)
-		}
 		return 0, status.Errorf(codes.Internal, "failed to install update: %v", err)
 	}
 
@@ -77,16 +70,6 @@ func commitBinaryUpdate(tmpFile *os.File, tmpPath, execPath, sha256Hash string, 
 				zap.Error(syncErr))
 		}
 		dir.Close()
-	}
-
-	// Remove the backup now that installation succeeded. The backup holds the
-	// previous binary version, which may have known vulnerabilities the update
-	// was meant to fix, and doubles storage consumption on constrained devices.
-	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
-		logger.Warn("Failed to remove backup binary after successful update",
-			zap.String("backup_path", backupPath),
-			zap.Error(err),
-		)
 	}
 
 	info, _ := os.Stat(execPath)
