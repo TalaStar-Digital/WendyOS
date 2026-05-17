@@ -292,19 +292,20 @@ func (s *VideoService) streamV4L2Native(ctx context.Context, stream grpc.ServerS
 		bp := framePool.Get().(*[]byte)
 		*bp = (*bp)[:0]
 		*bp = append(*bp, mapped[idx].data[:n]...)
-		// Copy into a dedicated allocation before Send. Pool buffer is returned
-		// immediately; the dedicated slice is owned by the proto message until
-		// gRPC serialises it (synchronous, but safe against future interceptors).
+		// Copy into a dedicated allocation owned by the proto message.
+		// Return the pool buffer only after Send so no other goroutine can
+		// write into it between the copy and the serialisation.
 		frameData := make([]byte, len(*bp))
 		copy(frameData, *bp)
-		framePool.Put(bp)
 
 		if err := stream.Send(&agentpb.VideoFrame{
 			Data:        frameData,
 			TimestampNs: uint64(time.Now().UnixNano()),
 		}); err != nil {
+			framePool.Put(bp)
 			return err
 		}
+		framePool.Put(bp)
 		framesSent++
 
 		// Re-queue the buffer.
@@ -398,8 +399,10 @@ func (s *VideoService) streamGStreamer(ctx context.Context, stream grpc.ServerSt
 
 		n, readErr := stdout.Read(buf)
 		if n > 0 {
+			frameData := make([]byte, n)
+			copy(frameData, buf[:n])
 			if sendErr := stream.Send(&agentpb.VideoFrame{
-				Data:        buf[:n],
+				Data:        frameData,
 				TimestampNs: uint64(time.Now().UnixNano()),
 				Codec:       enc.codec,
 			}); sendErr != nil {

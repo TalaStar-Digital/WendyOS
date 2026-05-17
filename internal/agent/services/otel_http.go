@@ -18,7 +18,7 @@ import (
 
 const (
 	maxOTELHTTPBodySize           = 10 * 1024 * 1024 // 10 MB decompressed
-	maxOTELHTTPCompressedBodySize = 1024 * 1024       // 1 MB compressed — legitimate OTLP protobuf compresses ~10:1
+	maxOTELHTTPCompressedBodySize = 1024 * 1024      // 1 MB compressed — legitimate OTLP protobuf compresses ~10:1
 )
 
 var errBodyTooLarge = fmt.Errorf("request body exceeds %d bytes", maxOTELHTTPBodySize)
