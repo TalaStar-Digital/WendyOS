@@ -79,6 +79,16 @@ func commitBinaryUpdate(tmpFile *os.File, tmpPath, execPath, sha256Hash string, 
 		dir.Close()
 	}
 
+	// Remove the backup now that installation succeeded. The backup holds the
+	// previous binary version, which may have known vulnerabilities the update
+	// was meant to fix, and doubles storage consumption on constrained devices.
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		logger.Warn("Failed to remove backup binary after successful update",
+			zap.String("backup_path", backupPath),
+			zap.Error(err),
+		)
+	}
+
 	info, _ := os.Stat(execPath)
 	var size int64
 	if info != nil {

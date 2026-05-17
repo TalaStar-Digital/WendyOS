@@ -241,7 +241,6 @@ func dialCloudBroker(auth *config.AuthConfig, brokerURL string) (*grpc.ClientCon
 			Timeout:             10 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.WithDefaultCallOptions(grpc.UseCompressor("gzip")),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to broker at %s: %w", brokerURL, err)
@@ -456,7 +455,6 @@ func dialCloudGRPC(auth *config.AuthConfig) (*grpc.ClientConn, error) {
 			Timeout:             10 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.WithDefaultCallOptions(grpc.UseCompressor("gzip")),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to cloud: %w", err)
