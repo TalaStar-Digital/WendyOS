@@ -80,23 +80,23 @@ func createUpdateTempFile(execPath string) (*os.File, string, func(), error) {
 	return tmpFile, tmpPath, cleanup, nil
 }
 
-// commitBinaryUpdate syncs and closes tmpFile, sets its permissions to perm,
+// commitBinaryUpdate sets the file permissions, fsyncs, and closes tmpFile,
 // then atomically installs it over execPath via a single rename(2). Hash is
 // only passed for logging. Returns the installed size, or ErrDirFsync if the
 // post-rename directory fsync fails (binary IS installed in that case).
 func commitBinaryUpdate(tmpFile *os.File, tmpPath, execPath, sha256Hash string, perm os.FileMode, logger *zap.Logger) (int64, error) {
+	// Apply final permissions before the fsync so that both data and the
+	// executable permission bits are durable before the rename. If chmod
+	// happened after Sync a power loss between chmod and rename could
+	// leave an installed binary that is non-executable (still at 0600).
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		return 0, status.Errorf(codes.Internal, "failed to set update file permissions: %v", err)
+	}
 	if err := tmpFile.Sync(); err != nil {
 		return 0, status.Errorf(codes.Internal, "failed to sync update file: %v", err)
 	}
 	if err := tmpFile.Close(); err != nil {
 		return 0, status.Errorf(codes.Internal, "failed to close update file: %v", err)
-	}
-
-	// Apply final permissions only after the hash has been verified.
-	// The temp file is kept at 0600 during streaming so no partial binary
-	// is ever executable.
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		return 0, status.Errorf(codes.Internal, "failed to set update file permissions: %v", err)
 	}
 
 	// Single atomic rename over the live binary — no intermediate backup so
