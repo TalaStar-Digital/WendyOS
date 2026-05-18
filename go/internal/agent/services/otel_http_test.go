@@ -227,26 +227,17 @@ func TestOTELHTTPReceiver_CompressedBodyTooLarge(t *testing.T) {
 	broadcaster := NewTelemetryBroadcaster()
 	receiver := NewOTELHTTPReceiver(zap.NewNop(), broadcaster)
 
-	// Incompressible (random) payload so the gzip stream stays above the
-	// compressed cap while decompressing to well under the 10 MiB decompressed
-	// cap — proving the compressed limit is enforced independently.
-	raw := make([]byte, maxOTELHTTPCompressedBodySize+64*1024)
-	if _, err := rand.Read(raw); err != nil {
+	// Send raw (non-gzip) bytes larger than the compressed cap with a gzip
+	// Content-Encoding header. readBody buffers the compressed stream before
+	// decompressing, so the size check fires on the raw bytes — independently
+	// of the decompressed limit — and returns 413 before any gzip parsing
+	// is attempted.
+	body := make([]byte, maxOTELHTTPCompressedBodySize+1)
+	if _, err := rand.Read(body); err != nil {
 		t.Fatalf("rand.Read: %v", err)
 	}
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	if _, err := gz.Write(raw); err != nil {
-		t.Fatalf("gzip.Write: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatalf("gzip.Close: %v", err)
-	}
-	if buf.Len() <= maxOTELHTTPCompressedBodySize {
-		t.Fatalf("test setup: compressed size %d not above cap %d", buf.Len(), maxOTELHTTPCompressedBodySize)
-	}
 
-	httpReq := httptest.NewRequest(http.MethodPost, "/v1/metrics", &buf)
+	httpReq := httptest.NewRequest(http.MethodPost, "/v1/metrics", bytes.NewReader(body))
 	httpReq.Header.Set("Content-Encoding", "gzip")
 	w := httptest.NewRecorder()
 
@@ -261,26 +252,15 @@ func TestOTELHTTPReceiver_CompressedBodyWithinLimitNotRejectedForSize(t *testing
 	broadcaster := NewTelemetryBroadcaster()
 	receiver := NewOTELHTTPReceiver(zap.NewNop(), broadcaster)
 
-	// Random payload that gzips to just under the compressed cap. It is not
-	// valid protobuf, so a 400 (decode error) rather than a 413 confirms the
-	// compressed-size gate let an under-limit request through.
-	raw := make([]byte, maxOTELHTTPCompressedBodySize/2)
-	if _, err := rand.Read(raw); err != nil {
+	// Send raw bytes under the compressed cap. The compressed-size check lets
+	// the request through; gzip.NewReader then rejects the non-gzip bytes,
+	// so a 400 (not 413) confirms the size gate did not fire.
+	body := make([]byte, maxOTELHTTPCompressedBodySize/2)
+	if _, err := rand.Read(body); err != nil {
 		t.Fatalf("rand.Read: %v", err)
 	}
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	if _, err := gz.Write(raw); err != nil {
-		t.Fatalf("gzip.Write: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatalf("gzip.Close: %v", err)
-	}
-	if buf.Len() > maxOTELHTTPCompressedBodySize {
-		t.Fatalf("test setup: compressed size %d exceeds cap %d", buf.Len(), maxOTELHTTPCompressedBodySize)
-	}
 
-	httpReq := httptest.NewRequest(http.MethodPost, "/v1/metrics", &buf)
+	httpReq := httptest.NewRequest(http.MethodPost, "/v1/metrics", bytes.NewReader(body))
 	httpReq.Header.Set("Content-Encoding", "gzip")
 	w := httptest.NewRecorder()
 

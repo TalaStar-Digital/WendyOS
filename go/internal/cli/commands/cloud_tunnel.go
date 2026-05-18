@@ -120,6 +120,10 @@ func connectCloudAsset(ctx context.Context, auth *config.AuthConfig, asset *clou
 		"passthrough:///cloud-tunnel",
 		dialOpt,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithInitialWindowSize(8*1024*1024),
+		grpc.WithInitialConnWindowSize(16*1024*1024),
+		grpc.WithReadBufferSize(256*1024),
+		grpc.WithWriteBufferSize(256*1024),
 	)
 	if err != nil {
 		closeTunnel()

@@ -194,6 +194,10 @@ func (c *TunnelBrokerClient) buildDialOpts() ([]grpc.DialOption, metadata.MD, er
 			Timeout:             brokerKeepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
+		grpc.WithInitialWindowSize(8 * 1024 * 1024),
+		grpc.WithInitialConnWindowSize(16 * 1024 * 1024),
+		grpc.WithReadBufferSize(256 * 1024),
+		grpc.WithWriteBufferSize(256 * 1024),
 	}, md, nil
 }
 
