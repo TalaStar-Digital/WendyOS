@@ -904,6 +904,8 @@ jobs:
             desc "Manage your headless device (nightly)"
             homepage "https://github.com/wendylabsinc/wendy-agent"
 
+            depends_on :macos
+
             app "WendyAgentMac.app"
           end
           EOF
@@ -965,6 +967,8 @@ jobs:
             desc "Manage your headless device"
             homepage "https://github.com/wendylabsinc/wendy-agent"
 
+            depends_on :macos
+
             app "WendyAgentMac.app"
           end
           EOF
@@ -1009,7 +1013,13 @@ jobs:
           stable cask for the macOS agent app.
 
           The formula continues to use pre-built Go binaries, and the cask
-          points at the GitHub release app zip."
+          points at the GitHub release app zip.
+
+          Post-install: \`wendy completion install\` runs automatically to
+          configure shell completions for the current user.
+
+          Users are also notified about \`wendy mcp setup\` for AI tool
+          integration via the caveats message."
 
   publish-aur:
     name: Publish AUR Packages
