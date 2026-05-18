@@ -79,9 +79,8 @@ func NewServer(certPEM, chainPEM, keyPEM string, extraOpts ...grpc.ServerOption)
 		grpc.InitialWindowSize(8 * 1024 * 1024),
 		grpc.InitialConnWindowSize(16 * 1024 * 1024),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionIdle: 5 * time.Minute,
-			Time:              30 * time.Second,
-			Timeout:           10 * time.Second,
+			Time:    30 * time.Second,
+			Timeout: 10 * time.Second,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             10 * time.Second,
