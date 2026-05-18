@@ -282,6 +282,18 @@ public struct WendyE2ERecorder: Sendable {
                 testName: declaration.testName
             )
         }
+        if let declaration = Self.nearestTestDeclaration(
+            to: line,
+            named: testName,
+            in: declarations
+        ) {
+            return TestIdentity(
+                filePath: filePath,
+                fileName: fileName,
+                suite: declaration.suite,
+                testName: declaration.testName
+            )
+        }
 
         throw RecorderError.testIdentityUnavailable(
             filePath: filePath,
@@ -342,6 +354,16 @@ public struct WendyE2ERecorder: Sendable {
         }
 
         return nil
+    }
+
+    private static func nearestTestDeclaration(
+        to line: Int,
+        named testName: String,
+        in declarations: [TestDeclaration]
+    ) -> TestDeclaration? {
+        declarations.filter { $0.testName == testName }.min { first, second in
+            abs(first.line - line) < abs(second.line - line)
+        }
     }
 
     private static func suiteName(in line: String) -> String? {
