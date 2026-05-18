@@ -159,15 +159,27 @@ public struct WendyE2ESession: Sendable {
     }
 
     public func sh(_ command: String) async throws {
-        let result = try await self.defaultShell(command)
-        try result.requireSuccess()
+        try await self.sh(posix: command, power: command)
     }
 
     public func sh<Result>(
         _ command: String,
         body: @Sendable (_ result: WendyE2EShellResult) async throws -> Result
     ) async throws -> Result {
-        try await body(try await self.defaultShell(command))
+        try await self.sh(posix: command, power: command, body: body)
+    }
+
+    public func sh(posix: String, power: String) async throws {
+        let result = try await self.defaultShell(posix: posix, power: power)
+        try result.requireSuccess()
+    }
+
+    public func sh<Result>(
+        posix: String,
+        power: String,
+        body: @Sendable (_ result: WendyE2EShellResult) async throws -> Result
+    ) async throws -> Result {
+        try await body(try await self.defaultShell(posix: posix, power: power))
     }
 
     // MARK: - Internal
@@ -211,12 +223,12 @@ public struct WendyE2ESession: Sendable {
         }
     }
 
-    private func defaultShell(_ command: String) async throws -> WendyE2EShellResult {
+    private func defaultShell(posix: String, power: String) async throws -> WendyE2EShellResult {
         switch self.machine.os {
         case .windows:
-            try await self.powerShell(command)
+            try await self.powerShell(power)
         case .macOS, .linux, .wendyOS:
-            try await self.posixShell(command)
+            try await self.posixShell(posix)
         }
     }
 

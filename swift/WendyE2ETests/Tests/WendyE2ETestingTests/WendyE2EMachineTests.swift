@@ -350,6 +350,26 @@ struct `session` {
     }
 
     @Test
+    func `sh selects command for machine shell`() async throws {
+        let machine = WendyE2EMachine(id: "local", name: "Local", os: .current)
+        let session = try await WendyE2ESession.begin(for: machine)
+
+        try await session.sh(
+            posix: "printf 'posix'",
+            power: "Write-Output 'power'"
+        ) { result in
+            try result.requireSuccess()
+
+            switch machine.os {
+            case .windows:
+                #expect(result.normalizedStdout == "power\n")
+            case .macOS, .linux, .wendyOS:
+                #expect(result.stdout == "posix")
+            }
+        }
+    }
+
+    @Test
     func `requires command recordings to start from test bodies`() {
         #expect(throws: (any Error).self) {
             _ = try WendyE2ERecorder(filePath: #filePath, function: "init()", line: #line)

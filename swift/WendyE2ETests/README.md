@@ -363,4 +363,13 @@ try await agent.sh("nc -z 127.0.0.1 50051") { result in
 }
 ```
 
+When a command needs shell-specific syntax, pass both variants and `sh` selects the one matching the machine OS:
+
+```swift
+try await agent.sh(
+    posix: "nc -z 127.0.0.1 50051",
+    power: "Test-NetConnection -ComputerName 127.0.0.1 -Port 50051"
+)
+```
+
 Sessions run locally when `address` is omitted. If `address` is provided, commands run over SSH; `user` is included in the SSH target when provided. Local sessions still execute commands through a shell and honor configured working directories and environment. `WendyE2ESession.begin(for:verbose:)` enables command echoing for that session; `WENDY_E2E_VERBOSE=1` enables it globally.
