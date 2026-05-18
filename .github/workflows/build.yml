@@ -524,7 +524,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign wendy.exe
-        uses: azure/trusted-signing-action@v1.2.0
+        uses: azure/trusted-signing-action@v2.0.0
         with:
           endpoint: ${{ env.SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ env.SIGNING_ACCOUNT }}
@@ -572,7 +572,7 @@ jobs:
             go/installer/windows/wendy.wxs
 
       - name: Sign MSI
-        uses: azure/trusted-signing-action@v1.2.0
+        uses: azure/trusted-signing-action@v2.0.0
         with:
           endpoint: ${{ env.SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ env.SIGNING_ACCOUNT }}
