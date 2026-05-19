@@ -407,27 +407,45 @@
     }
 
     .badge.duration {
-      gap: 5px;
+      display: inline-grid;
+      grid-template-columns: 92px 46px;
+      align-items: center;
+      gap: 7px;
+      width: 145px;
       color: var(--muted);
-      background: var(--soft);
-      border: 1px solid var(--line);
+      background: transparent;
+      border: 1px solid transparent;
+      padding: 0;
       text-transform: none;
       letter-spacing: 0;
     }
 
-    .duration-dot {
-      display: inline-block;
-      width: 11px;
-      height: 11px;
-      border-radius: 999px;
-      background: var(--duration-dot-color, #fff);
-      border: 1px solid rgba(15, 23, 42, .26);
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .24);
+    .badge.duration.empty {
+      visibility: hidden;
     }
 
-    :root[data-theme="dark"] .duration-dot {
-      border-color: rgba(248, 250, 252, .36);
-      box-shadow: 0 0 0 1px rgba(15, 23, 42, .45), inset 0 0 0 1px rgba(255, 255, 255, .16);
+    .duration-bar {
+      display: block;
+      width: 92px;
+      height: 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--soft);
+      overflow: hidden;
+    }
+
+    .duration-bar-fill {
+      display: block;
+      width: var(--duration-bar-width, 0%);
+      height: 100%;
+      border-radius: inherit;
+      background: var(--duration-bar-color, var(--muted));
+    }
+
+    .duration-value {
+      text-align: right;
+      font-size: 12px;
+      font-weight: 800;
     }
 
     .test-summary .badge.skipped,
@@ -496,7 +514,10 @@
     }
 
     .test-summary {
-      display: block;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 145px max-content max-content;
+      align-items: center;
+      gap: 8px;
       padding: 4px 2px;
       cursor: pointer;
       user-select: none;
@@ -504,6 +525,10 @@
     }
 
     .test-summary:hover { background: var(--panel); }
+
+    .test-title {
+      min-width: 0;
+    }
 
     .test-path {
       color: var(--text);
@@ -537,7 +562,22 @@
     }
 
     .test-summary .badge {
+      margin-left: 0;
+    }
+
+    .test-title .badge {
       margin-left: 8px;
+    }
+
+    .report-links {
+      display: inline-flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .report-links .report-button {
+      float: none;
+      margin-left: 0;
     }
 
     .test-body {
@@ -852,6 +892,20 @@
       .filter-bar { position: static; }
       .filter-count { flex-basis: 100%; margin-left: 0; }
       .search-field { flex-basis: 100%; }
+      .test-summary {
+        grid-template-columns: minmax(0, 1fr) max-content;
+      }
+      .test-title {
+        grid-column: 1 / -1;
+      }
+      .badge.duration {
+        grid-column: 1 / -1;
+        justify-self: start;
+      }
+      .report-links {
+        grid-column: 1 / -1;
+        justify-self: end;
+      }
       .test-body { margin-left: 14px; padding: 4px 0 0; }
       .command-output { margin-left: 0; }
       .command-run-meta { margin-left: 0; }
@@ -935,7 +989,7 @@
         <!-- Repeat this details.test-details once per test function in the suite. Set data-has-ai to true when // AI: checklist items are present, and data-has-ai-review to true only when a generated Markdown report needs human review. Render TEST_AI_BADGE only when generated AI review notes exist. -->
         <details class="test-details" data-test-status="{{TEST_STATUS_CLASS}}" data-has-ai="{{TEST_HAS_AI}}" data-has-ai-review="{{TEST_HAS_AI_REVIEW}}">
           <summary class="test-summary">
-            {{TEST_REPORT_LINK}}<span class="test-path">{{TEST_PATH_TEXT}}</span><span class="badge {{TEST_STATUS_CLASS}}">{{TEST_STATUS_TEXT}}</span><span class="badge duration"><span class="duration-dot" style="--duration-dot-color: {{TEST_DURATION_DOT_COLOR}}" aria-hidden="true"></span>{{TEST_DURATION}}</span>{{TEST_AI_BADGE}}{{TEST_AI_FILTER_ANALYSIS}}
+            <span class="test-title"><span class="test-path">{{TEST_PATH_TEXT}}</span><span class="badge {{TEST_STATUS_CLASS}}">{{TEST_STATUS_TEXT}}</span></span><span class="badge duration" style="--duration-bar-color: {{TEST_DURATION_BAR_COLOR}}; --duration-bar-width: {{TEST_DURATION_BAR_WIDTH}}"><span class="duration-bar" aria-hidden="true"><span class="duration-bar-fill"></span></span><span class="duration-value">{{TEST_DURATION}}</span></span>{{TEST_AI_BADGE}}<span class="report-links">{{TEST_REPORT_LINK}}</span>{{TEST_AI_FILTER_ANALYSIS}}
           </summary>
           <div class="test-body">
           <!-- Optional: render when the test has // AI: checklist items. -->

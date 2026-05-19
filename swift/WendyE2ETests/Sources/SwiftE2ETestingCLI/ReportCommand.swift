@@ -101,6 +101,7 @@ private struct ReportTestDuration {
     var seconds: Double
     var formatted: String
     var color: String
+    var barWidth: String
 }
 
 private enum ReportTestStatus {
@@ -566,7 +567,8 @@ private func parsedTestDuration(_ value: String?) -> ReportTestDuration? {
     return ReportTestDuration(
         seconds: seconds,
         formatted: formattedTestDuration(seconds),
-        color: durationColor(seconds: seconds)
+        color: durationColor(seconds: seconds),
+        barWidth: durationBarWidth(seconds: seconds)
     )
 }
 
@@ -584,6 +586,11 @@ private func formattedTestDuration(_ seconds: Double) -> String {
     let minutes = Int(seconds / 60)
     let remainingSeconds = Int(seconds.rounded()) % 60
     return "\(minutes)m \(remainingSeconds)s"
+}
+
+private func durationBarWidth(seconds: Double) -> String {
+    let percent = min(max(seconds / 30, 0), 1) * 100
+    return String(format: "%.1f%%", locale: Locale(identifier: "en_US_POSIX"), percent)
 }
 
 private func durationColor(seconds: Double) -> String {
@@ -937,8 +944,8 @@ private func renderCards(
             let statusText = test.status.statusText
             let durationBadge =
                 test.status.duration.map { duration in
-                    "<span class=\"badge duration\" title=\"Test duration: \(escapeHTML(duration.formatted))\"><span class=\"duration-dot\" style=\"--duration-dot-color: \(duration.color)\" aria-hidden=\"true\"></span>\(escapeHTML(duration.formatted))</span>"
-                } ?? ""
+                    "<span class=\"badge duration\" title=\"Test duration: \(escapeHTML(duration.formatted))\" style=\"--duration-bar-color: \(duration.color); --duration-bar-width: \(duration.barWidth)\"><span class=\"duration-bar\" aria-hidden=\"true\"><span class=\"duration-bar-fill\"></span></span><span class=\"duration-value\">\(escapeHTML(duration.formatted))</span></span>"
+                } ?? "<span class=\"badge duration empty\" aria-hidden=\"true\"></span>"
             let hasAI = test.aiItems.isEmpty ? "false" : "true"
             let hasAIReview = test.aiReviewMarkdown.isEmpty ? "false" : "true"
             let recordURL = recordingURL.appendingPathComponent(test.recordName)
@@ -964,7 +971,7 @@ private func renderCards(
                 "<details class=\"test-details\" data-test-status=\"\(statusClass)\" data-has-ai=\"\(hasAI)\" data-has-ai-review=\"\(hasAIReview)\">"
             )
             cards.append(
-                "<summary class=\"test-summary\">\(recordLinks)<span class=\"test-path\">\(escapeHTML(pathText))</span><span class=\"badge \(statusClass)\">\(statusText)</span>\(durationBadge)\(aiBadge)</summary>"
+                "<summary class=\"test-summary\"><span class=\"test-title\"><span class=\"test-path\">\(escapeHTML(pathText))</span><span class=\"badge \(statusClass)\">\(statusText)</span></span>\(durationBadge)\(aiBadge)<span class=\"report-links\">\(recordLinks)</span></summary>"
             )
 
             var body: [String] = []
