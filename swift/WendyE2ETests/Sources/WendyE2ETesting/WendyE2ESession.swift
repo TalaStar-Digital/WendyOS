@@ -446,7 +446,7 @@ public actor WendyE2ESession {
             parts.append(
                 "rm -rf "
                     + setupDirectories
-                    .map(Self.shellEnvironmentValue)
+                    .map(self.shellPathValue)
                     .joined(separator: " ")
             )
         }
@@ -455,13 +455,13 @@ public actor WendyE2ESession {
             parts.append(
                 "mkdir -p "
                     + setupDirectories
-                    .map(Self.shellEnvironmentValue)
+                    .map(self.shellPathValue)
                     .joined(separator: " ")
             )
         }
 
         if let workingDirectory = self.workingDirectory {
-            parts.append("cd \(Self.shellEnvironmentValue(workingDirectory))")
+            parts.append("cd \(self.shellPathValue(workingDirectory))")
         }
 
         return parts
@@ -476,24 +476,77 @@ public actor WendyE2ESession {
         if resetDirectories {
             parts.append(
                 contentsOf: setupDirectories.map { directory in
-                    "Remove-Item -LiteralPath \(Self.powerShellEnvironmentValue(directory)) -Recurse -Force -ErrorAction SilentlyContinue"
+                    "Remove-Item -LiteralPath \(self.powerShellPathValue(directory)) -Recurse -Force -ErrorAction SilentlyContinue"
                 }
             )
         }
 
         parts.append(
             contentsOf: setupDirectories.map { directory in
-                "New-Item -ItemType Directory -Force -Path \(Self.powerShellEnvironmentValue(directory)) | Out-Null"
+                "New-Item -ItemType Directory -Force -Path \(self.powerShellPathValue(directory)) | Out-Null"
             }
         )
 
         if let workingDirectory = self.workingDirectory {
             parts.append(
-                "Set-Location -LiteralPath \(Self.powerShellEnvironmentValue(workingDirectory))"
+                "Set-Location -LiteralPath \(self.powerShellPathValue(workingDirectory))"
             )
         }
 
         return parts
+    }
+
+    private func shellPathValue(_ path: String) -> String {
+        guard let reference = self.environmentPathReference(for: path) else {
+            return Self.shellEnvironmentValue(path)
+        }
+
+        switch reference.suffix {
+        case "":
+            return "$\(reference.name)"
+        case let suffix where Self.isShellSafePathSuffix(suffix):
+            return "$\(reference.name)\(suffix)"
+        default:
+            return "$\(reference.name)\(Self.shellQuote(reference.suffix))"
+        }
+    }
+
+    private func powerShellPathValue(_ path: String) -> String {
+        guard let reference = self.environmentPathReference(for: path) else {
+            return Self.powerShellEnvironmentValue(path)
+        }
+
+        switch reference.suffix {
+        case "":
+            return "$env:\(reference.name)"
+        default:
+            return
+                "(Join-Path $env:\(reference.name) \(Self.powerShellQuote(String(reference.suffix.dropFirst()))))"
+        }
+    }
+
+    private func environmentPathReference(for path: String) -> (name: String, suffix: String)? {
+        self.env
+            .filter { key, value in
+                Self.isValidEnvironmentName(key) && !value.isEmpty && !value.contains("$")
+            }
+            .sorted { lhs, rhs in lhs.value.count > rhs.value.count }
+            .compactMap { key, value -> (name: String, suffix: String)? in
+                if path == value {
+                    return (key, "")
+                }
+
+                let base = Self.trimmingTrailingPathSeparators(value)
+                for separator in ["/", "\\"] {
+                    let prefix = base + separator
+                    if path.hasPrefix(prefix) {
+                        return (key, String(path.dropFirst(base.count)))
+                    }
+                }
+
+                return nil
+            }
+            .first
     }
 
     private func setupDirectories() -> [String] {
@@ -544,6 +597,22 @@ public actor WendyE2ESession {
             let suffix = component.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             return path.hasSuffix("/") ? "\(path)\(suffix)" : "\(path)/\(suffix)"
         }
+    }
+
+    private static func trimmingTrailingPathSeparators(_ value: String) -> String {
+        var result = value
+        while result.count > 1 && (result.hasSuffix("/") || result.hasSuffix("\\")) {
+            result.removeLast()
+        }
+        return result
+    }
+
+    private static func isShellSafePathSuffix(_ value: String) -> Bool {
+        !value.isEmpty
+            && value.unicodeScalars.allSatisfy { scalar in
+                scalar == "/" || scalar == "." || scalar == "_" || scalar == "-"
+                    || CharacterSet.alphanumerics.contains(scalar)
+            }
     }
 
     private static func shellEnvironmentValue(_ value: String) -> String {
