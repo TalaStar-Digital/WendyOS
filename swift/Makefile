@@ -30,8 +30,8 @@ else
 SHELL := /bin/bash
 endif
 
-WINDOWS_E2E_OUTPUT_DIR := "$$env:TEMP\wendy\e2e"
-UNIX_E2E_OUTPUT_DIR := "$${TMPDIR:-/tmp}/wendy/e2e"
+WINDOWS_E2E_OUTPUT_DIR := "$$env:SystemRoot\Temp\wendy\e2e"
+UNIX_E2E_OUTPUT_DIR := "/tmp/wendy/e2e"
 RUN_E2E_TEST_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows E2E targets require PowerShell.' }; ./Scripts/E2ETest.ps1 --default-run-id "$(1)" $(2)
 RUN_E2E_RUN_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows E2E targets require PowerShell.' }; ./Scripts/E2ERun.ps1 --default-run-id "$(1)" $(2)
 

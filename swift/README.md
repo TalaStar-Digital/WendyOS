@@ -51,8 +51,8 @@ swift test
 The E2E harness lives in `WendyE2ETests/` and runs commands over SSH, even
 for local runs. The tests expect `wendy-agent` to already be running on the
 agent target, whether that target is the local host or a remote device. From
-the `swift/` directory, use these scripts directly when you need lower-level
-control:
+the `swift/` directory, use the Makefile for common workflows or these scripts
+when you need lower-level control:
 
 - `Scripts/E2ESetup.sh` dispatches to `Scripts/E2ESetup.macOS.sh` or
   `Scripts/E2ESetup.ubuntu.sh` to check and prepare the host for E2E runs. On
@@ -60,14 +60,15 @@ control:
   tools, installs Swift via swiftly if needed, and configures passwordless SSH
   loopback. On Ubuntu it installs the required packages, Swift if needed, and
   SSH server settings for parallel test bursts.
-- `Scripts/E2ETest.sh` runs the Swift E2E test package, builds the managed CLI
-  into the CLI run directory, writes per-test sandboxes under the CLI and agent
-  run directories, and writes recordings under `Build/e2e/<run-id>/tests`. It
-  accepts options such as `--filter`, `--agent-address`, `--agent-user`, and
-  `--verbose`.
-- `Scripts/E2EReview.sh` reviews tests that include `// AI:` comments and writes
-  `ai-review.md` files into the run directory.
-- `Scripts/E2EReport.sh` renders `Build/e2e/<run-id>/report.html`.
+- `Scripts/E2ETest.sh` and `Scripts/E2ETest.ps1` run the Swift E2E test package,
+  build the managed CLI into the CLI run directory, write per-test sandboxes
+  under the CLI and agent run directories, and write recordings under
+  `<output-root>/<run-id>/tests`. They accept options such as `--filter`,
+  `--agent-address`, `--agent-user`, and `--verbose`.
+- `Scripts/E2EReview.sh` and `Scripts/E2EReview.ps1` review tests that include
+  `// AI:` comments and write `ai-review.md` files into the run directory.
+- `Scripts/E2EReport.sh` and `Scripts/E2EReport.ps1` render
+  `<output-root>/<run-id>/report.html`.
 
 Typical local setup and full run:
 
@@ -76,6 +77,14 @@ cd swift
 bash Scripts/E2ESetup.sh
 make e2e-run
 ```
+
+Makefile E2E helpers default to global temporary output roots:
+
+- Unix/macOS: `/tmp/wendy/e2e/<run-id>`
+- Windows: `C:\Windows\Temp\wendy\e2e\<run-id>`
+
+Set `WENDY_E2E_OUTPUT_DIR` or pass `--output-dir` to the scripts when you need a
+custom artifact location.
 
 The Makefile includes helpers for the common cases:
 
