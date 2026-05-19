@@ -49,6 +49,8 @@ func looksLikeUSBConnection(interfaceName, displayName string) bool {
 		return true
 	case strings.Contains(combined, "rndis"):
 		return true
+	case strings.Contains(combined, "ndis"):
+		return true
 	case strings.Contains(combined, "ecm"):
 		return true
 	case strings.Contains(combined, "gadget"):

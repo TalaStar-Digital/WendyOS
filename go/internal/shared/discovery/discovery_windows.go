@@ -31,6 +31,10 @@ func discoverLAN(ctx context.Context, timeout time.Duration) ([]models.LANDevice
 			queries = append(queries, &iface)
 		}
 	}
+	adapterLookup := windowsNetworkAdapterLookup{}
+	if len(queries) > 1 {
+		adapterLookup = newWindowsNetworkAdapterLookup(ctx)
+	}
 
 	resultsCh := make(chan []models.LANDevice, len(queries))
 	var wg sync.WaitGroup
@@ -38,7 +42,7 @@ func discoverLAN(ctx context.Context, timeout time.Duration) ([]models.LANDevice
 		wg.Add(1)
 		go func(iface *net.Interface) {
 			defer wg.Done()
-			resultsCh <- queryLANMDNS(ctx, iface, timeout)
+			resultsCh <- queryLANMDNS(ctx, iface, timeout, adapterLookup)
 		}(iface)
 	}
 
@@ -62,7 +66,7 @@ func isMDNSInterfaceEligible(iface net.Interface) bool {
 
 // queryLANMDNS runs a single mDNS query. If iface is nil, hashicorp/mdns uses
 // its default all-interface behavior. Otherwise, the query is scoped to iface.
-func queryLANMDNS(ctx context.Context, iface *net.Interface, timeout time.Duration) []models.LANDevice {
+func queryLANMDNS(ctx context.Context, iface *net.Interface, timeout time.Duration, adapterLookup windowsNetworkAdapterLookup) []models.LANDevice {
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -75,7 +79,7 @@ func queryLANMDNS(ctx context.Context, iface *net.Interface, timeout time.Durati
 		defer close(done)
 		seen := make(map[string]bool)
 		for entry := range entriesCh {
-			dev, ok := lanDeviceFromMDNSEntry(entry, iface)
+			dev, ok := lanDeviceFromMDNSEntry(entry, iface, adapterLookup)
 			if !ok {
 				continue
 			}
@@ -103,7 +107,7 @@ func queryLANMDNS(ctx context.Context, iface *net.Interface, timeout time.Durati
 	return devices
 }
 
-func lanDeviceFromMDNSEntry(entry *mdns.ServiceEntry, iface *net.Interface) (models.LANDevice, bool) {
+func lanDeviceFromMDNSEntry(entry *mdns.ServiceEntry, iface *net.Interface, adapterLookup windowsNetworkAdapterLookup) (models.LANDevice, bool) {
 	if entry == nil || !mdnsEntryMatchesServiceType(entry.Name, wendyServiceType) {
 		return models.LANDevice{}, false
 	}
@@ -137,9 +141,52 @@ func lanDeviceFromMDNSEntry(entry *mdns.ServiceEntry, iface *net.Interface) (mod
 		IsWendyDevice: true,
 	}
 	if iface != nil {
-		setLANNetworkInterface(&dev, iface.Name, "", "")
+		displayName, linkSpeed := adapterLookup.details(iface)
+		setLANNetworkInterface(&dev, iface.Name, displayName, linkSpeed)
 	}
 	return dev, true
+}
+
+type windowsNetworkAdapterLookup struct {
+	byIndex map[int]netAdapterEntry
+	byName  map[string]netAdapterEntry
+}
+
+func newWindowsNetworkAdapterLookup(ctx context.Context) windowsNetworkAdapterLookup {
+	entries, err := readNetAdapterEntries(ctx)
+	if err != nil {
+		return windowsNetworkAdapterLookup{}
+	}
+	return windowsNetworkAdapterLookupFromEntries(entries)
+}
+
+func windowsNetworkAdapterLookupFromEntries(entries []netAdapterEntry) windowsNetworkAdapterLookup {
+	lookup := windowsNetworkAdapterLookup{
+		byIndex: make(map[int]netAdapterEntry),
+		byName:  make(map[string]netAdapterEntry),
+	}
+	for _, entry := range entries {
+		if entry.InterfaceIndex > 0 {
+			lookup.byIndex[entry.InterfaceIndex] = entry
+		}
+		if entry.Name != "" {
+			lookup.byName[strings.ToLower(entry.Name)] = entry
+		}
+	}
+	return lookup
+}
+
+func (l windowsNetworkAdapterLookup) details(iface *net.Interface) (string, string) {
+	if iface == nil {
+		return "", ""
+	}
+	if entry, ok := l.byIndex[iface.Index]; ok {
+		return entry.InterfaceDescription, entry.LinkSpeed
+	}
+	if entry, ok := l.byName[strings.ToLower(iface.Name)]; ok {
+		return entry.InterfaceDescription, entry.LinkSpeed
+	}
+	return "", ""
 }
 
 func parseMDNSTXTRecords(fields []string) map[string]string {

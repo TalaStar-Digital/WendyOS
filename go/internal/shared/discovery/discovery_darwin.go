@@ -31,18 +31,20 @@ func discoverLAN(ctx context.Context, timeout time.Duration) ([]models.LANDevice
 	if err != nil {
 		return nil, err
 	}
+	interfaceDisplayNames := darwinInterfaceDisplayNameMap(ctx)
+	linkSpeeds := make(map[string]string)
 
 	var devices []models.LANDevice
 	indexes := make(map[string]int)
 
 	for _, inst := range instances {
 		resolveCtx, resolveCancel := context.WithTimeout(ctx, 2*time.Second)
-		dev, err := dnssdResolve(resolveCtx, inst)
+		dev, err := dnssdResolve(resolveCtx, inst, interfaceDisplayNames, linkSpeeds)
 		resolveCancel()
 		if err != nil {
 			// Resolve failed (e.g. could not parse hostname) — fall back to
 			// a device derived from the browse instance name.
-			dev = deviceFromBrowse(inst)
+			dev = deviceFromBrowse(inst, interfaceDisplayNames)
 		}
 
 		key := fmt.Sprintf("%s-%s-%d", dev.DisplayName, dev.Hostname, dev.Port)
@@ -142,7 +144,7 @@ func dnssdBrowse(ctx context.Context, serviceType string) ([]browseResult, error
 
 // dnssdResolve runs dns-sd -L to resolve an instance to hostname, port, and TXT records.
 // Returns as soon as the "can be reached at" line is parsed.
-func dnssdResolve(ctx context.Context, inst browseResult) (models.LANDevice, error) {
+func dnssdResolve(ctx context.Context, inst browseResult, interfaceDisplayNames map[string]string, linkSpeeds map[string]string) (models.LANDevice, error) {
 	cmd := exec.CommandContext(ctx, "dns-sd", "-L", inst.instanceName, wendyServiceType, inst.domain)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -246,8 +248,20 @@ func dnssdResolve(ctx context.Context, inst browseResult) (models.LANDevice, err
 		InterfaceType: string(models.InterfaceLAN),
 		IsWendyDevice: true,
 	}
-	setLANNetworkInterface(&dev, inst.interfaceName, darwinInterfaceDisplayName(ctx, inst.interfaceName), getInterfaceLinkSpeed(ctx, inst.interfaceName))
+	setLANNetworkInterface(&dev, inst.interfaceName, interfaceDisplayNames[inst.interfaceName], darwinCachedInterfaceLinkSpeed(ctx, inst.interfaceName, linkSpeeds))
 	return dev, nil
+}
+
+func darwinCachedInterfaceLinkSpeed(ctx context.Context, interfaceName string, linkSpeeds map[string]string) string {
+	if interfaceName == "" {
+		return ""
+	}
+	if linkSpeed, ok := linkSpeeds[interfaceName]; ok {
+		return linkSpeed
+	}
+	linkSpeed := getInterfaceLinkSpeed(ctx, interfaceName)
+	linkSpeeds[interfaceName] = linkSpeed
+	return linkSpeed
 }
 
 // deviceFromBrowse builds a LANDevice from browse results alone, without
@@ -270,7 +284,7 @@ func unescapeDNSSDName(s string) string {
 	return strings.ReplaceAll(s, `\ `, " ")
 }
 
-func deviceFromBrowse(inst browseResult) models.LANDevice {
+func deviceFromBrowse(inst browseResult, interfaceDisplayNames map[string]string) models.LANDevice {
 	displayName := unescapeDNSSDName(inst.instanceName)
 
 	var (
@@ -296,7 +310,7 @@ func deviceFromBrowse(inst browseResult) models.LANDevice {
 		InterfaceType: string(models.InterfaceLAN),
 		IsWendyDevice: true,
 	}
-	setLANNetworkInterface(&dev, inst.interfaceName, "", "")
+	setLANNetworkInterface(&dev, inst.interfaceName, interfaceDisplayNames[inst.interfaceName], "")
 	return dev
 }
 
@@ -304,6 +318,8 @@ func deviceFromBrowse(inst browseResult) models.LANDevice {
 // discovered device to ch as it's resolved. Runs until ctx is cancelled.
 func discoverLANContinuous(ctx context.Context, ch chan<- models.LANDevice) {
 	defer close(ch)
+	interfaceDisplayNames := darwinInterfaceDisplayNameMap(ctx)
+	linkSpeeds := make(map[string]string)
 
 	cmd := exec.CommandContext(ctx, "dns-sd", "-B", wendyServiceType, "local")
 	stdout, err := cmd.StdoutPipe()
@@ -345,10 +361,10 @@ func discoverLANContinuous(ctx context.Context, ch chan<- models.LANDevice) {
 		seen[key] = true
 
 		resolveCtx, resolveCancel := context.WithTimeout(ctx, 2*time.Second)
-		dev, err := dnssdResolve(resolveCtx, inst)
+		dev, err := dnssdResolve(resolveCtx, inst, interfaceDisplayNames, linkSpeeds)
 		resolveCancel()
 		if err != nil {
-			dev = deviceFromBrowse(inst)
+			dev = deviceFromBrowse(inst, interfaceDisplayNames)
 		}
 
 		select {
