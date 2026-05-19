@@ -3,14 +3,13 @@
 SWIFT_FORMAT_TARGETS := WendyAgentCore/Sources WendyAgentCore/Tests WendyAgentMac/Sources WendyE2ETests/Sources WendyE2ETests/Tests
 
 ifeq ($(OS),Windows_NT)
-SHELL := powershell.exe
-.SHELLFLAGS := -NoProfile -Command
-POWERSHELL ?= powershell
+override SHELL := powershell.exe
+.SHELLFLAGS := -NoProfile -ExecutionPolicy Bypass -Command
 LOCAL_E2E_RUN_ID = windows-to-raspberry-pi-5
 LOCAL_E2E_ARGS = --output-dir Build/e2e --agent-os wendyOS --agent-address "$(DEVICE)"
-PRINT_HELP = @Write-Output 'Usage:'; Write-Output '  make <target>'; Write-Output ''; Write-Output 'Targets:'; Select-String -Path '$(firstword $(MAKEFILE_LIST))' -Pattern '^[a-zA-Z0-9_-]+:.*?\#\# ' | ForEach-Object { $$parts = $$_.Line -split ':.*?\#\# ', 2; '  {0,-24} {1}' -f $$parts[0], $$parts[1] }
-RUN_E2E_TEST = @$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -File ./Scripts/E2ETest.ps1 --default-run-id "$(1)" $(3)
-RUN_E2E_RUN = @$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -File ./Scripts/E2ERun.ps1 --default-run-id "$(1)" $(3)
+PRINT_HELP = @if (-not $$PSVersionTable) { throw 'Windows make recipes require PowerShell.' }; Write-Output 'Usage:'; Write-Output '  make <target>'; Write-Output ''; Write-Output 'Targets:'; Select-String -Path '$(firstword $(MAKEFILE_LIST))' -Pattern '^[a-zA-Z0-9_-]+:.*?\#\# ' | ForEach-Object { $$parts = $$_.Line -split ':.*?\#\# ', 2; '  {0,-24} {1}' -f $$parts[0], $$parts[1] }
+RUN_E2E_TEST = @if (-not $$PSVersionTable) { throw 'Windows E2E targets require PowerShell.' }; ./Scripts/E2ETest.ps1 --default-run-id "$(1)" $(3)
+RUN_E2E_RUN = @if (-not $$PSVersionTable) { throw 'Windows E2E targets require PowerShell.' }; ./Scripts/E2ERun.ps1 --default-run-id "$(1)" $(3)
 else
 SHELL := /bin/bash
 LOCAL_E2E_RUN_ID = local
