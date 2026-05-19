@@ -1,6 +1,10 @@
 import Foundation
 import Subprocess
 
+#if canImport(WinSDK)
+    @preconcurrency import WinSDK
+#endif
+
 #if canImport(System)
     import System
 #else
@@ -297,21 +301,17 @@ public actor WendyE2ESession {
         scriptShellName: String
     ) async throws -> WendyE2EShellResult {
         let start = ContinuousClock.now
-        let record = try await Self.invoke(
-            invocation,
-            output: StringOutput<UTF8>.string(limit: .max),
-            error: StringOutput<UTF8>.string(limit: .max)
-        )
+        let record = try await Self.invoke(invocation)
         let duration = start.duration(to: .now)
 
         self.recorder?.record(
             session: self,
             command: command,
-            processID: String(describing: record.processIdentifier),
+            processID: record.processIdentifier,
             status: String(describing: record.terminationStatus),
             duration: duration,
-            standardOutput: record.standardOutput ?? "",
-            standardError: record.standardError ?? "",
+            standardOutput: record.standardOutput,
+            standardError: record.standardError,
             harnessPrefix: harnessPrefix,
             scriptShellName: scriptShellName
         )
@@ -319,11 +319,11 @@ public actor WendyE2ESession {
         return WendyE2EShellResult(
             machine: self.machine,
             command: command,
-            processID: String(describing: record.processIdentifier),
+            processID: record.processIdentifier,
             status: WendyE2EShellStatus(record.terminationStatus),
             duration: duration,
-            stdout: record.standardOutput ?? "",
-            stderr: record.standardError ?? ""
+            stdout: record.standardOutput,
+            stderr: record.standardError
         )
     }
 
@@ -392,14 +392,34 @@ public actor WendyE2ESession {
     }
 
     private static var localShellPath: String {
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/sh"
-        let normalizedShell = shell.isEmpty ? "/bin/sh" : shell
+        let environmentShell = ProcessInfo.processInfo.environment["SHELL"]
+            .flatMap(Self.nonEmpty)
+
+        #if os(Windows)
+            if let environmentShell, Self.isPOSIXCompatibleShell(environmentShell) {
+                return environmentShell
+            }
+            if let shell = Self.findExecutable(named: ["sh.exe", "bash.exe", "sh", "bash"]) {
+                return shell
+            }
+            if let shell = Self.firstExecutablePath(
+                [
+                    "C:\\msys64\\usr\\bin\\sh.exe",
+                    "C:\\Program Files\\Git\\usr\\bin\\sh.exe",
+                    "C:\\Program Files\\Git\\bin\\sh.exe",
+                ]
+            ) {
+                return shell
+            }
+        #endif
+
+        let normalizedShell = environmentShell ?? "/bin/sh"
         Self.preconditionPOSIXCompatibleShell(normalizedShell)
         return normalizedShell
     }
 
     private static var localShellName: String {
-        let name = URL(fileURLWithPath: Self.localShellPath, isDirectory: false).lastPathComponent
+        let name = Self.lastPathComponent(Self.localShellPath)
         return name.isEmpty ? "sh" : name
     }
 
@@ -425,11 +445,8 @@ public actor WendyE2ESession {
     }
 
     private static func preconditionPOSIXCompatibleShell(_ shell: String) {
-        let shellName = URL(fileURLWithPath: shell, isDirectory: false).lastPathComponent
-            .lowercased()
-        let unsupportedShells: Set<String> = ["csh", "fish", "pwsh", "powershell", "tcsh"]
         precondition(
-            !unsupportedShells.contains(shellName),
+            Self.isPOSIXCompatibleShell(shell),
             """
             Wendy E2E tests require SHELL to be a POSIX-compatible shell.
             Unsupported SHELL: \(shell)
@@ -438,6 +455,21 @@ public actor WendyE2ESession {
             Then rerun the E2E command.
             """
         )
+    }
+
+    private static func isPOSIXCompatibleShell(_ shell: String) -> Bool {
+        let shellName = Self.lastPathComponent(shell).lowercased()
+        let unsupportedShells: Set<String> = [
+            "csh", "fish", "pwsh", "pwsh.exe", "powershell", "powershell.exe", "tcsh",
+        ]
+        return !unsupportedShells.contains(shellName)
+    }
+
+    private static func lastPathComponent(_ path: String) -> String {
+        let separators = CharacterSet(charactersIn: "/\\")
+        return path.trimmingCharacters(in: separators)
+            .components(separatedBy: separators)
+            .last ?? ""
     }
 
     private func harnessPrefix(resetDirectories: Bool) -> [String] {
@@ -763,6 +795,10 @@ public actor WendyE2ESession {
         "'" + value.replacingOccurrences(of: "'", with: "''") + "'"
     }
 
+    private static func firstExecutablePath(_ candidates: [String]) -> String? {
+        candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
     private static func findExecutable(named candidates: [String]) -> String? {
         let environment = ProcessInfo.processInfo.environment
         let pathValue = environment["PATH"] ?? environment["Path"] ?? environment["path"] ?? ""
@@ -849,20 +885,209 @@ public actor WendyE2ESession {
         return String(describing: value)
     }
 
-    private static func invoke<Output: OutputProtocol, Error: ErrorOutputProtocol>(
-        _ invocation: Invocation,
-        output: Output,
-        error: Error
-    ) async throws -> ExecutionRecord<Output, Error> {
-        try await Subprocess.run(
-            .path(FilePath(invocation.executable)),
-            arguments: Arguments(invocation.arguments),
-            environment: invocation.environment,
-            workingDirectory: invocation.workingDirectory,
-            output: output,
-            error: error
-        )
+    private static func invoke(_ invocation: Invocation) async throws -> StringExecutionRecord {
+        #if os(Windows)
+            try self.invokeWithWinSDK(invocation)
+        #else
+            let record = try await Subprocess.run(
+                .path(FilePath(invocation.executable)),
+                arguments: Arguments(invocation.arguments),
+                environment: invocation.environment,
+                workingDirectory: invocation.workingDirectory,
+                output: StringOutput<UTF8>.string(limit: .max),
+                error: StringOutput<UTF8>.string(limit: .max)
+            )
+
+            return StringExecutionRecord(
+                processIdentifier: String(describing: record.processIdentifier),
+                terminationStatus: record.terminationStatus,
+                standardOutput: record.standardOutput ?? "",
+                standardError: record.standardError ?? ""
+            )
+        #endif
     }
+
+    #if os(Windows)
+        private static func invokeWithWinSDK(
+            _ invocation: Invocation
+        ) throws
+            -> StringExecutionRecord
+        {
+            let fileManager = FileManager.default
+            let directory = fileManager.temporaryDirectory.appendingPathComponent(
+                "wendy-e2e-subprocess-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? fileManager.removeItem(at: directory) }
+
+            let stdoutURL = directory.appendingPathComponent("stdout.txt", isDirectory: false)
+            let stderrURL = directory.appendingPathComponent("stderr.txt", isDirectory: false)
+
+            let stdoutHandle = try Self.createInheritedOutputHandle(path: stdoutURL.path)
+            let stderrHandle = try Self.createInheritedOutputHandle(path: stderrURL.path)
+            var outputHandlesClosed = false
+            defer {
+                if !outputHandlesClosed {
+                    CloseHandle(stdoutHandle)
+                    CloseHandle(stderrHandle)
+                }
+            }
+
+            var startupInfo = STARTUPINFOW()
+            startupInfo.cb = DWORD(MemoryLayout<STARTUPINFOW>.size)
+            startupInfo.dwFlags = DWORD(STARTF_USESTDHANDLES)
+            startupInfo.hStdInput = GetStdHandle(DWORD(STD_INPUT_HANDLE))
+            startupInfo.hStdOutput = stdoutHandle
+            startupInfo.hStdError = stderrHandle
+
+            var processInfo = PROCESS_INFORMATION()
+            var commandLine =
+                Array(
+                    Self.windowsCommandLine(
+                        executable: invocation.executable,
+                        arguments: invocation.arguments
+                    ).utf16
+                ) + [0]
+
+            let created = try invocation.executable.withCString(encodedAs: UTF16.self) { appName in
+                try commandLine.withUnsafeMutableBufferPointer { commandLineBuffer in
+                    try Self.withOptionalWindowsString(
+                        invocation.workingDirectory.map { String(describing: $0) }
+                    ) { workingDirectory in
+                        CreateProcessW(
+                            appName,
+                            commandLineBuffer.baseAddress,
+                            nil,
+                            nil,
+                            true,
+                            0,
+                            nil,
+                            workingDirectory,
+                            &startupInfo,
+                            &processInfo
+                        )
+                    }
+                }
+            }
+
+            guard created else {
+                throw Self.windowsProcessError("CreateProcessW failed")
+            }
+            defer {
+                CloseHandle(processInfo.hThread)
+                CloseHandle(processInfo.hProcess)
+            }
+
+            WaitForSingleObject(processInfo.hProcess, INFINITE)
+
+            var exitCode: DWORD = 1
+            guard GetExitCodeProcess(processInfo.hProcess, &exitCode) else {
+                throw Self.windowsProcessError("GetExitCodeProcess failed")
+            }
+
+            CloseHandle(stdoutHandle)
+            CloseHandle(stderrHandle)
+            outputHandlesClosed = true
+
+            let stdout = try String(decoding: Data(contentsOf: stdoutURL), as: UTF8.self)
+            let stderr = try String(decoding: Data(contentsOf: stderrURL), as: UTF8.self)
+
+            return StringExecutionRecord(
+                processIdentifier: String(processInfo.dwProcessId),
+                terminationStatus: .exited(TerminationStatus.Code(exitCode)),
+                standardOutput: stdout,
+                standardError: stderr
+            )
+        }
+
+        private static func createInheritedOutputHandle(path: String) throws -> HANDLE {
+            var security = SECURITY_ATTRIBUTES(
+                nLength: DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size),
+                lpSecurityDescriptor: nil,
+                bInheritHandle: true
+            )
+
+            let handle = path.withCString(encodedAs: UTF16.self) { pathPointer in
+                CreateFileW(
+                    pathPointer,
+                    DWORD(GENERIC_WRITE),
+                    DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE),
+                    &security,
+                    DWORD(CREATE_ALWAYS),
+                    DWORD(FILE_ATTRIBUTE_NORMAL),
+                    nil
+                )
+            }
+
+            guard let handle, handle != INVALID_HANDLE_VALUE else {
+                throw Self.windowsProcessError("CreateFileW failed")
+            }
+
+            return handle
+        }
+
+        private static func withOptionalWindowsString<Result>(
+            _ value: String?,
+            _ body: (UnsafePointer<WCHAR>?) throws -> Result
+        ) throws -> Result {
+            guard let value else {
+                return try body(nil)
+            }
+
+            return try value.withCString(encodedAs: UTF16.self, body)
+        }
+
+        private static func windowsProcessError(_ message: String) -> NSError {
+            NSError(
+                domain: "WendyE2ETesting.WindowsProcess",
+                code: Int(GetLastError()),
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
+
+        private static func windowsCommandLine(executable: String, arguments: [String]) -> String {
+            ([executable] + arguments).map(Self.windowsCommandLineQuote).joined(separator: " ")
+        }
+
+        private static func windowsCommandLineQuote(_ argument: String) -> String {
+            guard !argument.isEmpty else {
+                return "\"\""
+            }
+
+            if argument.unicodeScalars.allSatisfy({ scalar in
+                scalar.value != 0x20 && scalar.value != 0x09 && scalar.value != 0x22
+            }) {
+                return argument
+            }
+
+            var quoted = "\""
+            var backslashes = 0
+            for character in argument {
+                if character == "\\" {
+                    backslashes += 1
+                } else if character == "\"" {
+                    quoted += String(repeating: "\\", count: backslashes * 2 + 1)
+                    quoted.append(character)
+                    backslashes = 0
+                } else {
+                    quoted += String(repeating: "\\", count: backslashes)
+                    quoted.append(character)
+                    backslashes = 0
+                }
+            }
+            quoted += String(repeating: "\\", count: backslashes * 2)
+            quoted.append("\"")
+            return quoted
+        }
+    #endif
+}
+
+private struct StringExecutionRecord: Sendable {
+    let processIdentifier: String
+    let terminationStatus: TerminationStatus
+    let standardOutput: String
+    let standardError: String
 }
 
 private struct Invocation: Sendable {
