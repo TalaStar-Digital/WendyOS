@@ -1149,3 +1149,48 @@ func TestOTELLocalhostBindProperty(t *testing.T) {
 		t.Errorf("connection via external IP %s:%d succeeded — listener should be localhost-only", externalIP, port)
 	}
 }
+
+// TestOTELEndpointEnvVarReachable verifies that a gRPC client using the
+// OTEL_EXPORTER_OTLP_ENDPOINT value that buildContainerBaseEnv injects can
+// actually reach the OTLP gRPC receiver. This simulates a Swift container
+// auto-configuring its exporter from the environment.
+func TestOTELEndpointEnvVarReachable(t *testing.T) {
+	// Cannot use t.Parallel with t.Setenv.
+
+	// Start a real OTLP gRPC server on a random IPv4 loopback port.
+	lis, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	port := lis.Addr().(*net.TCPAddr).Port
+
+	broadcaster := services.NewTelemetryBroadcaster()
+	srv := grpc.NewServer()
+	otelpb.RegisterLogsServiceServer(srv, services.NewOTELLogsReceiver(broadcaster))
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+
+	// This is the endpoint buildContainerBaseEnv injects when WENDY_OTEL_PORT
+	// is set to the server's port (the format is http://127.0.0.1:<port>).
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d", port)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
+
+	// A container reads OTEL_EXPORTER_OTLP_ENDPOINT and dials the gRPC target.
+	// The http:// scheme prefix is stripped because grpc.NewClient expects host:port.
+	rawEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	grpcTarget := rawEndpoint[len("http://"):]
+
+	conn, err := grpc.NewClient(grpcTarget, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("grpc.NewClient(%q): %v", grpcTarget, err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = otelpb.NewLogsServiceClient(conn).Export(ctx, &otelpb.ExportLogsServiceRequest{})
+	if err != nil {
+		t.Fatalf("OTLP endpoint %q unreachable: %v", endpoint, err)
+	}
+}

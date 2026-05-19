@@ -2,8 +2,10 @@ package containerd
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
 	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -83,6 +85,131 @@ func TestBuildContainerBaseEnvOmitsWendyHostnameWhenUnavailable(t *testing.T) {
 		if len(kv) >= len("WENDY_HOSTNAME=") && kv[:len("WENDY_HOSTNAME=")] == "WENDY_HOSTNAME=" {
 			t.Errorf("env unexpectedly contains %q when device hostname is unresolvable", kv)
 		}
+	}
+}
+
+func hostNetworkCfg() *appconfig.AppConfig {
+	return &appconfig.AppConfig{
+		Entitlements: []appconfig.Entitlement{
+			{Type: appconfig.EntitlementNetwork, Mode: "host"},
+		},
+	}
+}
+
+func TestInjectOTELEnvDefaultPort(t *testing.T) {
+	t.Setenv("WENDY_OTEL_PORT", "")
+
+	env := injectOTELEnvIfNeeded(nil, hostNetworkCfg())
+
+	want := "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317"
+	for _, kv := range env {
+		if kv == want {
+			return
+		}
+	}
+	t.Errorf("env missing %q; got %v", want, env)
+}
+
+func TestInjectOTELEnvCustomPort(t *testing.T) {
+	t.Setenv("WENDY_OTEL_PORT", "9999")
+
+	env := injectOTELEnvIfNeeded(nil, hostNetworkCfg())
+
+	want := "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:9999"
+	for _, kv := range env {
+		if kv == want {
+			return
+		}
+	}
+	t.Errorf("env missing %q; got %v", want, env)
+}
+
+func TestInjectOTELEnvSetsGRPCProtocol(t *testing.T) {
+	env := injectOTELEnvIfNeeded(nil, hostNetworkCfg())
+
+	const want = "OTEL_EXPORTER_OTLP_PROTOCOL=grpc"
+	for _, kv := range env {
+		if kv == want {
+			return
+		}
+	}
+	t.Errorf("env missing %q; got %v", want, env)
+}
+
+func TestInjectOTELEnvSkipsWithoutHostNetworking(t *testing.T) {
+	cfg := &appconfig.AppConfig{} // no network entitlement
+
+	env := injectOTELEnvIfNeeded(nil, cfg)
+
+	for _, kv := range env {
+		if len(kv) > len("OTEL_EXPORTER_OTLP_ENDPOINT=") &&
+			kv[:len("OTEL_EXPORTER_OTLP_ENDPOINT=")] == "OTEL_EXPORTER_OTLP_ENDPOINT=" {
+			t.Errorf("unexpected OTEL var injected without host networking: %q", kv)
+		}
+	}
+}
+
+func TestInjectOTELEnvSkipsWhenEndpointAlreadySet(t *testing.T) {
+	existing := []string{"OTEL_EXPORTER_OTLP_ENDPOINT=http://custom-collector:4317"}
+
+	env := injectOTELEnvIfNeeded(existing, hostNetworkCfg())
+
+	count := 0
+	for _, kv := range env {
+		if len(kv) > len("OTEL_EXPORTER_OTLP_ENDPOINT=") &&
+			kv[:len("OTEL_EXPORTER_OTLP_ENDPOINT=")] == "OTEL_EXPORTER_OTLP_ENDPOINT=" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 OTEL_EXPORTER_OTLP_ENDPOINT entry, got %d: %v", count, env)
+	}
+}
+
+func TestInjectOTELEnvDoesNotOverrideExistingProtocol(t *testing.T) {
+	existing := []string{"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"}
+
+	env := injectOTELEnvIfNeeded(existing, hostNetworkCfg())
+
+	count := 0
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "OTEL_EXPORTER_OTLP_PROTOCOL=") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 OTEL_EXPORTER_OTLP_PROTOCOL entry, got %d: %v", count, env)
+	}
+	for _, kv := range env {
+		if kv == "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf" {
+			return
+		}
+	}
+	t.Errorf("image-set protocol was overridden; got %v", env)
+}
+
+func TestInjectOTELEnvInvalidPortFallsBackToDefault(t *testing.T) {
+	t.Setenv("WENDY_OTEL_PORT", "notaport")
+
+	env := injectOTELEnvIfNeeded(nil, hostNetworkCfg())
+
+	const want = "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317"
+	for _, kv := range env {
+		if kv == want {
+			return
+		}
+	}
+	t.Errorf("expected fallback to default port; got %v", env)
+}
+
+func TestHasHostNetworkEntitlementEmptyModeIsHost(t *testing.T) {
+	cfg := &appconfig.AppConfig{
+		Entitlements: []appconfig.Entitlement{
+			{Type: appconfig.EntitlementNetwork, Mode: ""},
+		},
+	}
+	if !hasHostNetworkEntitlement(cfg) {
+		t.Error("empty mode should imply host networking")
 	}
 }
 
