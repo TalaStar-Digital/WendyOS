@@ -71,16 +71,29 @@ struct `'wendy completion install'` {
      selected shell only. Other shell configuration files remain
      unchanged.
      */
-    @Test(.enabled(if: WendyE2EMachine.cli.os != .windows))
+    @Test
     func `uses the requested shell override`() async throws {
         try await self.scenario.run { cli, _ in
             try await cli.sh(
-                """
-                wendy completion install --shell fish
-                test -f "$HOME/.config/fish/completions/wendy.fish"
-                test ! -e "$HOME/.bashrc"
-                test ! -e "$HOME/.zshrc"
-                """
+                posix: """
+                    wendy completion install --shell fish
+                    test -f "$HOME/.config/fish/completions/wendy.fish"
+                    test ! -e "$HOME/.bashrc"
+                    test ! -e "$HOME/.zshrc"
+                    """,
+                power: """
+                    wendy completion install --shell fish
+                    $completionPath = Join-Path $env:HOME '.config/fish/completions/wendy.fish'
+                    if (!(Test-Path -LiteralPath $completionPath -PathType Leaf)) {
+                        throw 'fish completion should exist'
+                    }
+                    if (Test-Path -LiteralPath (Join-Path $env:HOME '.bashrc')) {
+                        throw '.bashrc should not exist'
+                    }
+                    if (Test-Path -LiteralPath (Join-Path $env:HOME '.zshrc')) {
+                        throw '.zshrc should not exist'
+                    }
+                    """
             ) { result in
 
                 #expect(result.status.isSuccess)
