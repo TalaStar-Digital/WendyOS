@@ -247,28 +247,7 @@ jobs:
             --output-dir /tmp/wendy \
             --agent-address "${{ matrix.target.device_address }}"
 
-      - name: Review Swift E2E results with AI
-        if: always() && matrix.target.status == 'enabled'
-        working-directory: swift
-        shell: bash
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          set -euo pipefail
-          bash ./Scripts/E2EReview.sh \
-            --run-dir "/tmp/wendy/${{ steps.e2e-run.outputs.run_id }}"
-
-      - name: Render Swift E2E report
-        if: always() && matrix.target.status == 'enabled'
-        working-directory: swift
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash ./Scripts/E2EReport.sh \
-            --run-dir "/tmp/wendy/${{ steps.e2e-run.outputs.run_id }}"
-
-      - name: Upload Swift E2E report
+      - name: Upload Swift E2E run
         if: always() && matrix.target.status == 'enabled'
         uses: actions/upload-artifact@v5
         with:
@@ -298,3 +277,78 @@ jobs:
             echo "| Device ID | \`${{ matrix.target.device_id }}\` |"
             echo "| Transport | \`${{ matrix.target.transport }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  swift-e2e-aggregate:
+    name: Aggregate Swift E2E Results
+    if: always()
+    needs: swift-e2e-tests
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Compute Swift E2E aggregate ID
+        id: e2e-aggregate
+        shell: bash
+        run: |
+          set -euo pipefail
+          slug() {
+            printf '%s' "$1" \
+              | tr '[:upper:]' '[:lower:]' \
+              | sed -E 's/[^[:alnum:]._-]+/-/g; s/-+/-/g; s/^-//; s/-$//'
+          }
+
+          workflow_id="$(slug "${GITHUB_WORKFLOW:-swift-e2e-tests}")"
+          printf -v attempt_suffix '%04d' "${GITHUB_RUN_ATTEMPT:-1}"
+          echo "aggregate_id=${workflow_id}.gh${GITHUB_RUN_ID}.aggregate.${attempt_suffix}" >> "$GITHUB_OUTPUT"
+          echo "aggregate_dir=/tmp/wendy/${workflow_id}.gh${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Download Swift E2E runs
+        uses: actions/download-artifact@v5
+        with:
+          path: /tmp/wendy-raw
+          pattern: swift-e2e-tests.gh${{ github.run_id }}.*
+
+      - name: Aggregate Swift E2E runs
+        working-directory: swift
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t run_dirs < <(find /tmp/wendy-raw -mindepth 1 -maxdepth 1 -type d | sort)
+          if [[ ${#run_dirs[@]} -eq 0 ]]; then
+            echo "ERROR: no Swift E2E run artifacts downloaded." >&2
+            exit 1
+          fi
+          bash ./Scripts/E2EAggregate.sh \
+            --output-dir /tmp/wendy \
+            "${run_dirs[@]}"
+
+      - name: Review Swift E2E aggregate with AI
+        if: always()
+        working-directory: swift
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          bash ./Scripts/E2EReview.sh \
+            --run-dir "${{ steps.e2e-aggregate.outputs.aggregate_dir }}"
+
+      - name: Render Swift E2E aggregate index
+        if: always()
+        working-directory: swift
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./Scripts/E2EReport.sh \
+            --run-dir "${{ steps.e2e-aggregate.outputs.aggregate_dir }}"
+
+      - name: Upload Swift E2E aggregate
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ steps.e2e-aggregate.outputs.aggregate_id }}
+          path: ${{ steps.e2e-aggregate.outputs.aggregate_dir }}/**
+          if-no-files-found: warn
+          retention-days: 14
