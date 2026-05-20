@@ -1241,8 +1241,9 @@ private func renderObservations(_ observations: [ReportTestObservation], aiRevie
         previousTarget = observation.target
         let target = isFirstTargetRow ? escapeHTML(observation.target) : ""
         let route = isFirstTargetRow ? renderTargetRoute(observation.route, title: observation.target) : ""
+        let rowClass = isFirstTargetRow ? "observation-row" : "observation-row same-target"
         chunks.append(
-            "<div class=\"observation-row\"><span class=\"observation-target\">\(target)</span><span class=\"observation-route-cell\">\(route)</span><span class=\"observation-spacer\" aria-hidden=\"true\"></span>\(renderObservationLinks(observation))<span class=\"observation-attempt\">\(escapeHTML(observation.attempt))</span><span class=\"badge \(observation.status.statusClass)\">\(observation.status.statusText)</span>\(observationDurationBadge(observation.duration))</div>"
+            "<div class=\"\(rowClass)\"><span class=\"observation-route-cell\">\(route)</span><span class=\"observation-target\">\(target)</span><span class=\"observation-spacer\" aria-hidden=\"true\"></span>\(renderObservationLinks(observation))<span class=\"observation-attempt\">\(escapeHTML(observation.attempt))</span><span class=\"badge \(observation.status.statusClass)\">\(observation.status.statusText)</span>\(observationDurationBadge(observation.duration))</div>"
         )
     }
     chunks.append("</section>")
@@ -1266,11 +1267,10 @@ private func renderObservationLinks(_ observation: ReportTestObservation) -> Str
 }
 
 private func renderTargetRoute(_ route: TargetRoute, title: String) -> String {
-    guard let agent = route.agent else {
-        return "<span class=\"target-route\" title=\"\(escapeHTML(title))\">\(renderTargetLogo(route.cli))</span>"
-    }
-
-    return "<span class=\"target-route\" title=\"\(escapeHTML(title))\">\(renderTargetLogo(route.cli))<span class=\"target-route-arrow\" aria-hidden=\"true\">›</span>\(renderTargetLogo(agent))</span>"
+    let cli = "<span class=\"target-route-cli\">\(renderTargetLogo(route.cli))</span>"
+    let arrow = "<span class=\"target-route-arrow\" aria-hidden=\"true\">›</span>"
+    let agent = "<span class=\"target-route-agent\">\(route.agent.map(renderTargetLogo) ?? "")</span>"
+    return "<span class=\"target-route\" title=\"\(escapeHTML(title))\">\(cli)\(arrow)\(agent)</span>"
 }
 
 private func targetRoute(for target: String, attemptURL: URL) throws -> TargetRoute {

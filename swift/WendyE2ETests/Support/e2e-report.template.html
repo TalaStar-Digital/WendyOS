@@ -8,9 +8,12 @@
     (() => {
       try {
         const stored = localStorage.getItem('wendy-e2e-theme');
+        const mode = ['system', 'light', 'dark'].includes(stored) ? stored : 'system';
         const preferred = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-        document.documentElement.dataset.theme = stored || preferred;
+        document.documentElement.dataset.themeMode = mode;
+        document.documentElement.dataset.theme = mode === 'system' ? preferred : mode;
       } catch {
+        document.documentElement.dataset.themeMode = 'system';
         document.documentElement.dataset.theme = 'light';
       }
     })();
@@ -614,14 +617,14 @@
 
     .observation-row {
       display: grid;
-      grid-template-columns: max-content max-content minmax(18px, 1fr) 112px 78px max-content 208px;
+      grid-template-columns: 74px max-content minmax(18px, 1fr) 112px 78px max-content 208px;
       gap: 10px;
       align-items: center;
       padding: 8px 12px;
       font-size: 13px;
     }
 
-    .observation-row + .observation-row {
+    .observation-row + .observation-row:not(.same-target) {
       border-top: 1px solid var(--line);
     }
 
@@ -675,22 +678,37 @@
     }
 
     .target-route {
-      display: inline-flex;
+      display: inline-grid;
+      grid-template-columns: 30px 14px 30px;
       align-items: center;
-      gap: 6px;
+      width: 74px;
       height: 22px;
       line-height: 1;
       white-space: nowrap;
       vertical-align: middle;
     }
 
+    .target-route-cli,
+    .target-route-agent,
     .target-route-arrow {
       display: inline-flex;
       align-items: center;
-      justify-content: center;
       height: 22px;
+      min-width: 0;
+    }
+
+    .target-route-cli {
+      justify-content: flex-end;
+    }
+
+    .target-route-agent {
+      justify-content: flex-start;
+    }
+
+    .target-route-arrow {
+      justify-content: center;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 900;
       line-height: 1;
     }
@@ -699,7 +717,7 @@
       box-sizing: border-box;
       display: inline-grid;
       place-items: center;
-      min-width: 26px;
+      width: 30px;
       height: 22px;
       border: 1px solid var(--line);
       border-radius: 7px;
@@ -708,7 +726,7 @@
       font-size: 12px;
       font-weight: 900;
       line-height: 1;
-      padding: 0 5px;
+      padding: 0;
     }
 
     .target-logo.apple {
@@ -1268,6 +1286,7 @@
       const themeToggle = document.querySelector('[data-theme-toggle]');
       const themeToggleIcon = document.querySelector('[data-theme-toggle-icon]');
       const themeToggleLabel = document.querySelector('[data-theme-toggle-label]');
+      const themePreference = matchMedia('(prefers-color-scheme: dark)');
       const reportButtons = Array.from(document.querySelectorAll('.report-button'));
       let activeFilter = defaultFilter();
 
@@ -1282,24 +1301,35 @@
         return new Set((test.dataset.testStatuses || test.dataset.testStatus || '').split(/\s+/).filter(Boolean));
       }
 
-      function currentTheme() {
-        return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+      function preferredTheme() {
+        return themePreference.matches ? 'dark' : 'light';
       }
 
-      function setTheme(theme) {
-        document.documentElement.dataset.theme = theme;
-        try { localStorage.setItem('wendy-e2e-theme', theme); } catch {}
+      function currentThemeMode() {
+        const mode = document.documentElement.dataset.themeMode;
+        return ['system', 'light', 'dark'].includes(mode) ? mode : 'system';
+      }
+
+      function resolvedTheme(mode = currentThemeMode()) {
+        return mode === 'system' ? preferredTheme() : mode;
+      }
+
+      function setThemeMode(mode) {
+        document.documentElement.dataset.themeMode = mode;
+        document.documentElement.dataset.theme = resolvedTheme(mode);
+        try { localStorage.setItem('wendy-e2e-theme', mode); } catch {}
         updateThemeToggle();
       }
 
       function updateThemeToggle() {
-        const theme = currentTheme();
+        const mode = currentThemeMode();
+        const theme = resolvedTheme(mode);
         if (themeToggle) {
-          themeToggle.setAttribute('aria-pressed', String(theme === 'dark'));
-          themeToggle.setAttribute('title', `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`);
+          themeToggle.setAttribute('aria-pressed', String(mode !== 'system'));
+          themeToggle.setAttribute('title', `Theme: ${mode}${mode === 'system' ? ` (${theme})` : ''}. Click to switch.`);
         }
-        if (themeToggleIcon) themeToggleIcon.textContent = theme === 'dark' ? '☾' : '☼';
-        if (themeToggleLabel) themeToggleLabel.textContent = theme === 'dark' ? 'Dark' : 'Light';
+        if (themeToggleIcon) themeToggleIcon.textContent = mode === 'system' ? '◐' : (theme === 'dark' ? '☾' : '☼');
+        if (themeToggleLabel) themeToggleLabel.textContent = mode === 'system' ? `System (${theme})` : (theme === 'dark' ? 'Dark' : 'Light');
       }
 
       function renderQuotedCode(root = document.querySelector('main')) {
@@ -1390,7 +1420,16 @@
       }
 
       themeToggle?.addEventListener('click', () => {
-        setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+        const modes = ['system', 'light', 'dark'];
+        const next = modes[(modes.indexOf(currentThemeMode()) + 1) % modes.length];
+        setThemeMode(next);
+      });
+
+      themePreference.addEventListener?.('change', () => {
+        if (currentThemeMode() === 'system') {
+          document.documentElement.dataset.theme = preferredTheme();
+          updateThemeToggle();
+        }
       });
 
       for (const button of reportButtons) {
