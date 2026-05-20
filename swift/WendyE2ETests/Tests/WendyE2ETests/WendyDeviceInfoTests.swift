@@ -65,16 +65,20 @@ struct `'wendy device info'` {
     /**
      When no explicit device is passed, the saved default device is the target. The command treats this as a normal selection and leaves the saved default unchanged.
      */
-    @Test(.enabled(if: WendyE2EMachine.cli.os != .windows))
+    @Test
     func `uses the configured default device`() async throws {
         try await self.scenario.run { cli, agent in
             let agentAddress = agent.machine.address
 
             try await cli.sh(
-                """
-                mkdir -p "$HOME/.wendy"
-                printf '%s\n' '{"defaultDevice":"\(agentAddress)"}' > "$HOME/.wendy/config.json"
-                """
+                posix: """
+                    mkdir -p "$HOME/.wendy"
+                    printf '%s\n' '{"defaultDevice":"\(agentAddress)"}' > "$HOME/.wendy/config.json"
+                    """,
+                power: """
+                    New-Item -ItemType Directory -Force -Path (Join-Path $env:HOME '.wendy') | Out-Null
+                    Set-Content -LiteralPath (Join-Path $env:HOME '.wendy/config.json') -Value '{"defaultDevice":"\(agentAddress)"}'
+                    """
             )
 
             try await cli.sh("wendy device info --json") { result in
@@ -90,10 +94,13 @@ struct `'wendy device info'` {
                 #expect(!result.stderr.contains("Select a device"))
             }
 
-            try await cli.sh("cat \"$HOME/.wendy/config.json\"") { result in
+            try await cli.sh(
+                posix: "cat \"$HOME/.wendy/config.json\"",
+                power: "Get-Content -Raw -LiteralPath (Join-Path $env:HOME '.wendy/config.json')"
+            ) { result in
 
                 #expect(result.status.isSuccess)
-                #expect(result.stdout == "{\"defaultDevice\":\"\(agentAddress)\"}\n")
+                #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "{\"defaultDevice\":\"\(agentAddress)\"}")
                 #expect(result.stderr == "")
             }
         }
