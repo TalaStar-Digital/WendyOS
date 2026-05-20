@@ -168,8 +168,9 @@ func detectBuildOptions(dir string) []BuildOption {
 }
 
 // generatePythonDockerfile creates a Dockerfile for Python projects that do not already have one.
-// It returns the path to the generated Dockerfile.
-func generatePythonDockerfile(dir string) (string, error) {
+// It returns the path to the generated Dockerfile. When debug is true, debugpy is installed so
+// the agent can wrap the entrypoint with "-m debugpy" for remote debugging.
+func generatePythonDockerfile(dir string, debug bool) (string, error) {
 	dockerfilePath := filepath.Join(dir, "Dockerfile")
 
 	// Determine if requirements.txt exists.
@@ -193,6 +194,9 @@ func generatePythonDockerfile(dir string) (string, error) {
 	if hasRequirements {
 		sb.WriteString("COPY requirements.txt .\n")
 		sb.WriteString("RUN pip install --no-cache-dir -r requirements.txt\n")
+	}
+	if debug {
+		sb.WriteString("RUN pip install --no-cache-dir debugpy\n")
 	}
 	sb.WriteString("COPY . .\n")
 	sb.WriteString(fmt.Sprintf("CMD [\"python\", \"%s\"]\n", entryPoint))

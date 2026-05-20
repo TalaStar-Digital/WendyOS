@@ -1142,10 +1142,12 @@ func runWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, cwd str
 	case "python":
 		if _, err := os.Stat(filepath.Join(cwd, "Dockerfile")); os.IsNotExist(err) {
 			cliLogln("No Dockerfile found. Generating one for Python project...")
-			if _, genErr := generatePythonDockerfile(cwd); genErr != nil {
+			if _, genErr := generatePythonDockerfile(cwd, opts.debug); genErr != nil {
 				return fmt.Errorf("generating Dockerfile: %w", genErr)
 			}
 			cliLogln("Generated Dockerfile.")
+		} else if opts.debug {
+			cliLogln("Note: --debug requires debugpy in the container image. Ensure your Dockerfile installs debugpy (e.g. RUN pip install debugpy).")
 		}
 	case "swift":
 		// Dockerfile exists; use the Docker build path.
