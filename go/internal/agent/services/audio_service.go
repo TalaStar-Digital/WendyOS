@@ -203,8 +203,12 @@ func parseALSAOutput(output string, devType agentpb.AudioDeviceType) []*agentpb.
 // into its constituent ALSA card and device numbers.
 // The encoding is: id = ((card << 8) | device) + 1.
 // Card occupies bits 15–8 and device occupies bits 7–0; both are in [0, 255].
+// An id of 0 is invalid for this encoding and decodes to (0, 0).
 // The caller is responsible for validating that the decoded card is ≤ 255.
 func decodeALSAID(id uint32) (card, device uint64) {
+	if id == 0 {
+		return 0, 0
+	}
 	encoded := uint64(id) - 1
 	return encoded >> 8, encoded & 0xFF
 }
