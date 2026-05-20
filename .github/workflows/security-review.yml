@@ -54,6 +54,7 @@ jobs:
           python3 << 'PYEOF'
           import anthropic
           import json
+          import os
           import pathlib
 
           client = anthropic.Anthropic()
@@ -148,14 +149,30 @@ jobs:
               }],
           )
 
-          import os
-          import re
-
           report = message.content[0].text[:20000]
           pathlib.Path('review.md').write_text(report + '\n')
           print(report)
 
-          has_high = bool(re.search(r'\|\s*(?:CRITICAL|HIGH)\s*\|', report))
+          # Determine the highest severity via a separate isolated call that only
+          # sees the generated report — not the PR content. This prevents prompt
+          # injection in the diff from influencing the gate decision.
+          verdict_msg = client.messages.create(
+              model='claude-sonnet-4-6',
+              max_tokens=10,
+              system=(
+                  'You are a security report classifier. '
+                  'Read the provided security report and reply with exactly one word '
+                  'representing the highest severity finding present: '
+                  'CRITICAL, HIGH, MEDIUM, LOW, or CLEAN (if no findings). '
+                  'Output only that single word — no punctuation, no explanation.'
+              ),
+              messages=[{'role': 'user', 'content': report}],
+          )
+
+          verdict = verdict_msg.content[0].text.strip().upper()
+          print(f'Severity verdict: {verdict}')
+
+          has_high = verdict in ('HIGH', 'CRITICAL')
           github_env = os.environ.get('GITHUB_ENV', '')
           if github_env and has_high:
               with open(github_env, 'a') as genv:
