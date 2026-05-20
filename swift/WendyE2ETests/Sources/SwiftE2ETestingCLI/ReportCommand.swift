@@ -87,6 +87,64 @@ private struct ReportTestDuration {
     var barWidth: String
 }
 
+private struct ReportTestDurationRange {
+    var count: Int
+    var minSeconds: Double
+    var maxSeconds: Double
+
+    var formatted: String {
+        let min = formattedTestDuration(minSeconds)
+        let max = formattedTestDuration(maxSeconds)
+        if count == 1 || min == max {
+            return min
+        }
+        return "\(min)–\(max)"
+    }
+
+    var barLeft: String {
+        let minPercent = durationBarPercent(seconds: minSeconds)
+        let maxPercent = durationBarPercent(seconds: maxSeconds)
+        if minPercent == maxPercent {
+            let markerWidth = 2.0
+            return percentString(Swift.min(Swift.max(minPercent - (markerWidth / 2), 0), 100 - markerWidth))
+        }
+        return percentString(minPercent)
+    }
+
+    var barWidth: String {
+        let minPercent = durationBarPercent(seconds: minSeconds)
+        let maxPercent = durationBarPercent(seconds: maxSeconds)
+        if minPercent == maxPercent {
+            return "2.0%"
+        }
+        return percentString(maxPercent - minPercent)
+    }
+
+    var barColor: String {
+        let minColor = durationColor(seconds: minSeconds)
+        let maxColor = durationColor(seconds: maxSeconds)
+        if minSeconds == maxSeconds || minColor == maxColor {
+            return minColor
+        }
+        return "linear-gradient(90deg, \(minColor), \(maxColor))"
+    }
+
+    init?(_ seconds: [Double]) {
+        let validSeconds = seconds.filter { $0 >= 0 }.sorted()
+        guard let min = validSeconds.first, let max = validSeconds.last else {
+            return nil
+        }
+        self.count = validSeconds.count
+        self.minSeconds = min
+        self.maxSeconds = max
+    }
+}
+
+private struct ReportAggregateTestResult {
+    var targetOutcomes: ReportTargetOutcomeCounts
+    var durationRange: ReportTestDurationRange?
+}
+
 private enum ReportTestStatus {
     case passed(duration: ReportTestDuration?)
     case failed(String?, duration: ReportTestDuration?)
@@ -222,6 +280,7 @@ private struct ReportTestCase {
     var disabled: String?
     var status: ReportTestStatus
     var targetOutcomes = ReportTargetOutcomeCounts()
+    var durationRange: ReportTestDurationRange?
     var nextLine = 0
     var aiItems: [String] = []
     var recordName = ""
@@ -409,8 +468,9 @@ private func parseXUnitResults(at resultURL: URL) throws -> [TestResultKey: Repo
     return parser.results
 }
 
-private func loadAggregateTestResults(in aggregateURL: URL) throws -> [TestResultKey: ReportTargetOutcomeCounts] {
+private func loadAggregateTestResults(in aggregateURL: URL) throws -> [TestResultKey: ReportAggregateTestResult] {
     var observed: [TestResultKey: [String: [ReportTestStatus]]] = [:]
+    var durations: [TestResultKey: [Double]] = [:]
 
     for suiteURL in try directoryChildren(of: aggregateURL) {
         let suiteKey = suiteURL.lastPathComponent
@@ -428,19 +488,29 @@ private func loadAggregateTestResults(in aggregateURL: URL) throws -> [TestResul
                     where slug(key.suite) == suiteKey && slug(key.name) == testKey
                     {
                         observed[key, default: [:]][targetName, default: []].append(status)
+                        if let duration = status.duration {
+                            durations[key, default: []].append(duration.seconds)
+                        }
                     }
                 }
             }
         }
     }
 
-    return observed.mapValues { targets in
+    let keys = Set(observed.keys).union(durations.keys)
+    return Dictionary(uniqueKeysWithValues: keys.map { key in
         var counts = ReportTargetOutcomeCounts()
-        for statuses in targets.values {
+        for statuses in observed[key, default: [:]].values {
             counts.add(targetOutcome(for: statuses))
         }
-        return counts
-    }
+        return (
+            key,
+            ReportAggregateTestResult(
+                targetOutcomes: counts,
+                durationRange: ReportTestDurationRange(durations[key, default: []])
+            )
+        )
+    })
 }
 
 private func aggregateObservationFileURLs(in aggregateURL: URL, fileName: String) throws -> [URL] {
@@ -632,8 +702,15 @@ private func formattedTestDuration(_ seconds: Double) -> String {
 }
 
 private func durationBarWidth(seconds: Double) -> String {
-    let percent = min(max(seconds / 30, 0), 1) * 100
-    return String(format: "%.1f%%", locale: Locale(identifier: "en_US_POSIX"), percent)
+    percentString(durationBarPercent(seconds: seconds))
+}
+
+private func durationBarPercent(seconds: Double) -> Double {
+    min(max(seconds / 30, 0), 1) * 100
+}
+
+private func percentString(_ percent: Double) -> String {
+    String(format: "%.1f%%", locale: Locale(identifier: "en_US_POSIX"), percent)
 }
 
 private func durationColor(seconds: Double) -> String {
@@ -716,7 +793,7 @@ private func parseTests(
     recordingURL: URL,
     records: [String: [CommandRun]],
     aiReviews: [String: AIReview],
-    testResults: [TestResultKey: ReportTargetOutcomeCounts]
+    testResults: [TestResultKey: ReportAggregateTestResult]
 ) throws -> [ReportTestFile] {
     let sourceURLs = try swiftTestFiles(in: testsURL)
     var files: [ReportTestFile] = []
@@ -789,8 +866,9 @@ private func parseTests(
                     && command.sourceLine < nextLine
             }
             let key = TestResultKey(suite: tests[testIndex].suite, name: tests[testIndex].name)
-            if let targetOutcomes = testResults[key] {
-                tests[testIndex].targetOutcomes = targetOutcomes
+            if let result = testResults[key] {
+                tests[testIndex].targetOutcomes = result.targetOutcomes
+                tests[testIndex].durationRange = result.durationRange
             }
         }
 
@@ -972,7 +1050,7 @@ private func renderCards(files: [ReportTestFile]) -> String {
                 "<a class=\"test-details test-details-link\" data-test-status=\"\(statusClass)\" data-test-statuses=\"\(escapeHTML(statusClasses))\" data-has-ai=\"\(hasAI)\" data-has-ai-review=\"\(hasAIReview)\" href=\"\(escapeHTML(pagePath))\">"
             )
             cards.append(
-                "<span class=\"test-summary\"><span class=\"test-title\"><span class=\"test-path\">\(escapeHTML(pathText))</span>\(outcomeBadges)</span>\(aggregateDurationBadge())\(aiBadge)<span class=\"report-links\"></span></span>"
+                "<span class=\"test-summary\"><span class=\"test-title\"><span class=\"test-path\">\(escapeHTML(pathText))</span>\(outcomeBadges)</span>\(aggregateDurationBadge(test.durationRange))\(aiBadge)<span class=\"report-links\"></span></span>"
             )
             cards.append("</a>")
         }
@@ -1003,8 +1081,12 @@ private func renderTargetOutcomeBadges(_ counts: ReportTargetOutcomeCounts) -> S
     }.joined()
 }
 
-private func aggregateDurationBadge() -> String {
-    "<span class=\"badge duration\" title=\"Test duration: 0.1s\" style=\"--duration-bar-color: \(durationColor(seconds: 0.1)); --duration-bar-width: 50%\"><span class=\"duration-bar\" aria-hidden=\"true\"><span class=\"duration-bar-fill\"></span></span><span class=\"duration-value\">0.1s</span></span>"
+private func aggregateDurationBadge(_ duration: ReportTestDurationRange?) -> String {
+    guard let duration else {
+        return "<span class=\"badge duration empty\" aria-hidden=\"true\"><span class=\"duration-bar\"><span class=\"duration-bar-fill\"></span></span><span class=\"duration-value\"></span></span>"
+    }
+
+    return "<span class=\"badge duration\" title=\"Test duration: \(escapeHTML(duration.formatted))\" style=\"--duration-bar-left: \(duration.barLeft); --duration-bar-width: \(duration.barWidth); --duration-bar-color: \(duration.barColor)\"><span class=\"duration-bar\" aria-hidden=\"true\"><span class=\"duration-bar-fill\"></span></span><span class=\"duration-value\">\(escapeHTML(duration.formatted))</span></span>"
 }
 
 private func aggregateTestPagePath(fileURL: URL, testName: String) -> String {
