@@ -240,14 +240,18 @@ struct `'wendy device info'` {
     /**
      Device selection depends on the user's Wendy CLI configuration. If that configuration cannot be parsed, the command reports the configuration problem instead of opening the picker or contacting an agent.
      */
-    @Test(.enabled(if: WendyE2EMachine.cli.os != .windows))
+    @Test
     func `reports invalid CLI configuration before selecting a device`() async throws {
         try await self.scenario.run { cli, _ in
             try await cli.sh(
-                """
-                mkdir -p "$HOME/.wendy"
-                printf '{ invalid json\n' > "$HOME/.wendy/config.json"
-                """
+                posix: """
+                    mkdir -p "$HOME/.wendy"
+                    printf '{ invalid json\n' > "$HOME/.wendy/config.json"
+                    """,
+                power: """
+                    New-Item -ItemType Directory -Force -Path (Join-Path $env:HOME '.wendy') | Out-Null
+                    Set-Content -LiteralPath (Join-Path $env:HOME '.wendy/config.json') -Value '{ invalid json'
+                    """
             )
 
             try await cli.sh("wendy device info --json") { result in
