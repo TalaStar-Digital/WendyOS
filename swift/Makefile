@@ -46,11 +46,15 @@ RUN_E2E_RUN_UNIX = @output_dir=$(UNIX_E2E_OUTPUT_DIR); \
 	$(E2E_RUN_ID_HELPERS_UNIX); \
 	run_name="$$(e2e_cli_id)-to-$(1)"; \
 	run_id="$${WENDY_E2E_RUN_ID:-$$(next_e2e_run_id "$$output_dir" "$$run_name")}"; \
+	run_base="$${run_id%.*}"; \
+	aggregate_name="$${run_base%.*}"; \
+	aggregate_dir="$$output_dir/$$aggregate_name"; \
 	status=0; \
 	WENDY_E2E_RUN_ID="$$run_id" WENDY_E2E_RUN_NAME="$$run_name" bash ./Scripts/E2ETest.sh $(2) || status=$$?; \
-	bash ./Scripts/E2EReview.sh --run-dir "$$output_dir/$$run_id" || { step_status=$$?; [ $$status -eq 0 ] && status=$$step_status; }; \
-	bash ./Scripts/E2EReport.sh --run-dir "$$output_dir/$$run_id" || { step_status=$$?; [ $$status -eq 0 ] && status=$$step_status; }; \
-	$(call OPEN_E2E_REPORT_UNIX,$$output_dir/$$run_id/report.html); \
+	bash ./Scripts/E2EAggregate.sh --output-dir "$$output_dir" "$$output_dir/$$run_id" || { step_status=$$?; [ $$status -eq 0 ] && status=$$step_status; }; \
+	bash ./Scripts/E2EReview.sh --run-dir "$$aggregate_dir" || { step_status=$$?; [ $$status -eq 0 ] && status=$$step_status; }; \
+	bash ./Scripts/E2EReport.sh --run-dir "$$aggregate_dir" || { step_status=$$?; [ $$status -eq 0 ] && status=$$step_status; }; \
+	$(call OPEN_E2E_REPORT_UNIX,$$aggregate_dir/index.html); \
 	exit $$status
 
 .PHONY: help
