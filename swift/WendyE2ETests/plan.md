@@ -304,6 +304,51 @@ Single-point display:
 This makes the aggregate report communicate both absolute runtime and runtime
 variance across targets and attempts.
 
+### Iteration 4: expand tests inline with target and attempt observations
+
+The top-level report should expand test rows inline instead of linking to a
+dedicated per-test page. The placeholder per-test pages should be removed for
+now.
+
+Top-level behavior:
+
+- Render each test as an expandable row, similar to the pre-aggregate report.
+- Keep the collapsed row focused on the aggregate summary:
+  - target outcome badges from iteration 2
+  - duration range from iteration 3
+  - filters and search remain top-level report controls
+- Clicking the test row expands or collapses inline details.
+- Do not generate or link `<suite-key>/<test-key>/index.html` placeholder pages
+  in this iteration.
+
+Expanded content:
+
+- Show a sublist of concrete observations grouped by target.
+- Each observation row represents one `<target-name>/<attempt>` for that test.
+- Attempts should be visually grouped by target.
+- Show the target name only on the first row for a target group; subsequent
+  attempt rows in the same target group should leave the target column blank or
+  use an equivalent visual continuation.
+- Show the attempt number on every observation row.
+
+Observation row fields:
+
+- Target name, only for the first attempt in the target group.
+- Attempt number.
+- Observation status badge: `Passed`, `Failed`, `Skipped`, or `Unknown`.
+- Single-observation duration text.
+- Single-observation duration bar using the existing pre-aggregate behavior:
+  fill width and color are based on that observation's duration.
+
+Status semantics:
+
+- Observation rows do not use `Flaked`; flaking is a target-level aggregate
+  outcome derived from multiple attempts.
+- A concrete attempt can only render as passed, failed, skipped, or unknown.
+
+This makes the aggregate report useful without requiring a separate detailed
+per-test page while preserving the future option to add one later.
+
 ## Open plumbing questions
 
 We still need to decide implementation details:
