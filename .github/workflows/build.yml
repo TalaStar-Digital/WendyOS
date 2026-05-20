@@ -599,6 +599,7 @@ jobs:
       needs.determine-version.outputs.is_release == 'true' &&
       needs.determine-version.outputs.is_prerelease == 'false' &&
       needs.package-linux.result == 'success' &&
+      needs.test-templates.result == 'success' &&
       (needs.integration-tests.result == 'success' || needs.integration-tests.result == 'skipped')
     permissions:
       contents: read
@@ -1280,11 +1281,11 @@ jobs:
   announce:
     name: Announce Release
     runs-on: ubuntu-latest
-    needs: [determine-version, release, publish-gcp, publish-aur, publish-winget]
+    needs: [determine-version, release, publish-linux-repos, publish-aur, publish-winget]
     if: |
       always() &&
       needs.release.result == 'success' &&
-      needs.publish-gcp.result == 'success' &&
+      needs.publish-linux-repos.result == 'success' &&
       needs.publish-aur.result == 'success' &&
       needs.publish-winget.result == 'success' &&
       needs.determine-version.outputs.is_prerelease == 'false'
