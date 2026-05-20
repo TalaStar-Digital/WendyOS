@@ -406,13 +406,18 @@ struct `'wendy device info'` {
     /**
      Update checks depend on the release source being reachable and returning a valid response. If the release source fails, the command reports the update-check failure rather than inventing an update status.
      */
-    @Test(.enabled(if: WendyE2EMachine.cli.os != .windows))
+    @Test
     func `'--check-updates' reports update-source failure`() async throws {
         try await self.scenario.run { cli, agent in
             let agentAddress = agent.machine.address
 
             try await cli.sh(
-                "NO_PROXY=\(agentAddress) HTTPS_PROXY=http://127.0.0.1:1 wendy --json --device \(agentAddress) device info --check-updates"
+                posix: "NO_PROXY=\(agentAddress) HTTPS_PROXY=http://127.0.0.1:1 wendy --json --device \(agentAddress) device info --check-updates",
+                power: """
+                    $env:NO_PROXY = '\(agentAddress)'
+                    $env:HTTPS_PROXY = 'http://127.0.0.1:1'
+                    wendy --json --device \(agentAddress) device info --check-updates
+                    """
             ) { result in
                 let stderr = result.stderr
 
