@@ -304,7 +304,7 @@ Single-point display:
 This makes the aggregate report communicate both absolute runtime and runtime
 variance across targets and attempts.
 
-### Iteration 4: expand tests inline with target and attempt observations
+### Iteration 4: expand tests inline with target and attempt observations — done
 
 The top-level report should expand test rows inline instead of linking to a
 dedicated per-test page. The placeholder per-test pages should be removed for
@@ -348,6 +348,116 @@ Status semantics:
 
 This makes the aggregate report useful without requiring a separate detailed
 per-test page while preserving the future option to add one later.
+
+Completed follow-up pieces:
+
+- Expanded rows show the concrete target name and a separate CLI-to-agent route
+  column using platform icons.
+- Expanded rows link directly to per-observation `recording.sh.txt` and
+  `recording.md` via hover-only Shell and Record buttons.
+- Aggregate `review.md`, suite `review.md`, and test `review.md` are rendered as
+  Markdown in the report when present.
+
+### Iteration 5: generate aggregate AI reviews in two stages
+
+Reintroduce AI review generation for aggregate roots as a two-stage workflow.
+Review generation remains separate from deterministic test execution and report
+rendering.
+
+CLI shape:
+
+```text
+swift-e2e-testing review --run-dir <aggregate-dir> \
+  --suite-review-prompt Support/e2e-review-suite.prompt.md \
+  --report-review-prompt Support/e2e-review-report.prompt.md
+```
+
+Useful options:
+
+```text
+--stage suites|report|all
+--overwrite
+--provider <provider>
+--model <model>
+```
+
+Default stage should be `all`. Prompt paths should be configurable via CLI
+options and should default to files under `Support/`.
+
+Prompt files:
+
+- `Support/e2e-review-suite.prompt.md`
+- `Support/e2e-review-report.prompt.md`
+
+Stage 1: suite-scoped review
+
+- Run one AI agent per suite, in parallel.
+- Keep all context for a suite in one agent session.
+- The suite prompt is responsible for deciding whether to write:
+  - zero or more per-test reviews at `<aggregate>/<suite>/<test>/review.md`
+  - an optional suite review at `<aggregate>/<suite>/review.md`
+- If nothing is noteworthy for a test, no per-test `review.md` should be
+  written.
+- If nothing is noteworthy for the suite as a whole, no suite `review.md`
+  should be written.
+- Inputs should include:
+  - suite source/tests and `// AI:` comments
+  - aggregate test outcome counts for every test in the suite
+  - concrete target/attempt observations for every test in the suite
+  - status, duration, target route, and artifact paths for each observation
+  - relevant snippets or summaries from `recording.md` / `recording.sh.txt`
+    where needed, without recursively scanning copied sandboxes
+  - existing test/suite reviews when `--overwrite` is false
+- The suite prompt should ask for concise, actionable Markdown using the
+  existing convention:
+
+  ```md
+  Status: concern
+
+  # Summary
+
+  ...
+
+  # Action Items
+
+  ...
+  ```
+
+Stage 2: report-level review
+
+- Run one AI agent after suite reviews complete.
+- The report prompt writes `<aggregate>/review.md`.
+- Inputs should include:
+  - aggregate-wide status summary
+  - failed/flaked/skipped target summaries
+  - suite reviews generated in stage 1
+  - per-test reviews generated in stage 1
+  - links or relative paths to relevant suite/test details
+- The report review should highlight the most important results, include action
+  items, and link to details as needed.
+- The report review should run even if no suite/test reviews were generated,
+  because aggregate failures/flakes/skips may still require a top-level summary.
+
+Filesystem constraints:
+
+- Avoid recursive filesystem scans over aggregate roots.
+- Walk only the canonical aggregate depth:
+
+  ```text
+  <aggregate>/<suite>/<test>/<target>/<attempt>/...
+  ```
+
+- Do not scan inside copied `cli/` or `agent/` sandboxes.
+
+Integration:
+
+- Keep `test`, `aggregate`, `review`, and `report` as explicit steps.
+- Once implemented, re-enable aggregate review in shell wrappers, make targets,
+  and CI by composing:
+
+  ```text
+  test → aggregate → review → report
+  ```
 
 ## Open plumbing questions
 
