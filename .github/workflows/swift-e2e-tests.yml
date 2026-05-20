@@ -27,9 +27,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Route jobs are explicit per-device chains rather than one matrix. This keeps
-  # every route visible in the Actions UI while serializing access to each
-  # physical device.
+  # Route jobs are explicit per-device chains rather than one matrix. The first
+  # batch spreads work across the one macOS, one Linux, and one Windows runner,
+  # while each device chain still serializes access to its physical target.
   e2e-macos-jetson-orin-nano:
     name: macOS 26 → Jetson Orin Nano
     uses: ./.github/workflows/swift-e2e-route.yml
@@ -76,24 +76,8 @@ jobs:
       agent_os: wendyOS
       transport: lan
 
-  e2e-macos-raspberry-pi-5:
-    name: macOS 26 → Raspberry Pi 5
-    uses: ./.github/workflows/swift-e2e-route.yml
-    with:
-      tests: ${{ inputs.tests || '' }}
-      target_id: macos-26-to-raspberry-pi-5
-      runner_id: macos-26
-      runs_on: '["self-hosted", "macOS"]'
-      cli_os: macOS
-      device_id: raspberry-pi-5
-      device_address: wendyos-raspberry-pi-5.local
-      agent_os: wendyOS
-      transport: lan
-
   e2e-ubuntu-raspberry-pi-5:
     name: Ubuntu 24.04 → Raspberry Pi 5
-    needs: e2e-macos-raspberry-pi-5
-    if: ${{ always() && !cancelled() }}
     uses: ./.github/workflows/swift-e2e-route.yml
     with:
       tests: ${{ inputs.tests || '' }}
@@ -122,8 +106,40 @@ jobs:
       agent_os: wendyOS
       transport: lan
 
+  e2e-macos-raspberry-pi-5:
+    name: macOS 26 → Raspberry Pi 5
+    needs: e2e-windows-raspberry-pi-5
+    if: ${{ always() && !cancelled() }}
+    uses: ./.github/workflows/swift-e2e-route.yml
+    with:
+      tests: ${{ inputs.tests || '' }}
+      target_id: macos-26-to-raspberry-pi-5
+      runner_id: macos-26
+      runs_on: '["self-hosted", "macOS"]'
+      cli_os: macOS
+      device_id: raspberry-pi-5
+      device_address: wendyos-raspberry-pi-5.local
+      agent_os: wendyOS
+      transport: lan
+
+  e2e-windows-mac-mini:
+    name: Windows 11 → Mac mini
+    uses: ./.github/workflows/swift-e2e-route.yml
+    with:
+      tests: ${{ inputs.tests || '' }}
+      target_id: windows-11-to-mac-mini
+      runner_id: windows-11
+      runs_on: '["self-hosted", "Windows", "X64", "windows-11"]'
+      cli_os: windows
+      device_id: mac-mini
+      device_address: mac-mini.local
+      agent_os: macOS
+      transport: lan
+
   e2e-macos-mac-mini:
     name: macOS 26 → Mac mini
+    needs: e2e-windows-mac-mini
+    if: ${{ always() && !cancelled() }}
     uses: ./.github/workflows/swift-e2e-route.yml
     with:
       tests: ${{ inputs.tests || '' }}
@@ -159,9 +175,10 @@ jobs:
       - e2e-macos-jetson-orin-nano
       - e2e-ubuntu-jetson-orin-nano
       - e2e-windows-jetson-orin-nano
-      - e2e-macos-raspberry-pi-5
       - e2e-ubuntu-raspberry-pi-5
       - e2e-windows-raspberry-pi-5
+      - e2e-macos-raspberry-pi-5
+      - e2e-windows-mac-mini
       - e2e-macos-mac-mini
       - e2e-ubuntu-mac-mini
     runs-on: [self-hosted, linux]
