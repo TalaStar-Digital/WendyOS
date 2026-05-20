@@ -146,7 +146,7 @@ func (s *mcpServer) registerCloudTools(srv *server.MCPServer) {
 			mcpgo.Description("Cloud gRPC endpoint to use when multiple auth sessions exist"),
 		),
 		mcpgo.WithString("broker_url",
-			mcpgo.Description("Tunnel broker host:port (default: cloud :443 endpoint, otherwise <cloud-host>:50052)"),
+			mcpgo.Description("Tunnel broker host:port; omit to use the default derived from cloud_grpc (port 443 when cloud_grpc ends in :443, otherwise port 50052)"),
 		),
 		mcpgo.WithString("build_type",
 			mcpgo.Description("Build type: docker, swift, or python"),
