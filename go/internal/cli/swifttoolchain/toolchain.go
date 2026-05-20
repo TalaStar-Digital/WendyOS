@@ -62,8 +62,9 @@ func EnsureSwiftVersion(ctx context.Context, stdout, stderr io.Writer) error {
 	if err := checkCmd.Run(); err == nil {
 		return nil
 	} else if errors.Is(err, exec.ErrNotFound) {
-		if err := tryBrewInstallSwiftly(ctx, stdout, stderr); err != nil {
-			return err
+		brewPath, brewErr := tryBrewInstallSwiftly(ctx, stdout, stderr)
+		if brewErr != nil {
+			return brewErr
 		}
 		checkCmd2 := execCommandContext(ctx, "swiftly", "which", DefaultVersion)
 		checkCmd2.Stdout = io.Discard
@@ -72,12 +73,14 @@ func EnsureSwiftVersion(ctx context.Context, stdout, stderr io.Writer) error {
 			return nil
 		} else if errors.Is(err, exec.ErrNotFound) {
 			return fmt.Errorf("swiftly was installed via Homebrew but is not yet in your PATH; "+
-				"open a new terminal or run: eval $(%s shellenv)", findBrewPath())
+				"open a new terminal or run: eval $(%s shellenv)", brewPath)
 		}
-		// swiftly is available but this version is not installed yet — fall through to install
+		// swiftly binary is now available but this version is not installed — fall through to install
 	} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
+	// any other non-nil error (e.g. swiftly which exits non-zero) falls through to swiftly install,
+	// matching the original pre-brew-support behaviour
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -98,18 +101,9 @@ func EnsureSwiftVersion(ctx context.Context, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func findBrewPath() string {
-	for _, p := range macOSBrewPaths {
-		if _, err := statFile(p); err == nil {
-			return p
-		}
-	}
-	return macOSBrewPaths[0]
-}
-
-func tryBrewInstallSwiftly(ctx context.Context, stdout, stderr io.Writer) error {
+func tryBrewInstallSwiftly(ctx context.Context, stdout, stderr io.Writer) (string, error) {
 	if currentOS != "darwin" {
-		return fmt.Errorf("swiftly is required but not installed; see https://swiftlang.github.io/swiftly for installation instructions")
+		return "", fmt.Errorf("swiftly is required but not installed; see https://swiftlang.github.io/swiftly for installation instructions")
 	}
 	brewPath := ""
 	for _, p := range macOSBrewPaths {
@@ -119,14 +113,14 @@ func tryBrewInstallSwiftly(ctx context.Context, stdout, stderr io.Writer) error 
 		}
 	}
 	if brewPath == "" {
-		return fmt.Errorf("swiftly is required but not installed; see https://swiftlang.github.io/swiftly for installation instructions")
+		return "", fmt.Errorf("swiftly is required but not installed; see https://swiftlang.github.io/swiftly for installation instructions")
 	}
 	confirmed, err := confirmFunc("swiftly is not installed. Install it now with Homebrew? (brew install swiftly)")
 	if err != nil {
-		return fmt.Errorf("swiftly is required but not installed (prompt failed: %w); see https://swiftlang.github.io/swiftly for installation instructions", err)
+		return "", fmt.Errorf("swiftly is required but not installed (prompt failed: %w); see https://swiftlang.github.io/swiftly for installation instructions", err)
 	}
 	if !confirmed {
-		return fmt.Errorf("swiftly is required but not installed; run: brew install swiftly")
+		return "", fmt.Errorf("swiftly is required but not installed; run: brew install swiftly")
 	}
 	fmt.Fprintln(stdout, "Installing swiftly via Homebrew...")
 	flushWriter(stdout)
@@ -136,11 +130,11 @@ func tryBrewInstallSwiftly(ctx context.Context, stdout, stderr io.Writer) error 
 	if err := cmd.Run(); err != nil {
 		flushWriter(stdout)
 		flushWriter(stderr)
-		return fmt.Errorf("brew install swiftly: %w", err)
+		return "", fmt.Errorf("brew install swiftly: %w", err)
 	}
 	flushWriter(stdout)
 	flushWriter(stderr)
-	return nil
+	return brewPath, nil
 }
 
 func SwiftCommandContext(ctx context.Context, args ...string) *exec.Cmd {
