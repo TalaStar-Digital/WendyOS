@@ -34,14 +34,21 @@ struct `'wendy completion fish'` {
      Writes a valid fish completion script to stdout. The command emits no
      stderr, exits successfully, and does not read or write shell rc files.
      */
-    @Test(.enabled(if: WendyE2EMachine.cli.os != .windows))
+    @Test
     func `prints the fish completion script`() async throws {
         try await self.scenario.run { cli, _ in
             try await cli.sh(
-                """
-                wendy completion fish
-                test ! -e "$HOME/.config/fish/config.fish"
-                """
+                posix: """
+                    wendy completion fish
+                    test ! -e "$HOME/.config/fish/config.fish"
+                    """,
+                power: """
+                    wendy completion fish
+                    $configPath = Join-Path $env:HOME '.config/fish/config.fish'
+                    if (Test-Path -LiteralPath $configPath) {
+                        throw 'fish config should not exist'
+                    }
+                    """
             ) { result in
                 let stdout = result.stdout
 
