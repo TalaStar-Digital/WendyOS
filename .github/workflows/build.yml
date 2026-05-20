@@ -1288,14 +1288,16 @@ jobs:
       needs.publish-aur.result == 'success' &&
       needs.publish-winget.result == 'success' &&
       needs.determine-version.outputs.is_prerelease == 'false'
+    permissions:
+      contents: read
     steps:
       - name: Notify Discord
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.determine-version.outputs.tag_name }}
+          REPO: ${{ github.repository }}
         run: |
-          VERSION="${{ needs.determine-version.outputs.tag_name }}"
-          REPO="${{ github.repository }}"
           URL="https://github.com/${REPO}/releases/tag/${VERSION}"
 
           # Fetch release body via gh CLI (safe from shell injection)
@@ -1335,7 +1337,10 @@ jobs:
 
           ESCAPED_DESC=$(echo "$FULL_DESCRIPTION" | jq -Rs .)
 
-          cat > /tmp/discord_payload.json << PAYLOAD_EOF
+          PAYLOAD_FILE=$(mktemp /tmp/discord_payload.XXXXXX.json)
+          trap 'rm -f "$PAYLOAD_FILE"' EXIT
+
+          cat > "$PAYLOAD_FILE" << PAYLOAD_EOF
           {
             "content": "🚀 **New CLI release**: **${VERSION}**",
             "embeds": [
@@ -1351,9 +1356,14 @@ jobs:
           PAYLOAD_EOF
 
           if [ -n "$DISCORD_WEBHOOK_URL" ]; then
-            curl -sS -X POST -H "Content-Type: application/json" \
-              -d @/tmp/discord_payload.json \
-              "$DISCORD_WEBHOOK_URL" && echo "Discord notification sent" || echo "Discord notification failed"
+            if curl -sS -X POST -H "Content-Type: application/json" \
+                -d @"$PAYLOAD_FILE" \
+                "$DISCORD_WEBHOOK_URL"; then
+              echo "Discord notification sent"
+            else
+              echo "Discord notification failed" >&2
+              exit 1
+            fi
           else
             echo "DISCORD_WEBHOOK_URL not configured, skipping notification"
           fi
