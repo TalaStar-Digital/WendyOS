@@ -876,7 +876,7 @@
     }
 
     .ai-review-test {
-      margin: 12px 0 0;
+      margin: 12px 0 10px;
     }
 
     .ai-review-markdown {
@@ -1294,7 +1294,6 @@
       function defaultFilter() {
         if (tests.some(test => testStatusSet(test).has('fail'))) return 'fail';
         if (tests.some(test => testStatusSet(test).has('flaked'))) return 'flaked';
-        if (tests.some(test => test.dataset.hasAiReview === 'true')) return 'ai';
         return 'all';
       }
 
