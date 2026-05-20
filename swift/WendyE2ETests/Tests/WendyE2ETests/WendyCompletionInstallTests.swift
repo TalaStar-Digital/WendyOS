@@ -129,15 +129,24 @@ struct `'wendy completion install'` {
      `--stdout` emits the completion script to stdout and performs no
      installation. Stderr remains empty on success.
      */
-    @Test(.enabled(if: WendyE2EMachine.cli.os != .windows))
+    @Test
     func `prints the script to stdout when requested`() async throws {
         try await self.scenario.run { cli, _ in
             try await cli.sh(
-                """
-                wendy completion install --stdout --shell zsh
-                test ! -e "$HOME/.zshrc"
-                test ! -d "$HOME/.zsh"
-                """
+                posix: """
+                    wendy completion install --stdout --shell zsh
+                    test ! -e "$HOME/.zshrc"
+                    test ! -d "$HOME/.zsh"
+                    """,
+                power: """
+                    wendy completion install --stdout --shell zsh
+                    if (Test-Path -LiteralPath (Join-Path $env:HOME '.zshrc')) {
+                        throw '.zshrc should not exist'
+                    }
+                    if (Test-Path -LiteralPath (Join-Path $env:HOME '.zsh')) {
+                        throw '.zsh should not exist'
+                    }
+                    """
             ) { result in
 
                 #expect(result.status.isSuccess)
