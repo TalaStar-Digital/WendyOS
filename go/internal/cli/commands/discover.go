@@ -879,7 +879,8 @@ func runClipboardCommand(cmd *exec.Cmd, timeout time.Duration) error {
 			_ = cmd.Process.Kill()
 		}
 		select {
-		case <-done:
+		case err := <-done:
+			return err
 		case <-time.After(cmd.WaitDelay + 100*time.Millisecond):
 		}
 		return fmt.Errorf("timed out after %s", timeout)
