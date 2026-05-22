@@ -146,7 +146,7 @@ func (f *CloudFlusher) dial(ctx context.Context, host, certPEM, chainPEM, keyPEM
 	}
 
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      caPool,
 	}

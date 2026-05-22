@@ -133,8 +133,8 @@ type TelemetryBufferConfig struct {
 
 func (c *TelemetryBufferConfig) applyDefaults() {
 	if c.Dir == "" {
-		if d := os.Getenv("WENDY_TELEMETRY_DIR"); d != "" {
-			c.Dir = d
+		if d := os.Getenv("WENDY_TELEMETRY_DIR"); d != "" && filepath.IsAbs(d) {
+			c.Dir = filepath.Clean(d)
 		} else {
 			c.Dir = defaultTelemetryDir
 		}
@@ -327,17 +327,12 @@ func (b *TelemetryBuffer) writeFrame(sig SignalType, msg proto.Message) {
 		}
 	}
 
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(data)))
-	if _, err := w.f.Write(hdr[:]); err != nil {
-		b.logger.Warn("telemetry buffer: write header failed", zap.Error(err))
-		// Force rotation so the orphan header is isolated in a sealed segment.
-		b.rotateWriter(sig) //nolint:errcheck
-		return
-	}
-	if _, err := w.f.Write(data); err != nil {
-		b.logger.Warn("telemetry buffer: write payload failed", zap.Error(err))
-		// Force rotation so the partial frame is isolated in a sealed segment.
+	// Write header and payload in one syscall to prevent torn frames on crash.
+	frame := make([]byte, 4+len(data))
+	binary.BigEndian.PutUint32(frame[:4], uint32(len(data)))
+	copy(frame[4:], data)
+	if _, err := w.f.Write(frame); err != nil {
+		b.logger.Warn("telemetry buffer: write frame failed", zap.Error(err))
 		b.rotateWriter(sig) //nolint:errcheck
 		return
 	}
