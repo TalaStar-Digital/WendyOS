@@ -568,7 +568,7 @@ jobs:
             -d ExePath="wendy-cli-windows-${{ matrix.goarch }}/wendy.exe" `
             -arch $MSI_ARCH `
             -o "wendy-cli-windows-${{ matrix.goarch }}-${VERSION}.msi" `
-            installer/windows/wendy.wxs
+            go/installer/windows/wendy.wxs
 
       - name: Sign MSI
         uses: azure/trusted-signing-action@v2.0.0
