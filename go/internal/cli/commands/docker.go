@@ -118,6 +118,24 @@ func validateDockerfileName(name string) error {
 	return nil
 }
 
+// validComposeDockerfileNameRe matches the broader naming convention allowed by
+// Docker Compose (e.g. "web.Dockerfile", "Containerfile", "Dockerfile.prod").
+// The allowlist rejects whitespace, shell metacharacters, path separators, and
+// names starting with "-" that could be misread as CLI flags.
+var validComposeDockerfileNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
+// validateComposeDockerfileName validates a dockerfile name sourced from a
+// Compose service config. It applies a broader allowlist than validateDockerfileName
+// to accommodate names like "web.Dockerfile" and "Containerfile", while still
+// rejecting dangerous characters (whitespace, shell metacharacters, path separators).
+func validateComposeDockerfileName(name string) error {
+	base := filepath.Base(name)
+	if !validComposeDockerfileNameRe.MatchString(base) {
+		return fmt.Errorf("invalid compose dockerfile name %q: must start with a letter or digit and contain only letters, digits, dots, underscores, or hyphens", base)
+	}
+	return nil
+}
+
 // confinedDockerfilePath resolves dockerfile relative to base, uses
 // filepath.EvalSymlinks on both the base and the joined path to neutralise
 // symlink-based escapes, then verifies (via filepath.Rel) that the resolved
