@@ -91,13 +91,6 @@ extension ReviewCommand {
 
         let probeAgent = try makeAgent(provider: provider, model: model)
         guard probeAgent.isConfigured else {
-            try writeReviewMetadata(
-                runURL: runURL,
-                status: "skipped",
-                stage: stage,
-                context: context,
-                includeOutputs: false
-            )
             print("==> Swift E2E run AI review skipped: no agent API key configured")
             print("    Mode:           \(reviewMode.name)")
             if let range = reviewMode.diffRange {
@@ -187,14 +180,6 @@ extension ReviewCommand {
             try enforceRunReportReviewContract(in: runURL)
             print("==> Run report AI review complete")
         }
-
-        try writeReviewMetadata(
-            runURL: runURL,
-            status: "completed",
-            stage: stage,
-            context: context,
-            includeOutputs: true
-        )
     }
 }
 
@@ -268,23 +253,6 @@ private struct ReviewContext {
     var mode: ReviewMode
     var changedFilesURL: URL?
     var diffstatURL: URL?
-}
-
-private struct ReviewMetadata: Encodable {
-    var kind: String
-    var version: Int
-    var generatedAt: String
-    var status: String
-    var stage: String
-    var mode: String
-    var diff: ReviewDiffMetadata?
-    var outputs: [String]
-}
-
-private struct ReviewDiffMetadata: Encodable {
-    var range: String
-    var nameOnlyPath: String
-    var statPath: String
 }
 
 enum RunReviewStage: String, ExpressibleByArgument {
@@ -539,73 +507,15 @@ private func requireExecutable(_ name: String, provider: String) throws {
 }
 
 private func isReviewRunDirectory(_ runURL: URL) throws -> Bool {
-    let aggregateURL = runURL.appendingPathComponent("aggregate.json")
-    guard FileManager.default.fileExists(atPath: aggregateURL.path) else { return false }
-    let data = try Data(contentsOf: aggregateURL)
-    guard
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-        object["kind"] as? String == "swift-e2e-aggregate"
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: runURL.path, isDirectory: &isDirectory),
+        isDirectory.boolValue
     else {
         return false
     }
-    return true
-}
-
-private func writeReviewMetadata(
-    runURL: URL,
-    status: String,
-    stage: RunReviewStage,
-    context: ReviewContext,
-    includeOutputs: Bool
-) throws {
-    let metadata = ReviewMetadata(
-        kind: "swift-e2e-review",
-        version: 1,
-        generatedAt: ISO8601DateFormatter().string(from: Date()),
-        status: status,
-        stage: stage.rawValue,
-        mode: context.mode.name,
-        diff: reviewDiffMetadata(context: context, runURL: runURL),
-        outputs: includeOutputs ? try reviewOutputPaths(in: runURL) : []
+    return !FileManager.default.fileExists(
+        atPath: runURL.appendingPathComponent("attempt.json").path
     )
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let data = try encoder.encode(metadata)
-    try data.write(to: runURL.appendingPathComponent("review.json"), options: .atomic)
-}
-
-private func reviewDiffMetadata(context: ReviewContext, runURL: URL) -> ReviewDiffMetadata? {
-    guard
-        let range = context.mode.diffRange,
-        let changedFilesURL = context.changedFilesURL,
-        let diffstatURL = context.diffstatURL
-    else {
-        return nil
-    }
-    return ReviewDiffMetadata(
-        range: range,
-        nameOnlyPath: reviewRelativePath(changedFilesURL, base: runURL),
-        statPath: reviewRelativePath(diffstatURL, base: runURL)
-    )
-}
-
-private func reviewOutputPaths(in runURL: URL) throws -> [String] {
-    guard let enumerator = FileManager.default.enumerator(
-        at: runURL,
-        includingPropertiesForKeys: [.isRegularFileKey]
-    ) else {
-        return []
-    }
-
-    var paths: [String] = []
-    for case let url as URL in enumerator {
-        let name = url.lastPathComponent
-        guard name == "review.summary.md" || name == "review.details.md" else { continue }
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey])
-        guard values.isRegularFile == true else { continue }
-        paths.append(reviewRelativePath(url, base: runURL))
-    }
-    return paths.sorted()
 }
 
 private func runGitDiffContext(

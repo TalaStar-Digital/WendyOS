@@ -59,10 +59,6 @@ struct ReportCommand: ParsableCommand {
             aiReviews: aiReviews,
             outputURL: outputURL
         )
-        try writeReportMetadata(
-            runURL: runURL,
-            outputURL: outputURL
-        )
     }
 }
 
@@ -168,13 +164,6 @@ private struct ReportTestObservation {
     var duration: ReportTestDuration? {
         status.duration
     }
-}
-
-private struct ReportMetadata: Encodable {
-    var kind: String
-    var version: Int
-    var generatedAt: String
-    var htmlPath: String
 }
 
 private enum ReportTestStatus {
@@ -505,35 +494,15 @@ private func fenced(label: String, in text: String) -> String {
 }
 
 private func isRunDirectory(_ runURL: URL) throws -> Bool {
-    let aggregateURL = runURL.appendingPathComponent("aggregate.json")
-    guard FileManager.default.fileExists(atPath: aggregateURL.path) else {
-        return false
-    }
-
-    let data = try Data(contentsOf: aggregateURL)
-    guard
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-        object["kind"] as? String == "swift-e2e-aggregate"
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: runURL.path, isDirectory: &isDirectory),
+        isDirectory.boolValue
     else {
         return false
     }
-    return true
-}
-
-private func writeReportMetadata(
-    runURL: URL,
-    outputURL: URL
-) throws {
-    let metadata = ReportMetadata(
-        kind: "swift-e2e-report",
-        version: 1,
-        generatedAt: ISO8601DateFormatter().string(from: Date()),
-        htmlPath: relativePath(from: runURL, to: outputURL)
+    return !FileManager.default.fileExists(
+        atPath: runURL.appendingPathComponent("attempt.json").path
     )
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let data = try encoder.encode(metadata)
-    try data.write(to: runURL.appendingPathComponent("report.json"), options: .atomic)
 }
 
 private func parseXUnitResults(at resultURL: URL) throws -> [TestResultKey: ReportTestStatus] {

@@ -72,20 +72,12 @@ function Test-AttemptDirectory([System.IO.DirectoryInfo]$Directory) {
     if (-not $Directory.Name.StartsWith("$RunPrefix.")) { return $false }
     if ($Directory.Name -notmatch '\.\d{4}$') { return $false }
     $attemptPath = Join-Path $Directory.FullName 'attempt.json'
-    if (-not (Test-Path -LiteralPath $attemptPath -PathType Leaf)) { return $false }
-    $aggregatePath = Join-Path $Directory.FullName 'aggregate.json'
-    return -not (Test-Path -LiteralPath $aggregatePath -PathType Leaf)
+    return Test-Path -LiteralPath $attemptPath -PathType Leaf
 }
 
 function Test-RunDirectory([System.IO.DirectoryInfo]$Directory) {
-    $aggregatePath = Join-Path $Directory.FullName 'aggregate.json'
-    if (-not (Test-Path -LiteralPath $aggregatePath -PathType Leaf)) { return $false }
-    try {
-        $info = Get-Content -Raw -LiteralPath $aggregatePath | ConvertFrom-Json
-        return $info.kind -eq 'swift-e2e-aggregate'
-    } catch {
-        return $false
-    }
+    $attemptPath = Join-Path $Directory.FullName 'attempt.json'
+    return -not (Test-Path -LiteralPath $attemptPath -PathType Leaf)
 }
 
 function Get-RunDirectoryForAttempt([string]$RunID) {
