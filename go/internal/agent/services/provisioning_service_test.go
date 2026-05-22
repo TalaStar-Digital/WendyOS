@@ -239,11 +239,12 @@ func TestStartProvisioning_OnProvisionedCallback(t *testing.T) {
 	svc, tmpDir := newTestProvisioningService(t)
 	defer os.RemoveAll(tmpDir)
 
-	var callbackCert, callbackChain, callbackKey string
-	svc.OnProvisioned = func(certPEM, chainPEM, keyPEM string) {
+	var callbackCert, callbackChain string
+	var callbackKey []byte
+	svc.OnProvisioned = func(certPEM, chainPEM string, keyData []byte) {
 		callbackCert = certPEM
 		callbackChain = chainPEM
-		callbackKey = keyPEM
+		callbackKey = keyData
 	}
 
 	_, err := svc.StartProvisioning(context.Background(), &agentpb.StartProvisioningRequest{
@@ -261,7 +262,7 @@ func TestStartProvisioning_OnProvisionedCallback(t *testing.T) {
 	if callbackChain != "fake-chain-pem" {
 		t.Errorf("callback chainPEM = %q; want fake-chain-pem", callbackChain)
 	}
-	if callbackKey == "" {
-		t.Error("callback keyPEM should not be empty")
+	if len(callbackKey) == 0 {
+		t.Error("callback keyData should not be empty")
 	}
 }

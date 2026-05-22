@@ -52,8 +52,9 @@ func certificateServiceAddr(cloudHost string) string {
 }
 
 // OnProvisionedFunc is called when provisioning completes successfully.
-// It receives the provisioned certificate PEM, chain PEM, and private key PEM.
-type OnProvisionedFunc func(certPEM, chainPEM, keyPEM string)
+// keyData is the raw PEM bytes of the private key; callers should zero it
+// when done. certPEM and chainPEM are plain strings (public material).
+type OnProvisionedFunc func(certPEM, chainPEM string, keyData []byte)
 
 // ProvisioningService implements agentpb.WendyProvisioningServiceServer.
 type ProvisioningService struct {
@@ -146,7 +147,7 @@ func (s *ProvisioningService) StartProvisioning(ctx context.Context, req *agentp
 
 	// Generate CSR using org and asset as common name.
 	commonName := fmt.Sprintf("sh/wendy/%d/%d", req.GetOrganizationId(), req.GetAssetId())
-	csrPEM, err := certs.GenerateCSR(string(keyPEM), commonName)
+	csrPEM, err := certs.GenerateCSR(keyPEM, commonName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to generate CSR: %v", err)
 	}
@@ -193,7 +194,7 @@ func (s *ProvisioningService) StartProvisioning(ctx context.Context, req *agentp
 		CloudHost: req.GetCloudHost(),
 		OrgID:     req.GetOrganizationId(),
 		AssetID:   req.GetAssetId(),
-		KeyPEM:    string(keyPEM),
+		KeyPEM:    string(keyPEM), // string conversion is unavoidable for JSON marshaling
 		CertPEM:   certPEM,
 		ChainPEM:  chainPEM,
 	}
@@ -212,6 +213,7 @@ func (s *ProvisioningService) StartProvisioning(ctx context.Context, req *agentp
 	s.chainPEM = chainPEM
 
 	// Write individual PEM files so the container registry can mount and use them.
+	// string(keyPEM) creates a temporary copy; filesystem write cannot be avoided.
 	if err := s.writePEMFiles(string(keyPEM), certPEM, chainPEM); err != nil {
 		s.logger.Error("Failed to write PEM files for registry", zap.Error(err))
 		// Non-fatal: provisioning.json is the source of truth.
@@ -226,7 +228,7 @@ func (s *ProvisioningService) StartProvisioning(ctx context.Context, req *agentp
 	// the mutex here, to avoid interfering with any deferred Unlock.
 	cb := s.OnProvisioned
 	if cb != nil {
-		cb(certPEM, chainPEM, string(keyPEM))
+		cb(certPEM, chainPEM, keyPEM)
 	}
 
 	return &agentpb.StartProvisioningResponse{}, nil

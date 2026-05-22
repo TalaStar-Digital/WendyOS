@@ -1,10 +1,13 @@
 package services
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"math"
 	"os"
@@ -133,7 +136,7 @@ const (
 
 // TelemetryBufferConfig configures TelemetryBuffer storage limits.
 type TelemetryBufferConfig struct {
-	Dir           string // defaults to $WENDY_TELEMETRY_DIR or /var/lib/wendy-agent/telemetry
+	Dir           string // defaults to /var/lib/wendy-agent/telemetry
 	MaxTotalBytes int64  // defaults to 100 MB
 	SegmentBytes  int64  // defaults to 4 MB
 }
@@ -152,7 +155,7 @@ func (c *TelemetryBufferConfig) applyDefaults() {
 
 // flushCursor is the in-memory flush position for a single signal type.
 // It is NOT written to disk directly; the on-disk format is cursorState,
-// which adds a CRC32 integrity field. See SaveCursor/LoadCursor.
+// which adds an HMAC-SHA256 integrity field. See SaveCursor/LoadCursor.
 type flushCursor struct {
 	File   string `json:"file"`
 	Offset int64  `json:"offset"`
@@ -166,6 +169,10 @@ type segWriter struct {
 
 // TelemetryBuffer persists OTel telemetry to rotating segment files and
 // fans out to an in-memory TelemetryBroadcaster.
+//
+// Segment files are protected at the OS level: the storage directory is mode
+// 0700 and individual files are mode 0600. cursor.json integrity is enforced
+// by HMAC-SHA256 using a device-stable key stored in cursor.key (mode 0400).
 type TelemetryBuffer struct {
 	cfg         TelemetryBufferConfig
 	broadcaster *TelemetryBroadcaster
@@ -173,6 +180,7 @@ type TelemetryBuffer struct {
 	mu          sync.Mutex
 	cursorMu    sync.Mutex // protects cursor.json read-modify-write
 	writers     map[SignalType]*segWriter
+	hmacKey     []byte // 32-byte HMAC key from cursor.key; nil disables cursor persistence
 }
 
 // NewTelemetryBuffer creates a TelemetryBuffer, creating the storage directory
@@ -207,6 +215,9 @@ func NewTelemetryBuffer(cfg TelemetryBufferConfig, broadcaster *TelemetryBroadca
 		logger.Warn("telemetry buffer: cannot create dir, disk writes disabled", zap.Error(err))
 		return b, nil
 	}
+	// Enforce permissions on pre-existing directories: MkdirAll does not fix
+	// the mode if the directory already exists.
+	_ = os.Chmod(cfg.Dir, 0700)
 
 	// Re-validate after MkdirAll in case the directory itself was created as a symlink.
 	if strings.HasPrefix(cfg.Dir+"/", "/var/lib/wendy-agent/") {
@@ -218,6 +229,8 @@ func NewTelemetryBuffer(cfg TelemetryBufferConfig, broadcaster *TelemetryBroadca
 		}
 		b.cfg.Dir = resolved
 	}
+
+	b.hmacKey = loadOrGenerateCursorKey(b.cfg.Dir, logger)
 
 	b.evictIfNeeded()
 
@@ -407,25 +420,51 @@ const cursorFile = "cursor.json"
 type cursorMap map[SignalType]flushCursor
 
 // cursorState is the on-disk JSON format for cursor.json. It wraps a
-// cursorMap with a CRC32 integrity field so that tampering (rewinding or
-// advancing the upload position) is detected on load. The checksum covers
-// the JSON-encoded Cursors field; a mismatch causes LoadCursor to reset.
+// cursorMap with an HMAC-SHA256 integrity field so that tampering (rewinding
+// or advancing the upload position) is detected on load. The MAC covers the
+// JSON-encoded Cursors field; a mismatch causes LoadCursor to reset.
+// The HMAC key is stored separately in cursor.key.
 type cursorState struct {
 	Cursors cursorMap `json:"cursors"`
-	CRC32   uint32    `json:"crc32"`
+	HMAC    string    `json:"hmac"`
 }
 
-func cursorStateCRC(m cursorMap) (uint32, error) {
+func cursorStateHMAC(key []byte, m cursorMap) (string, error) {
 	payload, err := json.Marshal(m)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
-	return crc32.ChecksumIEEE(payload), nil
+	mac := hmac.New(sha256.New, key)
+	mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil)), nil
+}
+
+// loadOrGenerateCursorKey loads or creates the 32-byte HMAC key used to
+// authenticate cursor.json. Returns nil (and logs a warning) if the key
+// cannot be read or generated.
+func loadOrGenerateCursorKey(dir string, logger *zap.Logger) []byte {
+	keyPath := filepath.Join(dir, "cursor.key")
+	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 {
+		return data
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		logger.Warn("telemetry buffer: cannot generate cursor key, cursor integrity disabled", zap.Error(err))
+		return nil
+	}
+	if err := os.WriteFile(keyPath, key, 0400); err != nil {
+		logger.Warn("telemetry buffer: cannot persist cursor key, cursor integrity disabled", zap.Error(err))
+		return nil
+	}
+	return key
 }
 
 // LoadCursor returns the persisted flush cursor for sig, or a zero cursor.
 func (b *TelemetryBuffer) LoadCursor(sig SignalType) flushCursor {
 	if b == nil {
+		return flushCursor{}
+	}
+	if b.hmacKey == nil {
 		return flushCursor{}
 	}
 	b.cursorMu.Lock()
@@ -439,9 +478,9 @@ func (b *TelemetryBuffer) LoadCursor(sig SignalType) flushCursor {
 		b.logger.Warn("telemetry buffer: corrupt cursor.json, resetting")
 		return flushCursor{}
 	}
-	want, cerr := cursorStateCRC(state.Cursors)
-	if cerr != nil || want != state.CRC32 {
-		b.logger.Warn("telemetry buffer: cursor.json checksum mismatch, resetting")
+	want, cerr := cursorStateHMAC(b.hmacKey, state.Cursors)
+	if cerr != nil || want != state.HMAC {
+		b.logger.Warn("telemetry buffer: cursor.json HMAC mismatch, resetting")
 		return flushCursor{}
 	}
 	return state.Cursors[sig]
@@ -452,6 +491,9 @@ func (b *TelemetryBuffer) SaveCursor(sig SignalType, cursor flushCursor) error {
 	if b == nil {
 		return nil
 	}
+	if b.hmacKey == nil {
+		return nil
+	}
 	b.cursorMu.Lock()
 	defer b.cursorMu.Unlock()
 	path := filepath.Join(b.cfg.Dir, cursorFile)
@@ -459,10 +501,10 @@ func (b *TelemetryBuffer) SaveCursor(sig SignalType, cursor flushCursor) error {
 	if data, err := os.ReadFile(path); err == nil {
 		var state cursorState
 		if jerr := json.Unmarshal(data, &state); jerr == nil && state.Cursors != nil {
-			if want, cerr := cursorStateCRC(state.Cursors); cerr == nil && want == state.CRC32 {
+			if want, cerr := cursorStateHMAC(b.hmacKey, state.Cursors); cerr == nil && want == state.HMAC {
 				m = state.Cursors
 			} else {
-				b.logger.Warn("telemetry buffer: cursor.json checksum mismatch on save, resetting")
+				b.logger.Warn("telemetry buffer: cursor.json HMAC mismatch on save, resetting")
 			}
 		} else {
 			b.logger.Warn("telemetry buffer: corrupt cursor.json on save, resetting")
@@ -472,11 +514,11 @@ func (b *TelemetryBuffer) SaveCursor(sig SignalType, cursor flushCursor) error {
 		m = make(cursorMap)
 	}
 	m[sig] = cursor
-	checksum, err := cursorStateCRC(m)
+	mac, err := cursorStateHMAC(b.hmacKey, m)
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(cursorState{Cursors: m, CRC32: checksum})
+	data, err := json.Marshal(cursorState{Cursors: m, HMAC: mac})
 	if err != nil {
 		return err
 	}

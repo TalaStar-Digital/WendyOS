@@ -205,7 +205,7 @@ func performLogin(ctx context.Context, cloudDashboard, cloudGRPC string) error {
 	if err != nil {
 		return fmt.Errorf("reading enrollment token identity: %w", err)
 	}
-	csrPEM, err := certs.GenerateCSR(privateKeyPEM, commonName)
+	csrPEM, err := certs.GenerateCSR([]byte(privateKeyPEM), commonName)
 	if err != nil {
 		return fmt.Errorf("generating CSR: %w", err)
 	}
@@ -345,7 +345,7 @@ func performLocalLogin(ctx context.Context, cloudGRPC, apiKey string, orgID int3
 	if err != nil {
 		return fmt.Errorf("generating key pair: %w", err)
 	}
-	csrPEM, err := certs.GenerateCSR(privateKeyPEM, deviceID)
+	csrPEM, err := certs.GenerateCSR([]byte(privateKeyPEM), deviceID)
 	if err != nil {
 		return fmt.Errorf("generating CSR: %w", err)
 	}
@@ -497,18 +497,13 @@ func refreshCertsForAuth(ctx context.Context, auth *config.AuthConfig) error {
 
 	existingCert := auth.Certificates[0]
 
-	cn, err := certCommonName(existingCert.PemCertificate)
-	if err != nil {
-		return fmt.Errorf("reading existing cert CN: %w", err)
-	}
-
 	// Generate new key pair.
 	newKeyPEM, err := certs.GenerateKeyPair()
 	if err != nil {
 		return fmt.Errorf("generating key pair: %w", err)
 	}
 
-	csrPEM, err := certs.GenerateCSR(newKeyPEM, cn)
+	csrPEM, err := certs.GenerateCSR([]byte(newKeyPEM), "wendy-cli-user")
 	if err != nil {
 		return fmt.Errorf("generating CSR: %w", err)
 	}

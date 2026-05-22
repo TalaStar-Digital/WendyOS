@@ -493,7 +493,10 @@ func main() {
 		}()
 	}
 
-	provisioningSvc.OnProvisioned = func(certPEM, chainPEM, keyPEM string) {
+	// Set up the provisioning callback to start the mTLS server, shut down
+	// the plaintext server, and switch the registry to HTTPS.
+	provisioningSvc.OnProvisioned = func(certPEM, chainPEM string, keyData []byte) {
+		keyPEM := string(keyData) // convert for TLS APIs; keyData is zeroed by the caller after return
 		startMTLSServer(certPEM, chainPEM, keyPEM)
 		startTunnelBroker()
 		configpartition.UpdateAvahiForProvisioning(logger, mtlsPortNum)
