@@ -77,6 +77,11 @@ var piiPatterns = regexp.MustCompile(
 		`|a\d+="[^"]*"` +
 		// OOM/audit argv arrays (e.g. argv[0]=/usr/bin/nginx)
 		`|argv\[\d+\]=[^\s,]+` +
+		// Kernel audit UID/GID/PID fields (e.g. uid=1000 auid=1000 gid=100)
+		// These are directly identifying in multi-user systems (GDPR Art.5).
+		`|(?:a?uid|a?gid|pid)=\d+` +
+		// WiFi SSID names (e.g. "SSID: MyNetwork" — can be personally identifying)
+		`|SSID:\s*(?:"[^"]*"|\S+)` +
 		// Bluetooth device address (e.g. "bdaddr 00:11:22:33:44:55")
 		`|bdaddr\s+(?:[0-9a-f]{2}:){5}[0-9a-f]{2}` +
 		// Network interface names (e.g. "eth0", "wlan0", "enp3s0", "docker0").
@@ -118,9 +123,11 @@ var csiRemnantPattern = regexp.MustCompile(`\[[0-9;?!<>=]*[A-Za-z]|\]\d+;[^\x00-
 // PII redaction is enabled by default. To disable, set WENDY_DMESG_REDACT=false
 // AND create /etc/wendy/dmesg-pii-allowed on the host filesystem.
 //
-// NOTE: All kernel severity levels are intentionally mapped into the OTel
-// debug/trace band. KERN_EMERG/ALERT/CRIT additionally emit a zap.Warn so
-// they are visible in the agent's own log stream. See kernelLevelToOTEL.
+// Severity mapping: KERN_DEBUG/INFO/NOTICE/WARNING/ERR map to OTel TRACE–DEBUG3
+// (below INFO) so routine dmesg output does not pollute default INFO+ views.
+// KERN_CRIT→WARN, KERN_ALERT→ERROR, KERN_EMERG→FATAL so critical kernel events
+// remain visible in SIEM/alerting pipelines (SOC2-CC7, NIST-AU-2). These levels
+// additionally emit a zap.Warn to the agent's own log stream. See kernelLevelToOTEL.
 func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *TelemetryBroadcaster) {
 	// Require a file-based DPIA confirmation. Unlike an env var, a file:
 	//   - Cannot be satisfied by copying an env block in a container spec
@@ -150,7 +157,6 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 		zap.Strings("pii_redact_gaps", []string{
 			"NFS-paths", "unlabelled-kernel-fields",
 			"hostname-FQDN-variants", "hostname-mDNS-aliases",
-			"kernel-audit-uid-gid-pid", "wifi-ssid",
 			"usb-product-strings", "oom-cmdline", "custom-kernel-module-output",
 		}),
 	)
@@ -228,13 +234,13 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 			zap.Strings("redact_covered", []string{
 				"MAC-address", "IPv4-address", "IPv6-address", "USB-SerialNumber", "ID_SERIAL",
 				"Bluetooth-bdaddr", "OOM-process-name+PID", "filesystem-home-paths",
-				"comm=", "process-argv", "kernel-pointer-addresses", "network-interface-names",
+				"comm=", "process-argv", "kernel-audit-uid-gid-pid", "wifi-ssid",
+				"kernel-pointer-addresses", "network-interface-names",
 				"block-device-paths", "hostname",
 			}),
 			zap.Strings("redact_not_covered", []string{
 				"NFS-paths", "unlabelled-kernel-fields",
 				"hostname-FQDN-variants", "hostname-mDNS-aliases",
-				"kernel-audit-uid-gid-pid", "wifi-ssid",
 				"usb-product-strings", "oom-cmdline", "custom-kernel-module-output",
 			}),
 			zap.String("dpia_file", DmesgDPIAConfirmFile),
