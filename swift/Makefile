@@ -36,15 +36,15 @@ RUN_E2E_TEST_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows E2E targets 
 RUN_E2E_ANALYZE_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows E2E targets require PowerShell.' }; ./Scripts/E2EAnalyze.ps1 --output-dir $(WINDOWS_E2E_OUTPUT_DIR) --stage $(1)
 
 OPEN_E2E_REPORT_UNIX = report_path="$(1)"; if [ -f "$$report_path" ]; then if [ "$$(uname -s)" = "Darwin" ]; then open "$$report_path" || echo "HTML report: $$report_path"; else echo "HTML report: $$report_path"; fi; else echo "HTML report not found: $$report_path"; fi
-RUN_E2E_REPORT_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows report target requires PowerShell.' }; $$reportDir = '$(RUN_DIR)'; if (-not $$reportDir) { $$outputDir = $(WINDOWS_E2E_OUTPUT_DIR); if (Test-Path -LiteralPath $$outputDir) { $$reportDir = Get-ChildItem -LiteralPath $$outputDir -Directory -Filter 'swift-e2e-tests.*' | Where-Object { $$info = Join-Path $$_.FullName 'info.json'; if (-not (Test-Path -LiteralPath $$info)) { return $$false }; try { (Get-Content -Raw -LiteralPath $$info | ConvertFrom-Json).kind -eq 'swift-e2e-run' } catch { $$false } } | Sort-Object LastWriteTime | Select-Object -Last 1 -ExpandProperty FullName } }; if (-not $$reportDir) { throw 'ERROR: RUN_DIR is required, or no run report directory was found.' }; ./Scripts/E2EReport.ps1 --run-dir $$reportDir; $$reportPath = Join-Path $$reportDir 'index.html'; if (Test-Path -LiteralPath $$reportPath) { Start-Process $$reportPath } else { Write-Output "HTML report not found: $$reportPath" }
+RUN_E2E_REPORT_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows report target requires PowerShell.' }; $$reportDir = '$(RUN_DIR)'; if (-not $$reportDir) { $$outputDir = $(WINDOWS_E2E_OUTPUT_DIR); if (Test-Path -LiteralPath $$outputDir) { $$reportDir = Get-ChildItem -LiteralPath $$outputDir -Directory -Filter 'swift-e2e-tests.*' | Where-Object { $$aggregate = Join-Path $$_.FullName 'aggregate.json'; if (-not (Test-Path -LiteralPath $$aggregate)) { return $$false }; try { (Get-Content -Raw -LiteralPath $$aggregate | ConvertFrom-Json).kind -eq 'swift-e2e-aggregate' } catch { $$false } } | Sort-Object LastWriteTime | Select-Object -Last 1 -ExpandProperty FullName } }; if (-not $$reportDir) { throw 'ERROR: RUN_DIR is required, or no run report directory was found.' }; ./Scripts/E2EReport.ps1 --run-dir $$reportDir; $$reportPath = Join-Path $$reportDir 'index.html'; if (Test-Path -LiteralPath $$reportPath) { Start-Process $$reportPath } else { Write-Output "HTML report not found: $$reportPath" }
 RUN_E2E_REPORT_UNIX = @output_dir=$(UNIX_E2E_OUTPUT_DIR); \
 	run_dir="$(RUN_DIR)"; \
 	if [ -z "$$run_dir" ]; then \
 		shopt -s nullglob; latest=""; latest_mtime=0; \
 		for path in "$$output_dir"/swift-e2e-tests.*; do \
 			[ -d "$$path" ] || continue; \
-			[ -f "$$path/info.json" ] || continue; \
-			grep -q '"kind"[[:space:]]*:[[:space:]]*"swift-e2e-run"' "$$path/info.json" || continue; \
+			[ -f "$$path/aggregate.json" ] || continue; \
+			grep -q '"kind"[[:space:]]*:[[:space:]]*"swift-e2e-aggregate"' "$$path/aggregate.json" || continue; \
 			mtime="$$(stat -f %m "$$path" 2>/dev/null || stat -c %Y "$$path" 2>/dev/null || echo 0)"; \
 			if [ "$$mtime" -ge "$$latest_mtime" ]; then latest_mtime="$$mtime"; latest="$$path"; fi; \
 		done; \
