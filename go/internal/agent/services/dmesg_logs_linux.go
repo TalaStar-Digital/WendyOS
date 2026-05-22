@@ -369,14 +369,21 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 			message = message[:dmesgMaxMessageLen]
 		}
 		if atomic.LoadInt32(&redactAtomic) != 0 {
+			// Capture original text for gate checks BEFORE piiPatterns runs.
+			// After piiPatterns replaces values with "<redacted>", the resulting
+			// colons and "0x" substrings inside those tokens must not be used as
+			// gates — doing so causes the IPv6/pointer patterns to run against
+			// already-redacted text, missing content that appeared in the original.
+			rawMessage := message
 			message = piiPatterns.ReplaceAllString(message, "<redacted>")
-			// IPv6 and kernel-pointer patterns run only when the message contains
-			// the necessary prefix, keeping per-message regex cost proportional to
-			// message content rather than always scanning the full 4096-byte budget.
-			if strings.ContainsRune(message, ':') {
+			// IPv6 and kernel-pointer patterns run only when the original message
+			// contained the necessary prefix, keeping per-message regex cost
+			// proportional to the original content rather than scanning artifact
+			// colons/hex inserted by earlier <redacted> substitutions.
+			if strings.ContainsRune(rawMessage, ':') {
 				message = piiIPv6Pattern.ReplaceAllString(message, "<redacted>")
 			}
-			if strings.Contains(message, "0x") {
+			if strings.Contains(rawMessage, "0x") {
 				message = piiKernelPtrPattern.ReplaceAllString(message, "<redacted>")
 			}
 			// Redact exact hostname literal. Cached at startup; FQDN variants
@@ -550,15 +557,11 @@ func parseKmsgLine(line string) (level int, message string, timestampUS int64, o
 	return priority & 7, message, ts, true
 }
 
-// kernelLevelToOTEL maps a kernel syslog level (0–7) to an OTel severity
-// within the debug/trace band, preserving relative ordering while keeping all
-// dmesg output below INFO.
-//
-// KERN_EMERG (0), KERN_ALERT (1), and KERN_CRIT (2) are capped at DEBUG4 by
-// design — these events are for diagnostic purposes and should not surface in
-// default INFO+ alert rules. The scan loop in CollectDmesgLogs additionally
-// emits a zap.Warn for these levels so they appear in the agent log stream,
-// and they are exempt from rate limiting so they are never silently dropped.
+// kernelLevelToOTEL maps a kernel syslog level (0–7) to an OTel severity.
+// Non-critical levels are mapped into the trace/debug band so they do not
+// pollute default INFO+ views. Critical levels (KERN_CRIT and above) are
+// mapped to their natural OTel equivalents so they remain visible in SIEM
+// alerting pipelines (SOC2-CC7, ISO27001-A.12, NIST-AU-2).
 func kernelLevelToOTEL(level int) (otelpb.SeverityNumber, string) {
 	switch level {
 	case 7: // KERN_DEBUG
@@ -571,7 +574,11 @@ func kernelLevelToOTEL(level int) (otelpb.SeverityNumber, string) {
 		return otelpb.SeverityNumber_SEVERITY_NUMBER_DEBUG2, "DEBUG"
 	case 3: // KERN_ERR
 		return otelpb.SeverityNumber_SEVERITY_NUMBER_DEBUG3, "DEBUG"
-	default: // KERN_CRIT (2), KERN_ALERT (1), KERN_EMERG (0)
-		return otelpb.SeverityNumber_SEVERITY_NUMBER_DEBUG4, "DEBUG"
+	case 2: // KERN_CRIT
+		return otelpb.SeverityNumber_SEVERITY_NUMBER_WARN, "WARN"
+	case 1: // KERN_ALERT
+		return otelpb.SeverityNumber_SEVERITY_NUMBER_ERROR, "ERROR"
+	default: // KERN_EMERG (0)
+		return otelpb.SeverityNumber_SEVERITY_NUMBER_FATAL, "FATAL"
 	}
 }
