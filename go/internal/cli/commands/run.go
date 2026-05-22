@@ -977,7 +977,6 @@ func resolveRunProjectType(dir, requestedType string) (string, error) {
 	return "", fmt.Errorf("build type %q is not available in %s", requestedType, dir)
 }
 
-
 // runWithProvider builds and runs via an external device provider.
 func runWithProvider(ctx context.Context, p providers.DeviceProvider, device models.ExternalDevice, projectPath, product string, opts runOptions) error {
 	projectType, err := resolveRunProjectType(projectPath, opts.buildType)

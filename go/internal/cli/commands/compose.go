@@ -101,7 +101,15 @@ func composeBuildContext(svc composeService, projectDir string) (ctxDir, dockerf
 		df := "Dockerfile"
 		if bc.Dockerfile != "" {
 			// Docker Compose allows arbitrary dockerfile names (e.g. web.Dockerfile,
-			// Containerfile), so only the path-confinement check applies here.
+			// Containerfile), so strict validateDockerfileName is not applied. However,
+			// names starting with "-" must be rejected to prevent CLI flag injection,
+			// and NUL bytes are unconditionally invalid.
+			if strings.HasPrefix(bc.Dockerfile, "-") {
+				return "", "", nil, fmt.Errorf("compose dockerfile: name must not start with '-'")
+			}
+			if strings.ContainsRune(bc.Dockerfile, 0) {
+				return "", "", nil, fmt.Errorf("compose dockerfile: name contains invalid characters")
+			}
 			if _, err := confinedDockerfilePath(ctxDir, bc.Dockerfile); err != nil {
 				return "", "", nil, fmt.Errorf("compose dockerfile: %w", err)
 			}

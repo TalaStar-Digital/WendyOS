@@ -1119,7 +1119,14 @@ func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, pl
 		"--platform", platform,
 	}
 	if dockerfile != "" {
-		args = append(args, "-f", filepath.Join(dir, dockerfile))
+		if err := validateDockerfileName(dockerfile); err != nil {
+			return err
+		}
+		resolvedDockerfile, err := confinedDockerfilePath(dir, dockerfile)
+		if err != nil {
+			return err
+		}
+		args = append(args, "-f", resolvedDockerfile)
 	}
 	if _, err := os.Stat(filepath.Join(cacheDir, "index.json")); err == nil {
 		args = append(args, "--cache-from", "type=local,src="+cacheDirSlash)
