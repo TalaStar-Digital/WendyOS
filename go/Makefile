@@ -5,7 +5,8 @@
        build-cli-darwin-amd64 build-cli-darwin-arm64 \
        build-cli-windows-amd64 build-cli-windows-arm64 \
        msi-windows-amd64 msi-windows-arm64 \
-       licenses licenses-update
+       licenses licenses-update \
+       sync-assets
 
 VERSION ?= dev
 MSI_VERSION ?= 0.0.1
@@ -110,3 +111,22 @@ licenses:
 # Regenerate licenses.csv from current dependencies
 licenses-update:
 	bash scripts/check-licenses.sh --update
+
+# Sync embedded docs and skills from sibling repos (requires them checked out at ../docs and ../claude-skills)
+sync-assets:
+	@DOCS_SRC=../../docs SKILLS_SRC=../../claude-skills ASSETS=internal/cli/assets; \
+	if [ ! -d "$$DOCS_SRC" ]; then echo "Docs repo not found at $$DOCS_SRC — skipping"; else \
+	  rm -rf "$$ASSETS/docs" && mkdir -p "$$ASSETS/docs" && \
+	  rsync -a --exclude='.git' --exclude='superpowers/' --exclude='operations/' \
+	    --exclude='security/' --exclude='.github/' --exclude='.claude/' --exclude='*.json' \
+	    "$$DOCS_SRC/" "$$ASSETS/docs/" && \
+	  echo "Synced $$(find $$ASSETS/docs -name '*.md' | wc -l) doc files"; fi; \
+	if [ ! -d "$$SKILLS_SRC" ]; then echo "Skills repo not found at $$SKILLS_SRC — skipping"; else \
+	  rm -rf "$$ASSETS/skills" && mkdir -p "$$ASSETS/skills" && \
+	  cp "$$SKILLS_SRC/.claude-plugin/marketplace.json" "$$ASSETS/skills/marketplace.json" && \
+	  for skill in wendy wendy-lite wendy-contributing wendy-swift swift swift-concurrency \
+	               swift-nio swift-library-design swift-valkey postgres-nio hummingbird \
+	               deckset linear database-driver-design; do \
+	    [ -d "$$SKILLS_SRC/$$skill" ] && rsync -a --exclude='.DS_Store' "$$SKILLS_SRC/$$skill/" "$$ASSETS/skills/$$skill/"; \
+	  done && \
+	  echo "Synced $$(find $$ASSETS/skills -type f | wc -l) skill files"; fi

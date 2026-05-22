@@ -97,7 +97,7 @@ func (s *mcpServer) ConnectTo(ctx context.Context, address string) error {
 func (s *mcpServer) Start(ctx context.Context) error {
 	srv := server.NewMCPServer("wendy", version.Version,
 		server.WithToolCapabilities(true),
-		server.WithResourceCapabilities(false, false),
+		server.WithResourceCapabilities(true, false),
 	)
 	s.registerStatusTools(srv)
 	s.registerGuideResource(srv)
