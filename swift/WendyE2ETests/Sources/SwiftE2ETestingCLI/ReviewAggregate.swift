@@ -153,7 +153,7 @@ private func appendE2EReviewAggregateIssue(
 private func reviewAggregateTitleLine(for issue: E2EReviewAggregateIssue) -> String {
     let severity = issue.severity
     var parts = [
-        "\(severity.heart) \(severity.rawValue)",
+        severity.rawValue,
         issue.scope.summaryTitle,
     ]
     if let scopePath = reviewAggregateScopePath(for: issue) {

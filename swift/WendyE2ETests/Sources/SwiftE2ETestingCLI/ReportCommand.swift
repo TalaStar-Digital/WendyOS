@@ -1208,7 +1208,7 @@ private func renderReviewAggregateHTML(markdown: String, title: String, runID: S
       <main>
         <p class="run-meta">Run ID: <code>\(escapeHTML(runID))</code> · <a href="index.html">index.html</a> · <a href="review.md">review.md</a></p>
         \(renderMarkdown(
-            reviewAggregateHTMLMarkdown(markdown),
+            markdown,
             headingBase: 1,
             allowDisclosureHTML: true
         ))
@@ -1216,13 +1216,6 @@ private func renderReviewAggregateHTML(markdown: String, title: String, runID: S
     </body>
     </html>
     """
-}
-
-private func reviewAggregateHTMLMarkdown(_ markdown: String) -> String {
-    markdown
-        .replacingOccurrences(of: "## ❤️ fail", with: "## fail")
-        .replacingOccurrences(of: "## 🧡 concern", with: "## concern")
-        .replacingOccurrences(of: "## 💙 info", with: "## info")
 }
 
 private func renderRunAIReview(_ reviews: [E2EReview]) -> String {
