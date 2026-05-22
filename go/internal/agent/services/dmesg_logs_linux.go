@@ -31,12 +31,21 @@ const (
 
 	// maxFutureSkewNs rejects timestamps more than 24 h in the future.
 	maxFutureSkewNs = int64(24 * time.Hour)
+
+	// maxReasonableTsUS rejects kernel timestamps beyond 100 years of uptime,
+	// guarding against integer overflow in the tsUS*1000 multiplication.
+	maxReasonableTsUS = int64(100 * 365 * 24 * 3600 * 1e6) // 100 years in µs
 )
 
-// piiPatterns matches MAC addresses and IPv4 addresses in kernel messages for
-// redaction when WENDY_DMESG_REDACT is enabled. IPv6 is intentionally omitted
-// because a simple colon-hex pattern is far too broad and generates both false
-// positives and false negatives; proper IPv6 redaction requires a dedicated
+// piiPatterns matches host-identifying values in kernel messages for redaction
+// when WENDY_DMESG_REDACT is enabled:
+//   - MAC addresses (colon and hyphen separated)
+//   - IPv4 addresses
+//   - USB SerialNumber values (GDPR Recital 30: device serial numbers are PII)
+//   - Process names and PIDs in OOM killer messages
+//
+// IPv6 is intentionally omitted: a simple colon-hex pattern has too many false
+// positives in kernel messages; proper IPv6 redaction requires a dedicated
 // parser that is out of scope here.
 var piiPatterns = regexp.MustCompile(
 	`(?i)(?:` +
@@ -46,8 +55,18 @@ var piiPatterns = regexp.MustCompile(
 		`|(?:[0-9a-f]{2}-){5}[0-9a-f]{2}` +
 		// IPv4 address
 		`|\b(?:\d{1,3}\.){3}\d{1,3}\b` +
+		// USB serial number (e.g. "SerialNumber: ABC123DEF")
+		`|SerialNumber:\s+\S+` +
+		// OOM killer: process name+PID (e.g. "Kill process 1234 (nginx)")
+		`|Kill(?:ed)?\s+process\s+\d+\s+\([^)]+\)` +
 		`)`,
 )
+
+// csiRemnantPattern strips orphaned ANSI CSI sequences left after ESC (U+001B,
+// removed by parseKmsgLine's r < 0x20 check) is stripped. Without this, a
+// kernel message containing "\x1b[31m" would leave "[31m" in the output, which
+// some log viewers render as an ANSI colour code.
+var csiRemnantPattern = regexp.MustCompile(`\[[0-9;]*[A-Za-z]`)
 
 // CollectDmesgLogs reads kernel messages from /dev/kmsg and publishes them as
 // OTel log records at debug/trace severity. It replays buffered kernel messages
@@ -88,6 +107,20 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 			}()))
 		_ = f.Close()
 		return
+	}
+
+	// Verify device major/minor numbers match /dev/kmsg (major=1, minor=11) to
+	// prevent a bind-mount substituting another char device (e.g. /dev/urandom).
+	var kst unix.Stat_t
+	if err := unix.Fstat(int(f.Fd()), &kst); err == nil {
+		if maj, min := unix.Major(kst.Rdev), unix.Minor(kst.Rdev); maj != 1 || min != 11 {
+			logger.Warn("dmesg: /dev/kmsg has unexpected device numbers; skipping",
+				zap.Uint32("major", maj),
+				zap.Uint32("minor", min),
+			)
+			_ = f.Close()
+			return
+		}
 	}
 
 	logger.Info("kernel dmesg collection started",
@@ -166,9 +199,11 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 			continue
 		}
 		if isCritical {
-			logger.Warn("critical kernel message",
+			// Log level only — message body is omitted to avoid routing
+			// partially-redacted content to a second log sink with potentially
+			// different retention/access policies. Full content is in OTel.
+			logger.Warn("critical kernel message received",
 				zap.Int("kernel_level", level),
-				zap.String("message", message),
 			)
 		}
 
@@ -197,6 +232,15 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 				},
 			},
 		})
+	}
+
+	// Flush any drops accumulated in the current window that were never reported
+	// because no new message arrived to trigger the window-rollover log line.
+	if windowDrop > 0 {
+		logger.Warn("dmesg rate limit: messages dropped at shutdown",
+			zap.Int("dropped", windowDrop),
+			zap.Int("forwarded", windowCount),
+		)
 	}
 }
 
@@ -229,7 +273,9 @@ func kmsgBootEpochNanoseconds() int64 {
 // plausible range to guard against NTP steps or boot-epoch skew.
 func kmsgTimestampToWall(tsUS int64, bootEpoch int64) uint64 {
 	now := time.Now().UnixNano()
-	if bootEpoch > 0 && tsUS > 0 {
+	// maxReasonableTsUS guard prevents integer overflow in tsUS*1000 for
+	// malformed or attacker-supplied timestamps (100-year uptime upper bound).
+	if bootEpoch > 0 && tsUS > 0 && tsUS <= maxReasonableTsUS {
 		computed := bootEpoch + tsUS*1000
 		if computed >= minValidTimestampNs && computed <= now+maxFutureSkewNs {
 			return uint64(computed)
@@ -270,6 +316,8 @@ func parseKmsgLine(line string) (level int, message string, timestampUS int64, o
 		}
 		return r
 	}, line[semi+1:])
+	// Strip orphaned CSI remnants (e.g. "[31m") left after ESC is removed above.
+	message = csiRemnantPattern.ReplaceAllString(message, "")
 
 	parts := strings.SplitN(line[:semi], ",", 4)
 	if len(parts) < 3 {
