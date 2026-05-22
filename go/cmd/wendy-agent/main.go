@@ -271,14 +271,20 @@ func main() {
 	}()
 
 	// Collect kernel messages from /dev/kmsg as OTel debug/trace logs.
-	// Set WENDY_COLLECT_DMESG=false to disable (e.g. in environments where
-	// kernel messages contain sensitive data that must not leave the device).
-	if os.Getenv("WENDY_COLLECT_DMESG") != "false" {
+	// Opt-in: set WENDY_COLLECT_DMESG=true to enable. Disabled by default
+	// because kernel messages may contain PII (MAC addresses, serial numbers,
+	// process names, filesystem paths) that operators must consciously opt into
+	// forwarding to their telemetry backend.
+	collectDmesg, _ := strconv.ParseBool(os.Getenv("WENDY_COLLECT_DMESG"))
+	if collectDmesg {
+		logger.Info("kernel dmesg collection enabled", zap.String("source", "/dev/kmsg"))
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			services.CollectDmesgLogs(ctx, logger, broadcaster)
 		}()
+	} else {
+		logger.Info("kernel dmesg collection disabled (set WENDY_COLLECT_DMESG=true to enable)")
 	}
 
 	// Main agent gRPC server port.
