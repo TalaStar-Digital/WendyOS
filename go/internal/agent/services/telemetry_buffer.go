@@ -140,18 +140,7 @@ type TelemetryBufferConfig struct {
 
 func (c *TelemetryBufferConfig) applyDefaults() {
 	if c.Dir == "" {
-		if d := os.Getenv("WENDY_TELEMETRY_DIR"); d != "" {
-			cleaned := filepath.Clean(d)
-			// Require an absolute path within the agent's data directory to
-			// prevent writing telemetry to security-sensitive locations.
-			if filepath.IsAbs(cleaned) && strings.HasPrefix(cleaned+"/", "/var/lib/wendy-agent/") {
-				c.Dir = cleaned
-			} else {
-				c.Dir = defaultTelemetryDir
-			}
-		} else {
-			c.Dir = defaultTelemetryDir
-		}
+		c.Dir = defaultTelemetryDir
 	}
 	if c.MaxTotalBytes == 0 {
 		c.MaxTotalBytes = defaultMaxTotalBytes
@@ -161,8 +150,9 @@ func (c *TelemetryBufferConfig) applyDefaults() {
 	}
 }
 
-// flushCursor records the position up to which data has been confirmed
-// delivered to cloud for a single signal type.
+// flushCursor is the in-memory flush position for a single signal type.
+// It is NOT written to disk directly; the on-disk format is cursorState,
+// which adds a CRC32 integrity field. See SaveCursor/LoadCursor.
 type flushCursor struct {
 	File   string `json:"file"`
 	Offset int64  `json:"offset"`
@@ -416,8 +406,10 @@ const cursorFile = "cursor.json"
 
 type cursorMap map[SignalType]flushCursor
 
-// cursorState wraps cursorMap with a CRC32 checksum to detect tampering or
-// corruption. The checksum covers the JSON-encoded Cursors field.
+// cursorState is the on-disk JSON format for cursor.json. It wraps a
+// cursorMap with a CRC32 integrity field so that tampering (rewinding or
+// advancing the upload position) is detected on load. The checksum covers
+// the JSON-encoded Cursors field; a mismatch causes LoadCursor to reset.
 type cursorState struct {
 	Cursors cursorMap `json:"cursors"`
 	CRC32   uint32    `json:"crc32"`

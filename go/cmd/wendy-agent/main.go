@@ -434,8 +434,10 @@ func main() {
 		bluetooth.StartBLEPeripheral(ctx, logger, bleDispatcher, tlsConfig)
 	}
 
-	certPEM, chainPEM, keyPEM := provisioningSvc.ProvisioningCerts()
-	alreadyProvisioned := certPEM != "" && keyPEM != ""
+	// Check if already provisioned and start mTLS server and tunnel broker if certificates exist.
+	certPEM, chainPEM, keyData := provisioningSvc.ProvisioningCerts()
+	keyPEM := string(keyData)
+	alreadyProvisioned := certPEM != "" && len(keyData) > 0
 
 	if alreadyProvisioned {
 		startMTLSServer(certPEM, chainPEM, keyPEM)

@@ -223,14 +223,14 @@ func TestStartProvisioning_PersistAndReload(t *testing.T) {
 	}
 
 	// Verify certs were persisted and reloaded.
-	certPEM, chainPEM, keyPEM := svc2.ProvisioningCerts()
+	certPEM, chainPEM, keyData := svc2.ProvisioningCerts()
 	if certPEM != "fake-cert-pem" {
 		t.Errorf("CertPEM = %q; want fake-cert-pem", certPEM)
 	}
 	if chainPEM != "fake-chain-pem" {
 		t.Errorf("ChainPEM = %q; want fake-chain-pem", chainPEM)
 	}
-	if keyPEM == "" {
+	if len(keyData) == 0 {
 		t.Error("KeyPEM should not be empty after provisioning")
 	}
 }

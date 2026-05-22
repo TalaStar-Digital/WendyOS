@@ -82,10 +82,15 @@ func NewProvisioningService(logger *zap.Logger, configPath string) *Provisioning
 	return svc
 }
 
-func (s *ProvisioningService) ProvisioningCerts() (certPEM, chainPEM, keyPEM string) {
+// ProvisioningCerts returns the stored certificate material if the agent is provisioned.
+// The private key is returned as []byte so callers can zero it after use;
+// the internal string copy in ProvisioningService cannot be zeroed (Go string
+// immutability) but the returned slice minimises the key-material window.
+// Returns empty cert/chain and nil key if not provisioned.
+func (s *ProvisioningService) ProvisioningCerts() (certPEM, chainPEM string, keyData []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.certPEM, s.chainPEM, s.keyPEM
+	return s.certPEM, s.chainPEM, []byte(s.keyPEM)
 }
 
 func (s *ProvisioningService) ProvisioningInfo() (cloudHost string, orgID, assetID int32, enrolled bool) {

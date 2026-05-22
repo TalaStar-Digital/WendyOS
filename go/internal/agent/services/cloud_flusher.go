@@ -96,8 +96,7 @@ func (f *CloudFlusher) Run(ctx context.Context) {
 			return
 		}
 
-		certPEM, chainPEM, keyPEM := f.provisioningSvc.ProvisioningCerts()
-		keyData := []byte(keyPEM)
+		certPEM, chainPEM, keyData := f.provisioningSvc.ProvisioningCerts()
 		conn, client, err := f.dial(ctx, cloudHost, certPEM, chainPEM, keyData)
 		if err != nil {
 			f.logger.Warn("cloud flusher: dial failed", zap.Error(err))
