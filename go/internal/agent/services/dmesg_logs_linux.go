@@ -35,6 +35,13 @@ const (
 	// maxReasonableTsUS rejects kernel timestamps beyond 100 years of uptime,
 	// guarding against integer overflow in the tsUS*1000 multiplication.
 	maxReasonableTsUS = int64(100 * 365 * 24 * 3600 * 1e6) // 100 years in µs
+
+	// dmesgPIIAllowFile must exist on-disk to enable WENDY_DMESG_REDACT=false.
+	// Requiring a filesystem artefact provides out-of-band confirmation in a
+	// separate permission domain from environment variables: an actor who can
+	// only set env vars (e.g. via a container spec or systemd override) cannot
+	// bypass PII redaction without also having write access to the host filesystem.
+	dmesgPIIAllowFile = "/etc/wendy/dmesg-pii-allowed"
 )
 
 // piiPatterns matches common host-identifying values in kernel messages for
@@ -87,11 +94,11 @@ var csiRemnantPattern = regexp.MustCompile(`\[[0-9;?!<>=]*[A-Za-z]|\]\d+;[^\x00-
 // OTel log records at debug/trace severity. It replays buffered kernel messages
 // first, then follows new ones. Blocks until ctx is cancelled.
 //
-// MAC addresses and IPv4 addresses are redacted by default (WENDY_DMESG_REDACT
-// defaults to true). Set WENDY_DMESG_REDACT=false to disable. Note that kernel
-// messages may also contain USB serial numbers, process names, PIDs, and
-// filesystem paths that are not redacted by this best-effort filter; operators
-// should review their data-minimisation requirements.
+// PII redaction is enabled by default. To disable, set WENDY_DMESG_REDACT=false
+// AND create /etc/wendy/dmesg-pii-allowed on the host filesystem. Requiring both
+// provides separation between env-var and filesystem permission domains. Note that
+// redaction is best-effort; operators should review their data-minimisation
+// requirements independently.
 //
 // NOTE: All kernel severity levels are intentionally mapped into the OTel
 // debug/trace band. KERN_EMERG/ALERT/CRIT additionally emit a zap.Warn so
@@ -108,21 +115,30 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 		return
 	}
 
-	// Default redact to true (safe by default).
-	// Disabling requires BOTH WENDY_DMESG_REDACT=false AND WENDY_DMESG_ALLOW_PII=true
-	// as a two-factor compensating control against accidental or unauthorised disable.
+	// Default redact to true (safe by default). Disabling requires both
+	// WENDY_DMESG_REDACT=false (env var domain) and the existence of
+	// dmesgPIIAllowFile (filesystem domain). These are separate permission
+	// domains — an actor who can only set env vars cannot bypass redaction
+	// without also having filesystem write access to the host.
 	redact := true
 	if v, err := strconv.ParseBool(os.Getenv("WENDY_DMESG_REDACT")); err == nil && !v {
-		allowPII, _ := strconv.ParseBool(os.Getenv("WENDY_DMESG_ALLOW_PII"))
-		if allowPII {
+		if _, statErr := os.Stat(dmesgPIIAllowFile); statErr == nil {
 			redact = false
 		} else {
-			logger.Warn("WENDY_DMESG_REDACT=false requires WENDY_DMESG_ALLOW_PII=true; keeping redaction enabled")
+			logger.Warn("WENDY_DMESG_REDACT=false requires "+dmesgPIIAllowFile+" to exist; keeping redaction enabled",
+				zap.String("reason", "file-based out-of-band confirmation required; env-var alone is insufficient"),
+			)
 		}
 	}
 
-	// Capture hostname once for per-message redaction and resource gating.
-	hostname, _ := os.Hostname()
+	// Capture hostname only when redact=false, where it is intentionally
+	// included in the OTel resource as service.instance.id. When redact=true,
+	// hostname is fetched fresh per-message to avoid retaining PII in-process
+	// between messages and to eliminate TOCTOU skew if the hostname changes.
+	var hostname string
+	if !redact {
+		hostname, _ = os.Hostname()
+	}
 
 	f, err := os.Open("/dev/kmsg")
 	if err != nil {
@@ -256,10 +272,12 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 			if strings.Contains(message, "0x") {
 				message = piiKernelPtrPattern.ReplaceAllString(message, "<redacted>")
 			}
-			// Redact the hostname literal separately; regex-escaping it at
-			// compile time is not possible since it is only known at runtime.
-			if hostname != "" {
-				message = strings.ReplaceAll(message, hostname, "<redacted>")
+			// Fetch hostname fresh each message: avoids retaining PII in-process
+			// between messages (GDPR data minimisation) and eliminates TOCTOU skew
+			// if the hostname changes during collection. os.Hostname() is a fast
+			// syscall (uname(2)) with negligible overhead at 500 msg/sec.
+			if hn, err := os.Hostname(); err == nil && hn != "" {
+				message = strings.ReplaceAll(message, hn, "<redacted>")
 			}
 		}
 
@@ -417,6 +435,12 @@ func parseKmsgLine(line string) (level int, message string, timestampUS int64, o
 	}
 
 	ts, _ := strconv.ParseInt(parts[2], 10, 64)
+	// Reject negative timestamps for consistency with the priority bounds check
+	// above; kmsgTimestampToWall guards against this too, but explicit rejection
+	// here prevents surprises if the caller is ever extended.
+	if ts < 0 {
+		return 0, "", 0, false
+	}
 	return priority & 7, message, ts, true
 }
 
