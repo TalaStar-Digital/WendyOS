@@ -339,7 +339,7 @@ jobs:
           fi
 
           existing="$(gh api "repos/${REPO}/issues/${pr_num}/comments" \
-            --jq '.[] | select(.body | contains("<!-- wendy-e2e-review-aggregate:v1 -->")) | .id' \
+            --jq '.[] | select(.body | startswith("# Swift E2E Review")) | .id' \
             | head -1)"
           if [[ -n "$existing" ]]; then
             jq -n --rawfile body "$COMMENT_PATH" '{body: $body}' > payload.json

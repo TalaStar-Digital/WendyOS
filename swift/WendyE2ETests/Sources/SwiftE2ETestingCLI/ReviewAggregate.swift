@@ -25,7 +25,7 @@ private enum E2EReviewAggregateScope: Int {
     case suite = 1
     case test = 2
 
-    var summaryTitle: String {
+    var metadataValue: String {
         switch self {
         case .report:
             "run"
@@ -93,8 +93,6 @@ private func renderE2EReviewAggregate(issues: [E2EReviewAggregateIssue]) -> Stri
     var lines: [String] = [
         "# Swift E2E Review",
         "",
-        "<!-- wendy-e2e-review-aggregate:v1 -->",
-        "",
     ]
 
     guard !issues.isEmpty else {
@@ -103,39 +101,63 @@ private func renderE2EReviewAggregate(issues: [E2EReviewAggregateIssue]) -> Stri
         return lines.joined(separator: "\n")
     }
 
-    lines.append("Found **\(issues.count) review issue\(issues.count == 1 ? "" : "s")**: \(reviewAggregateSeveritySummary(issues)).")
-    lines.append("")
-    lines.append("Reviewers: \(reviewAggregateReviewers(issues))")
-    lines.append("")
+    let runIssues = issues
+        .filter { $0.scope == .report }
+        .sorted(by: reviewAggregateIssueSort)
+    for issue in runIssues {
+        appendE2EReviewAggregateIssue(issue, headingLevel: 2, to: &lines)
+    }
 
-    for issue in issues {
-        appendE2EReviewAggregateIssue(issue, to: &lines)
+    var wroteSuite = false
+    let suiteKeys = Set(issues.compactMap(\.suiteKey)).sorted()
+    for suiteKey in suiteKeys {
+        let suiteIssues = issues
+            .filter { $0.scope == .suite && $0.suiteKey == suiteKey }
+            .sorted(by: reviewAggregateIssueSort)
+        let testIssues = issues
+            .filter { $0.scope == .test && $0.suiteKey == suiteKey }
+        guard !suiteIssues.isEmpty || !testIssues.isEmpty else { continue }
+
+        if !runIssues.isEmpty || wroteSuite {
+            lines.append("---")
+            lines.append("")
+        }
+        lines.append("## `\(suiteKey)`")
+        lines.append("")
+
+        for issue in suiteIssues {
+            appendE2EReviewAggregateIssue(issue, headingLevel: 3, to: &lines)
+        }
+        for issue in testIssues.sorted(by: reviewAggregateIssueSort) {
+            appendE2EReviewAggregateIssue(issue, headingLevel: 3, to: &lines)
+        }
+
+        wroteSuite = true
     }
 
     return lines.joined(separator: "\n")
 }
 
-private func reviewAggregateSeveritySummary(_ issues: [E2EReviewAggregateIssue]) -> String {
-    let severities: [E2EReviewSeverity] = [.fail, .concern, .info]
-    let parts = severities.compactMap { severity -> String? in
-        let count = issues.filter { $0.severity == severity }.count
-        guard count > 0 else { return nil }
-        return "\(count) \(severity.pluralizedLabel(count: count))"
+private func reviewAggregateIssueSort(
+    _ lhs: E2EReviewAggregateIssue,
+    _ rhs: E2EReviewAggregateIssue
+) -> Bool {
+    if lhs.severity.sortRank != rhs.severity.sortRank {
+        return lhs.severity.sortRank < rhs.severity.sortRank
     }
-    return parts.joined(separator: ", ")
-}
-
-private func reviewAggregateReviewers(_ issues: [E2EReviewAggregateIssue]) -> String {
-    let reviewers = Set(issues.map { $0.review.metadata.reviewer }).sorted()
-    return reviewers.map { "`\($0)`" }.joined(separator: ", ")
+    if lhs.review.title != rhs.review.title {
+        return lhs.review.title < rhs.review.title
+    }
+    return lhs.review.path < rhs.review.path
 }
 
 private func appendE2EReviewAggregateIssue(
     _ issue: E2EReviewAggregateIssue,
+    headingLevel: Int,
     to lines: inout [String]
 ) {
     let review = issue.review
-    lines.append(reviewAggregateTitleLine(for: issue))
+    lines.append(reviewAggregateTitleLine(for: issue, headingLevel: headingLevel))
     lines.append("")
     lines.append(review.summaryMarkdown)
     lines.append("")
@@ -150,17 +172,12 @@ private func appendE2EReviewAggregateIssue(
     lines.append("")
 }
 
-private func reviewAggregateTitleLine(for issue: E2EReviewAggregateIssue) -> String {
-    let severity = issue.severity
-    var parts = [
-        severity.rawValue,
-        issue.scope.summaryTitle,
-    ]
-    if let scopePath = reviewAggregateScopePath(for: issue) {
-        parts.append("`\(scopePath)`")
-    }
-    let prefix = parts.joined(separator: " · ")
-    return "## \(prefix) — \(reviewAggregateSingleLine(issue.review.title))"
+private func reviewAggregateTitleLine(
+    for issue: E2EReviewAggregateIssue,
+    headingLevel: Int
+) -> String {
+    let heading = String(repeating: "#", count: headingLevel)
+    return "\(heading) \(issue.severity.displayName): \(reviewAggregateSingleLine(issue.review.title))"
 }
 
 private func appendE2EReviewAggregateMetadata(
@@ -168,6 +185,10 @@ private func appendE2EReviewAggregateMetadata(
     to lines: inout [String]
 ) {
     let review = issue.review
+    lines.append("- Scope: `\(issue.scope.metadataValue)`")
+    if let testKey = issue.testKey {
+        lines.append("- Test: `\(testKey)`")
+    }
     lines.append("- Reviewer: `\(review.metadata.reviewer)`")
     if let confidence = review.metadata.confidence, !confidence.isEmpty {
         lines.append("- Confidence: `\(confidence)`")
@@ -178,16 +199,6 @@ private func appendE2EReviewAggregateMetadata(
     lines.append("- Full review: `\(review.path)`")
 }
 
-private func reviewAggregateScopePath(for issue: E2EReviewAggregateIssue) -> String? {
-    switch issue.scope {
-    case .report:
-        nil
-    case .suite:
-        issue.suiteKey
-    case .test:
-        [issue.suiteKey, issue.testKey].compactMap { $0 }.joined(separator: "/")
-    }
-}
 
 private func reviewAggregateLocations(_ locations: [E2EReviewLocation]) -> String {
     locations.map { location in

@@ -38,25 +38,14 @@ enum E2EReviewSeverity: String, Codable, Sendable {
         }
     }
 
-    var heart: String {
+    var displayName: String {
         switch self {
         case .fail:
-            "❤️"
+            "Fail"
         case .concern:
-            "🧡"
+            "Concern"
         case .info:
-            "💙"
-        }
-    }
-
-    func pluralizedLabel(count: Int) -> String {
-        switch self {
-        case .fail:
-            count == 1 ? "fail" : "fails"
-        case .concern:
-            count == 1 ? "concern" : "concerns"
-        case .info:
-            "info"
+            "Info"
         }
     }
 }
