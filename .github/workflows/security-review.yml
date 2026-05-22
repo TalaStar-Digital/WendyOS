@@ -19,8 +19,11 @@ jobs:
       pull-requests: write
     steps:
       - name: Verify origin repo
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
         run: |
-          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
             echo "Fork PRs are not permitted to trigger this workflow."
             exit 1
           fi
@@ -28,15 +31,18 @@ jobs:
       - name: Get PR diff
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          gh pr diff ${{ github.event.pull_request.number }} \
-            --repo ${{ github.repository }} > pr.diff
+          gh pr diff "$PR_NUMBER" --repo "$REPO" > pr.diff 2>/dev/null || touch pr.diff
 
       - name: Export PR metadata
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} \
+          gh api "repos/$REPO/pulls/$PR_NUMBER" \
             --jq '{title, body, number}' > pr_meta.json
 
       - name: Set up Python
@@ -155,9 +161,6 @@ jobs:
           pathlib.Path('review.md').write_text(report + '\n')
           print(report)
 
-          # Deterministically parse the findings table the system prompt instructs
-          # Claude to emit (| Severity | ... |). Line-anchored and restricted to the
-          # five valid tokens so free-form prose cannot accidentally match.
           severities = re.findall(
               r'^\|\s*(CRITICAL|HIGH|MEDIUM|LOW|INFORMATIONAL)\s*\|',
               report,
@@ -187,15 +190,12 @@ jobs:
                   block = paragraph.strip()
                   if not block:
                       continue
-
                   lines = block.splitlines()
                   while lines and re.match(r'^\s*#{1,6}\s+\S', lines[0]):
                       lines.pop(0)
-
                   summary = '\n'.join(lines).strip()
                   if summary:
                       return summary
-
               return '_No summary available._'
 
           with open('review.md') as f:
@@ -213,7 +213,6 @@ jobs:
               f.write('\n</details>\n')
           EXTRACT
 
-          # Replace previous security review comment if one exists
           EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
             --jq '.[] | select(.body | startswith("## AI Security Review")) | .id' | head -1)
 

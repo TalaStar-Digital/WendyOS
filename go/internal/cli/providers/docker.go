@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
-	"github.com/wendylabsinc/wendy/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/shared/appconfig"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 )
 
 // dockerBuildContext is stored in BuiltApp.Context for Docker builds.
@@ -40,7 +40,7 @@ func composeFile(dir string) string {
 // DockerProvider builds and runs applications in Docker Desktop containers.
 type DockerProvider struct{}
 
-func (p *DockerProvider) Key() string         { return "docker" }
+func (p *DockerProvider) Key() string         { return ProviderKeyDocker }
 func (p *DockerProvider) DisplayName() string { return "Docker Desktop" }
 
 func (p *DockerProvider) IsAvailable(ctx context.Context) bool {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wendylabsinc/wendy/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 )
 
 // TestRunWithProvider_SwiftRejectedOnWindows verifies that `wendy run` for a

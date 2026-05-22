@@ -19,6 +19,7 @@ func newMCPSetupCmd() *cobra.Command {
 		Long:  "Detects installed AI tools and adds the wendy MCP server to their configuration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			results := setupMCPForAllTools()
+			results = append(results, installSkillsForAllTools()...)
 			for _, r := range results {
 				if r.err != nil {
 					fmt.Fprintf(cmd.OutOrStdout(), "✗ %s: %v\n", r.tool, r.err)

@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
+	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
 )
 
 func mustDetectProjectType(t *testing.T, dir string) string {
