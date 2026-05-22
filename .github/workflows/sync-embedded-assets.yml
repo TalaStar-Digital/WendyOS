@@ -26,26 +26,9 @@ jobs:
           token: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
           path: _skills_src
 
-      - name: Sync docs
-        run: |
-          DOCS_DST=go/internal/cli/assets/docs
-          DOCS_SRC=docs
-          rm -rf "$DOCS_DST"
-          mkdir -p "$DOCS_DST"
-          rsync -a \
-            --exclude='.git' \
-            --exclude='superpowers/' \
-            --exclude='operations/' \
-            --exclude='security/' \
-            --exclude='.github/' \
-            --exclude='.claude/' \
-            --exclude='*.json' \
-            "$DOCS_SRC/" "$DOCS_DST/"
-          echo "Synced $(find "$DOCS_DST" -name '*.md' | wc -l) markdown doc files"
-
       - name: Sync skills
         run: |
-          SKILLS_DST=go/internal/cli/assets/skills
+          SKILLS_DST=internal/cli/assets/skills
           SKILLS_SRC=_skills_src
           rm -rf "$SKILLS_DST"
           mkdir -p "$SKILLS_DST"

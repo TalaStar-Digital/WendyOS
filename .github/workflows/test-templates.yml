@@ -61,17 +61,14 @@ jobs:
     name: Generate & Validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: go
     steps:
       - uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Build CLI
         run: make build-cli
@@ -124,9 +121,6 @@ jobs:
         runner:
           - { name: macOS, labels: [self-hosted, macOS, ARM64] }
           - { name: Linux, labels: [self-hosted, Linux, X64] }
-    defaults:
-      run:
-        working-directory: go
     env:
       INPUT_HOSTNAME: ${{ inputs.hostname }}
       INPUT_TEMPLATES_BRANCH: ${{ inputs.templates_branch }}
@@ -139,8 +133,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Build CLI
         run: make build-cli

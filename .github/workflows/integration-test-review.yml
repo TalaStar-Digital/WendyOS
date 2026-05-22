@@ -74,7 +74,7 @@ jobs:
               if test_info['files']:
                   existing_tests.append(test_info)
 
-          test_script = pathlib.Path('go/scripts/test-ci.sh').read_text()
+          test_script = pathlib.Path('scripts/test-ci.sh').read_text()
           integration_yml = pathlib.Path('.github/workflows/integration-tests.yml').read_text()
 
           tests_context = ''

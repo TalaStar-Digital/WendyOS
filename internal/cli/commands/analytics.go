@@ -1,0 +1,94 @@
+package commands
+
+import (
+	"github.com/spf13/cobra"
+	"github.com/wendylabsinc/wendy/internal/cli/analytics"
+	"github.com/wendylabsinc/wendy/internal/shared/config"
+)
+
+func newAnalyticsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "analytics",
+		Short: "Manage anonymous usage analytics",
+	}
+
+	cmd.AddCommand(
+		newAnalyticsEnableCmd(),
+		newAnalyticsDisableCmd(),
+		newAnalyticsStatusCmd(),
+	)
+
+	return cmd
+}
+
+func newAnalyticsEnableCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "enable",
+		Short: "Enable anonymous usage analytics",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			cfg.Analytics = &config.AnalyticsConfig{Enabled: true}
+			if err := config.Save(cfg); err != nil {
+				return err
+			}
+
+			cmd.Println("Analytics enabled.")
+			return nil
+		},
+	}
+}
+
+func newAnalyticsDisableCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "disable",
+		Short: "Disable anonymous usage analytics",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			cfg.Analytics = &config.AnalyticsConfig{Enabled: false}
+			if err := config.Save(cfg); err != nil {
+				return err
+			}
+
+			// Disable analytics in-memory for the current process so that
+			// no further events are emitted during this invocation.
+			analytics.Disable()
+
+			cmd.Println("Analytics disabled.")
+			return nil
+		},
+	}
+}
+
+func newAnalyticsStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show current analytics status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			if analytics.EnvOverride() {
+				cmd.Println("Analytics: disabled (overridden by WENDY_ANALYTICS=false)")
+				return nil
+			}
+
+			if cfg.Analytics == nil || cfg.Analytics.Enabled {
+				cmd.Println("Analytics: enabled")
+			} else {
+				cmd.Println("Analytics: disabled")
+			}
+
+			return nil
+		},
+	}
+}

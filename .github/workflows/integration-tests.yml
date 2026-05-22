@@ -54,17 +54,14 @@ jobs:
       matrix:
         runner:
           - { name: macOS, os: macOS, arch: ARM64 }
-    defaults:
-      run:
-        working-directory: go
     steps:
       - uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Build CLI
         run: make build-cli
@@ -111,9 +108,6 @@ jobs:
       group: integration-hw-macos
       cancel-in-progress: false
     timeout-minutes: 60
-    defaults:
-      run:
-        working-directory: go
     env:
       INPUT_HOSTNAME: ${{ inputs.hostname }}
       INPUT_TESTS: ${{ inputs.tests }}
@@ -123,8 +117,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Build CLI
         run: make build-cli
@@ -246,9 +240,6 @@ jobs:
       group: integration-hw-linux
       cancel-in-progress: false
     timeout-minutes: 60
-    defaults:
-      run:
-        working-directory: go
     env:
       INPUT_HOSTNAME: ${{ inputs.hostname }}
       INPUT_TESTS: ${{ inputs.tests }}
@@ -258,8 +249,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Build CLI
         run: make build-cli

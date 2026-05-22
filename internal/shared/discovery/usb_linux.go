@@ -1,0 +1,77 @@
+//go:build linux
+
+package discovery
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"os/exec"
+	"strings"
+
+	"github.com/wendylabsinc/wendy/internal/shared/models"
+)
+
+// discoverUSB uses lsusb to find USB-connected Wendy devices on Linux.
+// lsusb output format: "Bus 001 Device 002: ID 1234:5678 Manufacturer Device Name"
+func discoverUSB(ctx context.Context) ([]models.USBDevice, error) {
+	cmd := exec.CommandContext(ctx, "lsusb")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("running lsusb: %w", err)
+	}
+
+	var devices []models.USBDevice
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		isWendy := strings.Contains(strings.ToLower(line), "wendy")
+		// Check for Espressif ESP32-C6 VID:PID.
+		esp32Match := strings.TrimPrefix(models.ESP32VendorID, "0x") + ":" + strings.TrimPrefix(models.ESP32ProductID, "0x")
+		isESP32 := strings.Contains(strings.ToLower(line), esp32Match)
+
+		if !isWendy && !isESP32 {
+			continue
+		}
+
+		dev := models.USBDevice{
+			IsWendyDevice: isWendy || isESP32,
+			IsESP32:       isESP32,
+		}
+
+		// Extract "ID VVVV:PPPP"
+		idIdx := strings.Index(line, "ID ")
+		if idIdx >= 0 {
+			rest := line[idIdx+3:]
+			fields := strings.SplitN(rest, " ", 2)
+			if len(fields) >= 1 {
+				vidpid := strings.SplitN(fields[0], ":", 2)
+				if len(vidpid) == 2 {
+					dev.VendorID = fmt.Sprintf("0x%s", vidpid[0])
+					dev.ProductID = fmt.Sprintf("0x%s", vidpid[1])
+				}
+			}
+			if len(fields) >= 2 {
+				dev.Name = strings.TrimSpace(fields[1])
+				dev.DisplayName = dev.Name
+			}
+		}
+
+		if dev.Name == "" {
+			if isESP32 {
+				dev.Name = "ESP32-C6"
+			} else {
+				dev.Name = "Wendy Device"
+			}
+			dev.DisplayName = dev.Name
+		}
+
+		if isESP32 {
+			dev.DisplayName = "ESP32-C6"
+		}
+
+		devices = append(devices, dev)
+	}
+	return devices, nil
+}

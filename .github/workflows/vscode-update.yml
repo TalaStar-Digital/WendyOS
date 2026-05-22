@@ -5,7 +5,7 @@ on:
     types: [closed]
     branches: [main]
     paths:
-      - 'go/internal/cli/commands/**'
+      - 'internal/cli/commands/**'
 
 jobs:
   vscode-update:

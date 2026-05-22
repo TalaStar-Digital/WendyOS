@@ -4,7 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'go/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'proto/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
       - 'swift/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
@@ -104,17 +109,14 @@ jobs:
             goarch: arm64
             product: wendy.exe
             cmd: wendy
-    defaults:
-      run:
-        working-directory: go
     steps:
       - uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Build
         env:
@@ -124,8 +126,8 @@ jobs:
         run: |
           VERSION="${{ needs.determine-version.outputs.version }}"
           LDFLAGS="-s -w -X github.com/wendylabsinc/wendy/internal/shared/version.Version=${VERSION}"
-          mkdir -p ../${{ matrix.artifact-name }}
-          go build -ldflags "${LDFLAGS}" -o ../${{ matrix.artifact-name }}/${{ matrix.product }} ./cmd/${{ matrix.cmd }}
+          mkdir -p ${{ matrix.artifact-name }}
+          go build -ldflags "${LDFLAGS}" -o ${{ matrix.artifact-name }}/${{ matrix.product }} ./cmd/${{ matrix.cmd }}
 
       - name: Create archive
         working-directory: .
@@ -160,17 +162,14 @@ jobs:
             goarch: arm64
           - artifact-name: wendy-cli-darwin-amd64
             goarch: amd64
-    defaults:
-      run:
-        working-directory: go
     steps:
       - uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Build
         env:
@@ -180,8 +179,8 @@ jobs:
         run: |
           VERSION="${{ needs.determine-version.outputs.version }}"
           LDFLAGS="-s -w -X github.com/wendylabsinc/wendy/internal/shared/version.Version=${VERSION}"
-          mkdir -p ../${{ matrix.artifact-name }}
-          go build -ldflags "${LDFLAGS}" -o ../${{ matrix.artifact-name }}/wendy ./cmd/wendy
+          mkdir -p ${{ matrix.artifact-name }}
+          go build -ldflags "${LDFLAGS}" -o ${{ matrix.artifact-name }}/wendy ./cmd/wendy
 
       - name: Create archive
         working-directory: .
@@ -569,7 +568,7 @@ jobs:
             -d ExePath="wendy-cli-windows-${{ matrix.goarch }}/wendy.exe" `
             -arch $MSI_ARCH `
             -o "wendy-cli-windows-${{ matrix.goarch }}-${VERSION}.msi" `
-            go/installer/windows/wendy.wxs
+            installer/windows/wendy.wxs
 
       - name: Sign MSI
         uses: azure/trusted-signing-action@v2.0.0
