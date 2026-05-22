@@ -929,10 +929,11 @@ func discoverPickerItems(items []discoverTableItem) []tui.PickerItem {
 }
 
 func discoverDisplayName(name, agentVer string) string {
+	name = discovery.SanitiseDisplayName(name)
 	if agentVer == "" {
 		return name
 	}
-	displayVersion := agentVer
+	displayVersion := discovery.SanitiseDisplayName(agentVer)
 	if version.CompareVersions(version.Version, agentVer) > 0 {
 		displayVersion += " ⚠"
 	}
@@ -961,9 +962,9 @@ func externalProviderDisplayName(key string) string {
 
 func externalProviderSortKey(providerKey, name string) string {
 	switch providerKey {
-	case "docker":
+	case providers.ProviderKeyDocker:
 		return "~0_" + strings.ToLower(name)
-	case "local":
+	case providers.ProviderKeyLocal:
 		return "~1_" + strings.ToLower(name)
 	}
 	return ""

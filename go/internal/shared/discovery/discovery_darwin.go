@@ -94,6 +94,9 @@ func dnssdBrowse(ctx context.Context, serviceType string) ([]browseResult, error
 			}
 			interfaceName := ""
 			if interfaceIndex, err := strconv.Atoi(fields[3]); err == nil {
+				// Silently falls through with empty interfaceName when the
+				// interface disappears between browse and resolve; USB detection
+				// will be skipped for that device rather than returning an error.
 				if iface, ifaceErr := net.InterfaceByIndex(interfaceIndex); ifaceErr == nil {
 					interfaceName = iface.Name
 				}
@@ -316,6 +319,9 @@ func deviceFromBrowse(inst browseResult, interfaceDisplayNames map[string]string
 
 // discoverLANContinuous keeps dns-sd -B running and sends each newly
 // discovered device to ch as it's resolved. Runs until ctx is cancelled.
+// linkSpeeds is intentionally not shared across goroutines — each call to
+// discoverLANContinuous owns its own map, and dnssdResolve is called
+// synchronously within the same goroutine, so no mutex is required.
 func discoverLANContinuous(ctx context.Context, ch chan<- models.LANDevice) {
 	defer close(ch)
 	interfaceDisplayNames := darwinInterfaceDisplayNameMap(ctx)

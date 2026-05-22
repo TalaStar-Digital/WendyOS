@@ -1061,8 +1061,12 @@ func mergePickerItem(existing *tui.PickerItem, incoming tui.PickerItem) {
 		md.LAN.NetworkInterface = nd.LAN.NetworkInterface
 	}
 	if nd.LAN != nil && nd.LAN.USB != "" && existing.USB == "" {
-		existing.USB = incoming.USB
-		existing.SortKey = incoming.SortKey
+		existing.USB = nd.LAN.USB
+		key := existing.DedupKey
+		if key == "" {
+			key = existing.Name
+		}
+		existing.SortKey = usbFirstSortKey(key, nd.LAN.USB)
 	}
 	if nd.Bluetooth != nil && md.Bluetooth == nil {
 		md.Bluetooth = nd.Bluetooth

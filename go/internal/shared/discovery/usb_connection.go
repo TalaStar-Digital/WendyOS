@@ -8,17 +8,42 @@ import (
 	"github.com/wendylabsinc/wendy/internal/shared/models"
 )
 
+// ansiEscapeRE matches ANSI/VT100 escape sequences (e.g. colour codes).
+var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// SanitiseDisplayName sanitises a device name or version string sourced from
+// the network (mDNS, TXT records) before it is rendered in the terminal.
+func SanitiseDisplayName(s string) string { return sanitiseNetworkString(s, 64) }
+
+// sanitiseNetworkString strips ANSI escape sequences and ASCII control
+// characters from a string sourced from the network, then truncates to maxLen.
+// This prevents terminal injection from rogue mDNS/DNS-SD advertisers.
+func sanitiseNetworkString(s string, maxLen int) string {
+	s = ansiEscapeRE.ReplaceAllString(s, "")
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 0x20 {
+			b.WriteRune(r)
+		}
+	}
+	s = strings.TrimSpace(b.String())
+	if maxLen > 0 && len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	return s
+}
+
 var linuxUSBInterfaceNameRE = regexp.MustCompile(`^en[a-z0-9]*u[0-9]+`)
 
 func setLANNetworkInterface(dev *models.LANDevice, interfaceName, displayName, linkSpeed string) {
-	interfaceName = strings.TrimSpace(interfaceName)
+	interfaceName = strings.TrimSpace(sanitiseNetworkString(interfaceName, 64))
 	if interfaceName == "" {
 		return
 	}
 
 	dev.NetworkInterface = interfaceName
 	if dev.USB == "" {
-		dev.USB = usbConnectionSummary(interfaceName, displayName, linkSpeed)
+		dev.USB = usbConnectionSummary(interfaceName, sanitiseNetworkString(displayName, 64), sanitiseNetworkString(linkSpeed, 32))
 	}
 }
 

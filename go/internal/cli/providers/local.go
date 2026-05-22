@@ -22,7 +22,7 @@ type localBuildContext struct {
 // LocalProvider builds and runs applications on the local machine.
 type LocalProvider struct{}
 
-func (p *LocalProvider) Key() string         { return "local" }
+func (p *LocalProvider) Key() string         { return ProviderKeyLocal }
 func (p *LocalProvider) DisplayName() string { return "This Device" }
 
 func (p *LocalProvider) IsAvailable(_ context.Context) bool { return true }

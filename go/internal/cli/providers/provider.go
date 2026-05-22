@@ -45,6 +45,12 @@ type BuiltApp struct {
 // RunOutputType classifies a line of output from a running app.
 type RunOutputType int
 
+// Provider key constants for the built-in providers.
+const (
+	ProviderKeyDocker = "docker"
+	ProviderKeyLocal  = "local"
+)
+
 const (
 	RunOutputStarted RunOutputType = iota
 	RunOutputStdout

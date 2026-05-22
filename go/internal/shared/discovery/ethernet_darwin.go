@@ -81,6 +81,10 @@ func parseDarwinHardwarePorts(output string) []darwinHardwarePort {
 			current = darwinHardwarePort{}
 		}
 	}
+	if scanner.Err() != nil {
+		// Return whatever was successfully parsed before the error.
+		return ports
+	}
 	return ports
 }
 
