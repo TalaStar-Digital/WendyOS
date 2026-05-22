@@ -671,7 +671,12 @@ func newDeviceLogsCmd() *cobra.Command {
 			if serviceName != "" {
 				req.ServiceName = &serviceName
 			}
-			if minSeverity > 0 {
+			// Default to INFO so dmesg debug/trace output is hidden unless the
+			// user explicitly requests a lower level.
+			if !cmd.Flags().Changed("level") && !cmd.Flags().Changed("min-severity") {
+				infoSev := parseSeverityLevel("info")
+				req.MinSeverity = &infoSev
+			} else if minSeverity > 0 {
 				req.MinSeverity = &minSeverity
 			}
 			stream, err := conn.TelemetryService.StreamLogs(ctx, req)

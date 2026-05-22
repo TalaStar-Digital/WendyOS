@@ -467,7 +467,8 @@ func (m dashboardModel) View() string {
 // --- Background stream goroutines ---
 
 func (m dashboardModel) runLogStream() {
-	req := &agentpb.StreamLogsRequest{}
+	infoSev := int32(otelpb.SeverityNumber_SEVERITY_NUMBER_INFO)
+	req := &agentpb.StreamLogsRequest{MinSeverity: &infoSev}
 	if m.appName != "" {
 		req.AppName = &m.appName
 	}
