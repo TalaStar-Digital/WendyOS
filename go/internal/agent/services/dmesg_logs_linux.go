@@ -8,30 +8,97 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
 
 	otelpb "github.com/wendylabsinc/wendy/proto/gen/otelpb"
 )
 
+const (
+	// dmesgMaxMsgsPerSec caps how many kernel messages are forwarded per second.
+	// During a kernel message burst (network storm, hardware fault) the kernel
+	// can emit thousands of messages/s; without this cap the scanner loop would
+	// saturate the broadcaster and degrade agent availability.
+	dmesgMaxMsgsPerSec = 500
+
+	// dmesgMaxMessageLen is the maximum byte length of a single kernel message
+	// body. The kernel's internal limit is ~1 KB but we clamp defensively.
+	dmesgMaxMessageLen = 4096
+
+	// minValidTimestampNs rejects computed timestamps earlier than year 2000
+	// as a guard against NTP step / boot-epoch computation errors.
+	minValidTimestampNs = 946684800 * int64(time.Second)
+
+	// maxFutureSkewNs rejects timestamps more than 24 h in the future.
+	maxFutureSkewNs = int64(24 * time.Hour)
+)
+
 // CollectDmesgLogs reads kernel messages from /dev/kmsg and publishes them as
 // OTel log records at debug/trace severity. It replays buffered kernel messages
 // first, then follows new ones. Blocks until ctx is cancelled.
-func CollectDmesgLogs(ctx context.Context, broadcaster *TelemetryBroadcaster) {
+//
+// NOTE: Raw kernel messages frequently contain operationally sensitive data
+// (MAC addresses, USB serial numbers, process names/PIDs, filesystem paths).
+// Callers should ensure the OTLP destination's data-processing agreement covers
+// this content and that local data-minimisation requirements are met.
+//
+// NOTE: All kernel severity levels (including KERN_EMERG/ALERT/CRIT) are
+// intentionally mapped into the OTel debug/trace band so dmesg output does not
+// surface in default INFO+ log views. See kernelLevelToOTEL for the mapping.
+// Operators who need EMERG/CRIT kernel events to trigger alerts should configure
+// a separate alerting path (e.g., /proc/kmsg reader or systemd journal forwarder)
+// rather than relying on this telemetry stream.
+func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *TelemetryBroadcaster) {
 	f, err := os.Open("/dev/kmsg")
 	if err != nil {
+		logger.Warn("dmesg collection unavailable", zap.Error(err))
 		return
 	}
-	// Close the file when ctx is done to unblock the blocking read.
+
+	// Use sync.Once so both the ctx-cancel goroutine and the defer always
+	// attempt to close the file, but only one close actually happens — avoiding
+	// the fd-reuse race that a double close() would introduce.
+	var closeOnce sync.Once
+	closeFile := func() { closeOnce.Do(func() { _ = f.Close() }) }
 	go func() {
 		<-ctx.Done()
-		f.Close()
+		closeFile()
 	}()
-	defer f.Close()
+	defer closeFile()
 
 	resource := dmesgResource()
 	bootEpoch := kmsgBootEpochNanoseconds()
+
+	// Simple sliding-window rate limiter: allow up to dmesgMaxMsgsPerSec
+	// messages per second; drop excess and log a summary of dropped messages.
+	var (
+		windowStart = time.Now()
+		windowCount int
+		windowDrop  int
+	)
+	rateAllow := func() bool {
+		now := time.Now()
+		if now.Sub(windowStart) >= time.Second {
+			if windowDrop > 0 {
+				logger.Debug("dmesg rate limit: messages dropped in last second",
+					zap.Int("dropped", windowDrop),
+					zap.Int("forwarded", windowCount),
+				)
+			}
+			windowStart = now
+			windowCount = 0
+			windowDrop = 0
+		}
+		if windowCount >= dmesgMaxMsgsPerSec {
+			windowDrop++
+			return false
+		}
+		windowCount++
+		return true
+	}
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -45,14 +112,15 @@ func CollectDmesgLogs(ctx context.Context, broadcaster *TelemetryBroadcaster) {
 		if !ok {
 			continue
 		}
-
-		var timeNano uint64
-		if bootEpoch > 0 && tsUS > 0 {
-			timeNano = uint64(bootEpoch + tsUS*1000)
-		} else {
-			timeNano = uint64(time.Now().UnixNano())
+		if len(message) > dmesgMaxMessageLen {
+			message = message[:dmesgMaxMessageLen]
 		}
 
+		if !rateAllow() {
+			continue
+		}
+
+		timeNano := kmsgTimestampToWall(tsUS, bootEpoch)
 		severity, severityText := kernelLevelToOTEL(level)
 		broadcaster.PublishLogs(&otelpb.ExportLogsServiceRequest{
 			ResourceLogs: []*otelpb.ResourceLogs{
@@ -92,8 +160,9 @@ func dmesgResource() *otelpb.Resource {
 	return &otelpb.Resource{Attributes: attrs}
 }
 
-// kmsgBootEpochNanoseconds returns the Unix nanosecond timestamp of the kernel
-// boot instant, computed from CLOCK_BOOTTIME. Returns 0 on failure.
+// kmsgBootEpochNanoseconds returns the wall-clock Unix nanosecond timestamp
+// corresponding to the kernel boot instant, computed from CLOCK_BOOTTIME.
+// Returns 0 if unavailable.
 func kmsgBootEpochNanoseconds() int64 {
 	var ts unix.Timespec
 	if err := unix.ClockGettime(unix.CLOCK_BOOTTIME, &ts); err != nil {
@@ -101,6 +170,21 @@ func kmsgBootEpochNanoseconds() int64 {
 	}
 	bootNowNs := ts.Sec*int64(time.Second) + ts.Nsec
 	return time.Now().UnixNano() - bootNowNs
+}
+
+// kmsgTimestampToWall converts a kernel timestamp (microseconds since boot) to
+// a wall-clock Unix nanosecond value. If the computed value falls outside a
+// plausible range (before year 2000, or more than 24 h in the future) it falls
+// back to time.Now() to guard against NTP steps or boot-epoch skew.
+func kmsgTimestampToWall(tsUS int64, bootEpoch int64) uint64 {
+	now := time.Now().UnixNano()
+	if bootEpoch > 0 && tsUS > 0 {
+		computed := bootEpoch + tsUS*1000
+		if computed >= minValidTimestampNs && computed-now <= maxFutureSkewNs {
+			return uint64(computed)
+		}
+	}
+	return uint64(now)
 }
 
 // parseKmsgLine parses a /dev/kmsg record of the form:
@@ -134,6 +218,12 @@ func parseKmsgLine(line string) (level int, message string, timestampUS int64, o
 // within the debug/trace band. Kernel debug messages map to trace; higher
 // kernel severity maps upward within the debug sub-levels so that relative
 // ordering is preserved while keeping all dmesg output below INFO.
+//
+// KERN_EMERG (0), KERN_ALERT (1), and KERN_CRIT (2) are intentionally capped
+// at DEBUG4 rather than mapped to FATAL/ERROR. This is a deliberate design
+// choice: these events are collected for diagnostic purposes and should not
+// surface in default INFO+ alert rules. See the CollectDmesgLogs doc comment
+// for guidance on routing critical kernel events to separate alert channels.
 func kernelLevelToOTEL(level int) (otelpb.SeverityNumber, string) {
 	switch level {
 	case 7: // KERN_DEBUG

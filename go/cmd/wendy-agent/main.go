@@ -271,11 +271,15 @@ func main() {
 	}()
 
 	// Collect kernel messages from /dev/kmsg as OTel debug/trace logs.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		services.CollectDmesgLogs(ctx, broadcaster)
-	}()
+	// Set WENDY_COLLECT_DMESG=false to disable (e.g. in environments where
+	// kernel messages contain sensitive data that must not leave the device).
+	if os.Getenv("WENDY_COLLECT_DMESG") != "false" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			services.CollectDmesgLogs(ctx, logger, broadcaster)
+		}()
+	}
 
 	// Main agent gRPC server port.
 	agentPort := defaultAgentPort
