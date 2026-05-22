@@ -3,11 +3,12 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"time"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"github.com/wendylabsinc/wendy/internal/cli/tui"
@@ -183,16 +184,11 @@ func playVideoWithGStreamer(ctx context.Context, stream videoStream) error {
 	}
 }
 
-// recvResult carries one stream.Recv outcome from the receive goroutine to the
-// frame consumer.
-type recvResult struct {
-	frame *agentpb.VideoFrame
-	err   error
-}
-
 // feedGStreamer writes the codec byte stream to GStreamer's stdin until the
-// video stream ends. For H.264 it first drops the backlog that accumulated
-// while gst-launch was starting, so playback begins near real time. A VP8/WebM
+// video stream ends. For H.264 it continuously drops the backlog ahead of the
+// most recent keyframe whenever the writer falls behind — chiefly while
+// gst-launch is still starting and its stdin pipe back-pressures — so the
+// preview plays near real time instead of replaying stale video. A VP8/WebM
 // stream cannot be joined mid-container, so its frames are written verbatim.
 func feedGStreamer(ctx context.Context, stream videoStream, first *agentpb.VideoFrame, codec agentpb.VideoCodec, stdin io.Writer) error {
 	if codec == agentpb.VideoCodec_VIDEO_CODEC_VP8 {
@@ -213,93 +209,109 @@ func feedGStreamer(ctx context.Context, stream videoStream, first *agentpb.Video
 		}
 	}
 
-	// H.264: a dedicated receive goroutine feeds a channel so the startup
-	// drain can bound how long it waits for the next frame.
-	frames := make(chan recvResult, 8)
+	// H.264: receive frames into a buffer that keeps only the most recent
+	// keyframe onward while the writer is behind, then write the freshest
+	// available bytes to GStreamer.
+	feed := newH264FeedBuffer()
+	feed.push(first.GetData())
 	go func() {
 		for {
-			f, err := stream.Recv()
-			select {
-			case frames <- recvResult{frame: f, err: err}:
-			case <-ctx.Done():
-				return
-			}
+			frame, err := stream.Recv()
 			if err != nil {
+				feed.close(err)
 				return
 			}
+			feed.push(frame.GetData())
 		}
 	}()
 
-	pending, err := drainStartupBacklogH264(ctx, frames, first)
-	if err != nil {
-		return err
-	}
-	if _, err := stdin.Write(pending); err != nil {
-		return fmt.Errorf("writing to GStreamer: %w", err)
-	}
 	for {
-		select {
-		case <-ctx.Done():
+		data, err, done := feed.take(ctx)
+		if len(data) > 0 {
+			if _, werr := stdin.Write(data); werr != nil {
+				return fmt.Errorf("writing to GStreamer: %w", werr)
+			}
+		}
+		if done {
+			if err != nil && !errors.Is(err, io.EOF) {
+				return fmt.Errorf("receiving video: %w", err)
+			}
 			return nil
-		case r := <-frames:
-			if r.err == io.EOF {
-				return nil
-			}
-			if r.err != nil {
-				return fmt.Errorf("receiving video: %w", r.err)
-			}
-			if _, err := stdin.Write(r.frame.GetData()); err != nil {
-				return fmt.Errorf("writing to GStreamer: %w", err)
-			}
 		}
 	}
 }
 
-// startupBacklogGap bounds how long the H.264 startup drain waits for the next
-// frame before concluding the spawn-time backlog is exhausted. It must exceed
-// the sub-millisecond inter-arrival of buffered backlog frames and stay below
-// the real-time inter-frame interval at 60fps (~16.7ms). Declared as a var so
-// tests can shorten it.
-var startupBacklogGap = 12 * time.Millisecond
+// h264FeedBuffer holds H.264 Annex-B bytes received from the stream but not yet
+// written to the decoder. Whenever bytes go unconsumed — chiefly while
+// gst-launch is still starting and its stdin pipe back-pressures — the buffer
+// is trimmed to the most recent keyframe so stale video is dropped instead of
+// being committed to the decoder and replayed as latency. Bytes that the
+// consumer takes promptly are passed through untrimmed, so steady-state
+// playback is a contiguous stream.
+type h264FeedBuffer struct {
+	mu     sync.Mutex
+	buf    []byte
+	err    error
+	closed bool
+	signal chan struct{} // buffered (cap 1); a value means buf/closed changed
+}
 
-// drainStartupBacklogH264 consumes the H.264 frames that piled up while
-// gst-launch was starting and returns the bytes to feed the decoder first:
-// everything from the most recent keyframe onward. Backlog frames arrive in a
-// tight burst and are dropped up to that keyframe; the drain ends once a frame
-// takes longer than startupBacklogGap to arrive (the camera's real cadence) or
-// the stream ends. Ending early or late is graceful — the result always begins
-// at a keyframe, and the decoder's leaky queue drops any remaining backlog.
-func drainStartupBacklogH264(ctx context.Context, frames <-chan recvResult, first *agentpb.VideoFrame) ([]byte, error) {
-	var pending []byte
-	keep := func(data []byte) {
-		if off, ok := lastKeyframeOffset(data); ok {
-			pending = append(pending[:0], data[off:]...)
-		} else {
-			pending = append(pending, data...)
-		}
+func newH264FeedBuffer() *h264FeedBuffer {
+	return &h264FeedBuffer{signal: make(chan struct{}, 1)}
+}
+
+// wake delivers a non-blocking notification to a waiting take.
+func (b *h264FeedBuffer) wake() {
+	select {
+	case b.signal <- struct{}{}:
+	default:
 	}
-	keep(first.GetData())
+}
 
-	timer := time.NewTimer(startupBacklogGap)
-	defer timer.Stop()
+// push appends a frame's bytes, then drops any not-yet-taken backlog ahead of
+// the most recent keyframe so the consumer never receives stale video.
+func (b *h264FeedBuffer) push(data []byte) {
+	b.mu.Lock()
+	b.buf = append(b.buf, data...)
+	if off, ok := lastKeyframeOffset(b.buf); ok && off > 0 {
+		b.buf = b.buf[off:]
+	}
+	b.mu.Unlock()
+	b.wake()
+}
+
+// close marks the stream finished; err is the terminating error (io.EOF on a
+// clean end).
+func (b *h264FeedBuffer) close(err error) {
+	b.mu.Lock()
+	b.err, b.closed = err, true
+	b.mu.Unlock()
+	b.wake()
+}
+
+// take blocks until buffered bytes, stream termination, or context
+// cancellation. It returns the buffered bytes (clearing them from the buffer);
+// done is true once the stream has ended and all bytes have been taken, with
+// err the terminating error (nil or io.EOF on a clean end, nil on cancellation).
+func (b *h264FeedBuffer) take(ctx context.Context) (data []byte, err error, done bool) {
 	for {
+		b.mu.Lock()
+		if len(b.buf) > 0 {
+			data, b.buf = b.buf, nil
+			b.mu.Unlock()
+			return data, nil, false
+		}
+		if b.closed {
+			err = b.err
+			b.mu.Unlock()
+			return nil, err, true
+		}
+		b.mu.Unlock()
+
 		select {
+		case <-b.signal:
 		case <-ctx.Done():
-			return pending, nil
-		case <-timer.C:
-			return pending, nil
-		case r := <-frames:
-			if r.err == io.EOF {
-				return pending, nil
-			}
-			if r.err != nil {
-				return nil, fmt.Errorf("receiving video: %w", r.err)
-			}
-			keep(r.frame.GetData())
-			if !timer.Stop() {
-				<-timer.C
-			}
-			timer.Reset(startupBacklogGap)
+			return nil, nil, true
 		}
 	}
 }

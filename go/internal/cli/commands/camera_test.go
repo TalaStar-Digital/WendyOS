@@ -236,47 +236,106 @@ func TestLastKeyframeOffset_Empty(t *testing.T) {
 	}
 }
 
-func TestDrainStartupBacklogH264_SkipsToMostRecentKeyframe(t *testing.T) {
+func TestH264FeedBuffer_PushTakeRoundTrips(t *testing.T) {
+	feed := newH264FeedBuffer()
+	idr := joinBytes(h264NAL(nalHdrSPS), h264NAL(nalHdrIDR, 0x11))
+	feed.push(idr)
+
+	data, err, done := feed.take(context.Background())
+	if err != nil || done {
+		t.Fatalf("take: err=%v done=%v", err, done)
+	}
+	if !bytes.Equal(data, idr) {
+		t.Errorf("take returned %v, want %v", data, idr)
+	}
+}
+
+func TestH264FeedBuffer_DropsBacklogAheadOfKeyframe(t *testing.T) {
+	feed := newH264FeedBuffer()
 	idr1 := joinBytes(h264NAL(nalHdrSPS), h264NAL(nalHdrIDR, 0x11))
 	p1 := h264NAL(nalHdrP, 0x22)
 	idr2 := joinBytes(h264NAL(nalHdrSPS), h264NAL(nalHdrIDR, 0x33))
 	p2 := h264NAL(nalHdrP, 0x44)
 
-	frames := make(chan recvResult, 4)
-	frames <- recvResult{frame: &agentpb.VideoFrame{Data: p1}}
-	frames <- recvResult{frame: &agentpb.VideoFrame{Data: idr2}}
-	frames <- recvResult{frame: &agentpb.VideoFrame{Data: p2}}
-	frames <- recvResult{err: io.EOF}
+	// The writer never takes between pushes — gst-launch still starting up.
+	feed.push(idr1)
+	feed.push(p1)
+	feed.push(idr2)
+	feed.push(p2)
 
-	pending, err := drainStartupBacklogH264(context.Background(), frames, &agentpb.VideoFrame{Data: idr1})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	data, _, _ := feed.take(context.Background())
 	want := joinBytes(idr2, p2)
-	if !bytes.Equal(pending, want) {
-		t.Errorf("drain kept %v, want %v (most recent keyframe onward)", pending, want)
+	if !bytes.Equal(data, want) {
+		t.Errorf("take returned %v, want %v (backlog before the latest keyframe dropped)", data, want)
 	}
 }
 
-func TestDrainStartupBacklogH264_NoBacklogKeepsFirstFrame(t *testing.T) {
-	idr := joinBytes(h264NAL(nalHdrSPS), h264NAL(nalHdrIDR, 0x11))
-	frames := make(chan recvResult) // nothing arrives — drain ends on the idle gap
-
-	pending, err := drainStartupBacklogH264(context.Background(), frames, &agentpb.VideoFrame{Data: idr})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !bytes.Equal(pending, idr) {
-		t.Errorf("drain kept %v, want the first frame %v", pending, idr)
-	}
-}
-
-func TestDrainStartupBacklogH264_StreamError(t *testing.T) {
+func TestH264FeedBuffer_KeepsContiguousBytesWhenWriterKeepsUp(t *testing.T) {
+	feed := newH264FeedBuffer()
 	idr := joinBytes(h264NAL(nalHdrSPS), h264NAL(nalHdrIDR))
-	frames := make(chan recvResult, 1)
-	frames <- recvResult{err: errors.New("boom")}
+	p1 := h264NAL(nalHdrP, 0x01)
+	p2 := h264NAL(nalHdrP, 0x02)
 
-	if _, err := drainStartupBacklogH264(context.Background(), frames, &agentpb.VideoFrame{Data: idr}); err == nil {
-		t.Fatal("expected the stream error to propagate, got nil")
+	feed.push(idr)
+	if d, _, _ := feed.take(context.Background()); !bytes.Equal(d, idr) {
+		t.Fatalf("first take = %v, want %v", d, idr)
+	}
+	// P-frames with no newer keyframe must not be dropped when taken promptly.
+	feed.push(p1)
+	if d, _, _ := feed.take(context.Background()); !bytes.Equal(d, p1) {
+		t.Errorf("take = %v, want %v", d, p1)
+	}
+	feed.push(p2)
+	if d, _, _ := feed.take(context.Background()); !bytes.Equal(d, p2) {
+		t.Errorf("take = %v, want %v", d, p2)
+	}
+}
+
+func TestH264FeedBuffer_TakeDrainsBufferedBytesBeforeReportingEnd(t *testing.T) {
+	feed := newH264FeedBuffer()
+	idr := joinBytes(h264NAL(nalHdrSPS), h264NAL(nalHdrIDR))
+	feed.push(idr)
+	feed.close(io.EOF)
+
+	data, _, done := feed.take(context.Background())
+	if done || !bytes.Equal(data, idr) {
+		t.Fatalf("first take = %v done=%v, want the buffered bytes", data, done)
+	}
+	if _, _, done = feed.take(context.Background()); !done {
+		t.Error("expected done on the second take")
+	}
+}
+
+func TestH264FeedBuffer_TakePropagatesError(t *testing.T) {
+	feed := newH264FeedBuffer()
+	feed.close(errors.New("boom"))
+
+	_, err, done := feed.take(context.Background())
+	if !done || err == nil {
+		t.Fatalf("expected a terminal error, got err=%v done=%v", err, done)
+	}
+}
+
+func TestH264FeedBuffer_TakeUnblocksOnContextCancel(t *testing.T) {
+	feed := newH264FeedBuffer()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, _, done := feed.take(ctx); !done {
+		t.Error("expected take to report done when the context is cancelled")
+	}
+}
+
+func TestH264FeedBuffer_TakeBlocksUntilPush(t *testing.T) {
+	feed := newH264FeedBuffer()
+	idr := joinBytes(h264NAL(nalHdrSPS), h264NAL(nalHdrIDR))
+	go feed.push(idr)
+
+	data, err, done := feed.take(context.Background())
+	if err != nil || done {
+		t.Fatalf("take: err=%v done=%v", err, done)
+	}
+	if !bytes.Equal(data, idr) {
+		t.Errorf("take = %v, want %v", data, idr)
 	}
 }
