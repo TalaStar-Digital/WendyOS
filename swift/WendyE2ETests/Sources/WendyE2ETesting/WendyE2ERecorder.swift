@@ -448,6 +448,20 @@ public struct WendyE2ERecorder: Sendable {
     ) -> String {
         let machine = session.machine
         let tags = machine.tags.map(\.rawValue).sorted().joined(separator: ", ")
+        let environment = session.env
+        let redactedCommand = Self.redactedRecordingText(command, environment: environment)
+        let redactedWorkingDirectory = Self.redactedRecordingText(
+            session.workingDirectory ?? "<none>",
+            environment: environment
+        )
+        let redactedStandardOutput = Self.redactedRecordingText(
+            standardOutput,
+            environment: environment
+        )
+        let redactedStandardError = Self.redactedRecordingText(
+            standardError,
+            environment: environment
+        )
 
         return """
 
@@ -462,8 +476,8 @@ public struct WendyE2ERecorder: Sendable {
             - Tags: `\(tags.isEmpty ? "<none>" : tags)`
             - User: `\(machine.user ?? "<none>")`
             - Address: `\(machine.address)`
-            - Working directory: `\(session.workingDirectory ?? "<none>")`
-            - Command: `\(command)`
+            - Working directory: `\(redactedWorkingDirectory)`
+            - Command: `\(redactedCommand)`
             - Process ID: `\(processID ?? "<unavailable>")`
             - Termination status: `\(status)`
             - Duration: `\(duration)`
@@ -471,19 +485,19 @@ public struct WendyE2ERecorder: Sendable {
             ### environment
 
             ```text
-            \(Self.environmentDescription(session.env))
+            \(Self.redactedEnvironmentDescription(environment))
             ```
 
             ### stdout
 
             ```text
-            \(standardOutput)
+            \(redactedStandardOutput)
             ```
 
             ### stderr
 
             ```text
-            \(standardError)
+            \(redactedStandardError)
             ```
 
             """
@@ -515,8 +529,10 @@ public struct WendyE2ERecorder: Sendable {
             contentsOf: Data(
                 Self.shellScriptCommand(
                     machine: session.machine,
-                    command: command,
-                    harnessPrefix: harnessPrefix,
+                    command: Self.redactedRecordingText(command, environment: session.env),
+                    harnessPrefix: harnessPrefix.map {
+                        Self.redactedRecordingText($0, environment: session.env)
+                    },
                     isPowerShell: isPowerShell
                 ).utf8
             )
@@ -681,14 +697,90 @@ public struct WendyE2ERecorder: Sendable {
         }
     }
 
-    private static func environmentDescription(_ environment: [String: String]) -> String {
+    static func redactedEnvironmentDescription(_ environment: [String: String]) -> String {
         guard !environment.isEmpty else {
             return "<none>"
         }
 
         return environment.keys.sorted().map { key in
-            "\(key)=\(environment[key] ?? "")"
+            let value = environment[key] ?? ""
+            let redactedValue = Self.isSensitiveEnvironmentKey(key) ? Self.redactedValue : value
+            return "\(key)=\(redactedValue)"
         }.joined(separator: "\n")
+    }
+
+    static func redactedRecordingText(
+        _ text: String,
+        environment: [String: String]
+    ) -> String {
+        var redacted = text
+        for value in Self.sensitiveEnvironmentValues(environment) {
+            redacted = redacted.replacingOccurrences(of: value, with: Self.redactedValue)
+        }
+
+        return Self.redactingSensitiveAssignments(redacted)
+    }
+
+    private static let redactedValue = "<redacted>"
+
+    private static let sensitiveEnvironmentNamePattern =
+        "[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|AUTHORIZATION|CREDENTIAL)[A-Za-z0-9_]*"
+
+    private static func isSensitiveEnvironmentKey(_ key: String) -> Bool {
+        let normalized = key.uppercased()
+        return normalized.contains("TOKEN")
+            || normalized.contains("SECRET")
+            || normalized.contains("PASSWORD")
+            || normalized.contains("PASSWD")
+            || normalized.contains("API_KEY")
+            || normalized.contains("ACCESS_KEY")
+            || normalized.contains("PRIVATE_KEY")
+            || normalized.contains("AUTHORIZATION")
+            || normalized.contains("CREDENTIAL")
+    }
+
+    private static func sensitiveEnvironmentValues(_ environment: [String: String]) -> [String] {
+        environment
+            .filter { key, value in
+                Self.isSensitiveEnvironmentKey(key) && value.count >= 4
+            }
+            .map(\.value)
+            .sorted { lhs, rhs in lhs.count > rhs.count }
+    }
+
+    private static func redactingSensitiveAssignments(_ text: String) -> String {
+        var redacted = text
+        let namePlaceholder = "__WENDY_E2E_SECRET_ENV_NAME__"
+        let assignmentPatterns = [
+            #"\b((?:export\s+)?__WENDY_E2E_SECRET_ENV_NAME__\s*=\s*)(?:"[^"]*"|'[^']*'|[^\s;&|]+)"#,
+            #"(\$env:__WENDY_E2E_SECRET_ENV_NAME__\s*=\s*)(?:"[^"]*"|'[^']*'|[^\r\n;]+)"#,
+            #"\b(set\s+"?__WENDY_E2E_SECRET_ENV_NAME__=)(?:[^"\r\n]*"?|[^\r\n]*)"#,
+        ]
+
+        for patternTemplate in assignmentPatterns {
+            let pattern = patternTemplate.replacingOccurrences(
+                of: namePlaceholder,
+                with: Self.sensitiveEnvironmentNamePattern
+            )
+            guard
+                let regex = try? NSRegularExpression(
+                    pattern: pattern,
+                    options: [.caseInsensitive]
+                )
+            else {
+                continue
+            }
+
+            let range = NSRange(redacted.startIndex..<redacted.endIndex, in: redacted)
+            redacted = regex.stringByReplacingMatches(
+                in: redacted,
+                options: [],
+                range: range,
+                withTemplate: "$1\(Self.redactedValue)"
+            )
+        }
+
+        return redacted
     }
 
     private static func printToStandardError(_ message: String) {
