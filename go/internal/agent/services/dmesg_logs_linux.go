@@ -55,10 +55,15 @@ var piiPatterns = regexp.MustCompile(
 		`|(?:[0-9a-f]{2}-){5}[0-9a-f]{2}` +
 		// IPv4 address
 		`|\b(?:\d{1,3}\.){3}\d{1,3}\b` +
-		// USB serial number (e.g. "SerialNumber: ABC123DEF")
+		// USB serial number variants (e.g. "SerialNumber: ABC123DEF", "ID_SERIAL=XYZ")
 		`|SerialNumber:\s+\S+` +
+		`|ID_SERIAL(?:_SHORT)?=\S+` +
 		// OOM killer: process name+PID (e.g. "Kill process 1234 (nginx)")
 		`|Kill(?:ed)?\s+process\s+\d+\s+\([^)]+\)` +
+		// Filesystem paths containing usernames
+		`|/(?:home|Users|root)/[^\s/]+` +
+		// Kernel process name annotations (e.g. "comm=nginx")
+		`|comm=\S+` +
 		`)`,
 )
 
@@ -87,6 +92,9 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 	if v, err := strconv.ParseBool(os.Getenv("WENDY_DMESG_REDACT")); err == nil {
 		redact = v
 	}
+
+	// Capture hostname once for per-message redaction and resource gating.
+	hostname, _ := os.Hostname()
 
 	f, err := os.Open("/dev/kmsg")
 	if err != nil {
@@ -139,7 +147,7 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 	}()
 	defer closeFile()
 
-	resource := dmesgResource()
+	resource := dmesgResource(redact, hostname)
 	bootEpoch := kmsgBootEpochNanoseconds()
 
 	// Sliding-window rate limiter for non-critical messages only.
@@ -188,6 +196,11 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 		}
 		if redact {
 			message = piiPatterns.ReplaceAllString(message, "<redacted>")
+			// Redact the hostname literal separately; regex-escaping it at
+			// compile time is not possible since it is only known at runtime.
+			if hostname != "" {
+				message = strings.ReplaceAll(message, hostname, "<redacted>")
+			}
 		}
 
 		isCritical := level <= 2 // KERN_EMERG, KERN_ALERT, KERN_CRIT
@@ -245,13 +258,16 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 }
 
 // dmesgResource returns the OTel resource for kernel log records.
-func dmesgResource() *otelpb.Resource {
+// When redact is true, service.instance.id (hostname) is omitted to avoid
+// leaking a device-identifying value through the resource attributes
+// independently of the per-message PII redaction.
+func dmesgResource(redact bool, hostname string) *otelpb.Resource {
 	attrs := []*otelpb.KeyValue{
 		stringKV("service.name", "kernel"),
 		stringKV("service.namespace", "wendy"),
 	}
-	if h := resolveHostname(); h != "" {
-		attrs = append(attrs, stringKV("service.instance.id", h))
+	if !redact && hostname != "" {
+		attrs = append(attrs, stringKV("service.instance.id", hostname))
 	}
 	return &otelpb.Resource{Attributes: attrs}
 }
