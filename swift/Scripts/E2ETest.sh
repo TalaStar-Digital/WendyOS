@@ -547,7 +547,7 @@ write_attempt_info() {
 
   {
     echo "{"
-    printf '  "kind": '; json_string "swift-e2e-attempt"; echo ","
+    printf '  "kind": '; json_string "wendy-e2e-attempt"; echo ","
     printf '  "version": 1,\n'
     printf '  "attemptID": '; json_string "$RUN_ID"; echo ","
     printf '  "createdAt": '; json_string "$created_at"; echo ","

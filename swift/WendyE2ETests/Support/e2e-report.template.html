@@ -879,6 +879,90 @@
       margin: 12px 0 10px;
     }
 
+    .ai-review + .ai-review {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--green-line);
+    }
+
+    .ai-review h5 {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0 0 6px;
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.35;
+      letter-spacing: -.01em;
+      text-transform: none;
+    }
+
+    .ai-review-title {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .ai-reviewer-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      flex: 0 0 auto;
+      max-width: 240px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--card);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1.35;
+      padding: 2px 8px 2px 4px;
+    }
+
+    .ai-reviewer-logo {
+      display: inline-grid;
+      place-items: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      color: #fff;
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    .ai-reviewer-model {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .ai-reviewer-badge.anthropic {
+      border-color: rgba(217, 119, 6, .35);
+      color: #d97706;
+    }
+
+    .ai-reviewer-badge.anthropic .ai-reviewer-logo {
+      background: #d97706;
+    }
+
+    .ai-reviewer-badge.openai {
+      border-color: rgba(37, 99, 235, .35);
+      color: #2563eb;
+    }
+
+    .ai-reviewer-badge.openai .ai-reviewer-logo {
+      background: #2563eb;
+    }
+
+    .ai-reviewer-badge.unknown .ai-reviewer-logo {
+      background: var(--muted);
+    }
+
+    .ai-review h5 .ai-review-details-link {
+      margin-left: auto;
+      flex: 0 0 auto;
+    }
+
     .ai-review-markdown {
       color: var(--text);
       font-size: 14px;
@@ -1210,8 +1294,8 @@
       <span class="filter-count" data-filter-count>{{VISIBLE_TEST_COUNT}} of {{TOTAL_TEST_COUNT}} tests shown</span>
     </section>
 
-    <!-- Repeat this .card section once per test file. Use prose display names, e.g. WendyAnalyticsTests.swift → Wendy Analytics. -->
-    <section class="card" data-test-file-card>
+    <!-- Repeat this .card section once per test file. Use prose display names, e.g. WendyAnalyticsTests.swift → Wendy Analytics. Set data-has-ai-review to true when the suite/file has generated AI review notes. -->
+    <section class="card" data-test-file-card data-has-ai-review="{{SUITE_HAS_AI_REVIEW}}">
       <div class="card-title">
         <h2>{{TEST_FILE_DISPLAY_NAME}}</h2>
       </div>
@@ -1386,7 +1470,10 @@
 
         for (const card of cards) {
           const hasVisibleTest = Boolean(card.querySelector('[data-test-status]:not(.is-hidden)'));
-          card.classList.toggle('is-hidden', !hasVisibleTest);
+          const suiteAIMatches = activeFilter === 'ai'
+            && card.dataset.hasAiReview === 'true'
+            && (query === '' || card.textContent.toLowerCase().includes(query));
+          card.classList.toggle('is-hidden', !(hasVisibleTest || suiteAIMatches));
         }
 
         for (const button of buttons) {

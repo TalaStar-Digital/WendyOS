@@ -306,29 +306,26 @@ private struct ReportTestCase {
     var nextLine = 0
     var aiItems: [String] = []
     var recordName = ""
-    var aiReview: AIReview?
+    var aiReviews: [E2EReview] = []
     var commands: [CommandRun] = []
 
     var aiReviewMarkdown: String {
-        aiReview?.markdown ?? ""
+        aiReviews.map { review in
+            "# \(review.title)\n\n\(review.summaryMarkdown)"
+        }.joined(separator: "\n\n")
     }
 }
 
-private struct AIReview {
-    var markdown: String
-    var detailsPath: String?
-}
-
 private struct RunAIReviews {
-    var root: AIReview?
-    var suites: [String: AIReview] = [:]
-    var tests: [RunPathKey: AIReview] = [:]
+    var root: [E2EReview] = []
+    var suites: [String: [E2EReview]] = [:]
+    var tests: [RunPathKey: [E2EReview]] = [:]
 }
 
 private struct ReportTestFile {
     var url: URL
     var suiteKey: String
-    var suiteReview: AIReview?
+    var suiteReviews: [E2EReview]
     var tests: [ReportTestCase]
 }
 
@@ -360,76 +357,35 @@ private func loadRunAIReviews(in runURL: URL) throws -> RunAIReviews {
     }
 
     var reviews = RunAIReviews(
-        root: try loadAIReview(
-            summaryURL: runURL.appendingPathComponent("review.summary.md"),
-            detailsURL: runURL.appendingPathComponent("review.details.md"),
-            runURL: runURL
-        )
+        root: try loadE2EReviews(in: runURL, expectedScope: "report", relativeTo: runURL)
     )
 
     for suiteURL in try directoryChildren(of: runURL) {
         let suiteKey = suiteURL.lastPathComponent
-        if let suiteReview = try loadAIReview(
-            summaryURL: suiteURL.appendingPathComponent("review.summary.md"),
-            detailsURL: suiteURL.appendingPathComponent("review.details.md"),
-            runURL: runURL
-        ) {
-            reviews.suites[suiteKey] = suiteReview
+        guard !isE2EReviewDirectoryName(suiteKey) else { continue }
+        let suiteReviews = try loadE2EReviews(
+            in: suiteURL,
+            expectedScope: "suite",
+            relativeTo: runURL
+        )
+        if !suiteReviews.isEmpty {
+            reviews.suites[suiteKey] = suiteReviews
         }
 
         for testURL in try directoryChildren(of: suiteURL) {
             let testKey = testURL.lastPathComponent
-            if let testReview = try loadAIReview(
-                summaryURL: testURL.appendingPathComponent("review.summary.md"),
-                detailsURL: testURL.appendingPathComponent("review.details.md"),
-                runURL: runURL
-            ) {
-                reviews.tests[RunPathKey(suiteKey: suiteKey, testKey: testKey)] = testReview
+            let testReviews = try loadE2EReviews(
+                in: testURL,
+                expectedScope: "test",
+                relativeTo: runURL
+            )
+            if !testReviews.isEmpty {
+                reviews.tests[RunPathKey(suiteKey: suiteKey, testKey: testKey)] = testReviews
             }
         }
     }
 
     return reviews
-}
-
-private func loadAIReview(summaryURL: URL, detailsURL: URL, runURL: URL) throws -> AIReview? {
-    guard FileManager.default.fileExists(atPath: summaryURL.path) else {
-        return nil
-    }
-
-    let review = try String(contentsOf: summaryURL, encoding: .utf8)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard isBulletListAIReviewSummary(review) else {
-        return nil
-    }
-    guard FileManager.default.fileExists(atPath: detailsURL.path) else {
-        return nil
-    }
-    let details = try String(contentsOf: detailsURL, encoding: .utf8)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !details.isEmpty, !containsAIReviewStatusLine(details) else {
-        return nil
-    }
-
-    return AIReview(
-        markdown: review,
-        detailsPath: relativePath(from: runURL, to: detailsURL)
-    )
-}
-
-private func isBulletListAIReviewSummary(_ markdown: String) -> Bool {
-    let lines = markdown.components(separatedBy: .newlines)
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-    return !lines.isEmpty && lines.allSatisfy { $0.hasPrefix("- ") || $0.hasPrefix("* ") }
-}
-
-private func containsAIReviewStatusLine(_ markdown: String) -> Bool {
-    markdown.components(separatedBy: .newlines).contains { line in
-        line.trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .hasPrefix("status:")
-    }
 }
 
 private func commandRecordURLs(in runURL: URL) throws -> [URL] {
@@ -527,6 +483,7 @@ private func loadRunTestResults(
 
     for suiteURL in try directoryChildren(of: runURL) {
         let suiteKey = suiteURL.lastPathComponent
+        guard !isE2EReviewDirectoryName(suiteKey) else { continue }
         for testURL in try directoryChildren(of: suiteURL) {
             let testKey = testURL.lastPathComponent
             let pathKey = RunPathKey(suiteKey: suiteKey, testKey: testKey)
@@ -962,7 +919,7 @@ private func parseTests(
                 tests[testIndex].recordName = nestedRecordName
             }
             let key = RunPathKey(suiteKey: recordSuiteKey, testKey: recordTestKey)
-            tests[testIndex].aiReview = aiReviews.tests[key]
+            tests[testIndex].aiReviews = aiReviews.tests[key, default: []]
             tests[testIndex].commands = records[recordKey, default: []].filter {
                 command in
                 command.sourceFile == sourceURL.lastPathComponent
@@ -982,7 +939,7 @@ private func parseTests(
                 ReportTestFile(
                     url: sourceURL,
                     suiteKey: suiteKey,
-                    suiteReview: aiReviews.suites[suiteKey],
+                    suiteReviews: aiReviews.suites[suiteKey, default: []],
                     tests: tests
                 )
             )
@@ -1139,60 +1096,101 @@ private func runID(outputURL: URL) -> String {
     outputURL.deletingLastPathComponent().lastPathComponent
 }
 
-private func renderRunAIReview(_ review: AIReview?) -> String {
-    renderScopedAIReview(
-        review,
+private func renderRunAIReview(_ reviews: [E2EReview]) -> String {
+    renderScopedAIReviews(
+        reviews,
         className: "ai-review-inline ai-review-report",
         heading: "AI report review"
     )
 }
 
-private func renderSuiteAIReview(_ review: AIReview?) -> String {
-    renderScopedAIReview(
-        review,
+private func renderSuiteAIReview(_ reviews: [E2EReview]) -> String {
+    renderScopedAIReviews(
+        reviews,
         className: "ai-review-inline ai-review-suite",
         heading: "AI suite review"
     )
 }
 
-private func renderTestAIReview(_ review: AIReview?) -> String {
-    renderScopedAIReview(
-        review,
+private func renderTestAIReview(_ reviews: [E2EReview]) -> String {
+    renderScopedAIReviews(
+        reviews,
         className: "ai-review-inline ai-review-test",
         heading: "AI test review"
     )
 }
 
-private func renderScopedAIReview(_ review: AIReview?, className: String, heading: String) -> String
-{
-    guard let review else {
+private func renderScopedAIReviews(
+    _ reviews: [E2EReview],
+    className: String,
+    heading: String
+) -> String {
+    guard !reviews.isEmpty else {
         return ""
     }
 
+    let renderedReviews = reviews.map { review in
+        """
+        <article class="ai-review">
+        <h5><span class="ai-review-title">\(escapeHTML(review.title))</span>\(renderAIReviewerBadge(review.metadata.reviewer))\(renderAIReviewDetailsLink(review.path))</h5>
+        <div class="ai-review-markdown">\(renderMarkdown(review.summaryMarkdown))</div>
+        </article>
+        """
+    }.joined(separator: "\n")
+
     return """
         <section class="\(className)">
-        <h4>\(escapeHTML(heading))\(renderAIReviewDetailsLink(review.detailsPath))</h4>
-        <div class="ai-review-markdown">\(renderMarkdown(review.markdown))</div>
+        <h4>\(escapeHTML(heading))</h4>
+        \(renderedReviews)
         </section>
         """
 }
 
-private func renderAIReviewDetailsLink(_ detailsPath: String?) -> String {
-    guard let detailsPath else {
-        return ""
+private func renderAIReviewDetailsLink(_ detailsPath: String) -> String {
+    "<a class=\"ai-review-details-link\" href=\"\(escapeHTML(detailsPath))\">Details</a>"
+}
+
+private func renderAIReviewerBadge(_ reviewer: String) -> String {
+    let identity = aiReviewerIdentity(reviewer: reviewer)
+    let label = "\(identity.providerLabel) \(identity.modelLabel)"
+    return """
+        <span class=\"ai-reviewer-badge \(identity.cssClass)\" title=\"\(escapeHTML(label))\"><span class=\"ai-reviewer-logo\" aria-hidden=\"true\">\(escapeHTML(identity.logo))</span><span class=\"ai-reviewer-model\">\(escapeHTML(identity.modelLabel))</span></span>
+        """
+}
+
+private func aiReviewerIdentity(
+    reviewer: String
+) -> (cssClass: String, logo: String, providerLabel: String, modelLabel: String) {
+    let normalized = reviewer.lowercased()
+    if normalized.hasPrefix("claude-") {
+        return ("anthropic", "A", "Anthropic", reviewer)
     }
-    return "<a class=\"ai-review-details-link\" href=\"\(escapeHTML(detailsPath))\">Details</a>"
+    if normalized == "anthropic-default" || normalized == "claude-default" {
+        return ("anthropic", "A", "Anthropic", "default")
+    }
+    if normalized.hasPrefix("gpt-") || normalized.hasPrefix("o1") || normalized.hasPrefix("o3")
+        || normalized.hasPrefix("o4") || normalized.hasPrefix("o5")
+    {
+        return ("openai", "O", "OpenAI", reviewer)
+    }
+    if normalized == "openai-default" || normalized == "codex-default" {
+        return ("openai", "O", "OpenAI", "default")
+    }
+    return ("unknown", "AI", reviewer.isEmpty ? "AI" : reviewer, reviewer)
 }
 
 private func renderCards(files: [ReportTestFile]) -> String {
     var cards: [String] = []
 
     for file in files {
-        cards.append("<section class=\"card\" data-test-file-card>")
+        let hasSuiteAIReview = file.suiteReviews.isEmpty ? "false" : "true"
+        cards.append(
+            "<section class=\"card\" data-test-file-card data-has-ai-review=\"\(hasSuiteAIReview)\">"
+        )
         cards.append(
             "<div class=\"card-title\"><h2>\(escapeHTML(displayName(file.url.lastPathComponent)))</h2></div>"
         )
-        cards.append(renderSuiteAIReview(file.suiteReview))
+        cards.append(renderSuiteAIReview(file.suiteReviews))
         cards.append("<div class=\"suite-group\">")
 
         for test in file.tests {
@@ -1211,7 +1209,7 @@ private func renderCards(files: [ReportTestFile]) -> String {
             cards.append(
                 "<summary class=\"test-summary\"><span class=\"test-title\"><span class=\"test-path\">\(escapeHTML(pathText))</span>\(outcomeBadges)\(aiBadge)</span>\(runDurationBadge(test.durationRange))<span class=\"report-links\"></span></summary>"
             )
-            cards.append(renderObservations(test.observations, aiReview: test.aiReview))
+            cards.append(renderObservations(test.observations, aiReviews: test.aiReviews))
             cards.append("</details>")
         }
 
@@ -1243,16 +1241,16 @@ private func renderTargetOutcomeBadges(_ counts: ReportTargetOutcomeCounts) -> S
 
 private func renderObservations(
     _ observations: [ReportTestObservation],
-    aiReview: AIReview?
+    aiReviews: [E2EReview]
 ) -> String {
     guard !observations.isEmpty else {
         return
-            "<div class=\"test-body\"><p class=\"note\">No attempt results were found for this test.</p>\(renderTestAIReview(aiReview))</div>"
+            "<div class=\"test-body\"><p class=\"note\">No attempt results were found for this test.</p>\(renderTestAIReview(aiReviews))</div>"
     }
 
     var chunks: [String] = [
         "<div class=\"test-body\">",
-        renderTestAIReview(aiReview),
+        renderTestAIReview(aiReviews),
         "<section class=\"observations\" aria-label=\"Attempt results\">",
     ]
     var previousTarget: String?

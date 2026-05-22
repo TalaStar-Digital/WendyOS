@@ -146,7 +146,7 @@ function Write-AttemptInfo([int]$Status) {
     $goVersion = (& go version 2>$null) -join ''
 
     $info = [ordered]@{
-        kind = 'swift-e2e-attempt'
+        kind = 'wendy-e2e-attempt'
         version = 1
         attemptID = $script:RunID
         createdAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')

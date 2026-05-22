@@ -7,18 +7,17 @@ investigate next.
 Guidelines:
 
 - Prefer no top-level files over low-value files.
-- Write paired top-level files (`review.summary.md` and `review.details.md`) only
-  when there is at least one actionable run-level or cross-suite finding.
+- Write one Markdown file per actionable run-level or cross-suite review under
+  the top-level review directory named in the generated prompt.
 - Do not write status/severity lines such as `Status: pass`, `Status: concern`,
   or `Status: fail`.
-- `review.summary.md` is rendered inline and must be only a short Markdown bullet
-  list.
-- Each summary bullet should be one clear, actionable run-level finding.
-- Do not repeat or summarize suite/test findings already covered at lower
-  levels.
+- Each review summary should be GitHub-comment-sized: one concise explanation
+  plus the suggested action.
+- Put evidence, reasoning, links to relevant suite/test details, and longer
+  analysis under the review file's `## Details` heading.
+- Do not repeat or summarize suite/test reviews already covered at lower levels.
 - Do not restate obvious counts/statuses that the report already shows, such as
   how many tests or attempts failed.
-- `review.details.md` is linked from the report; use it for evidence, reasoning,
-  action items, and links to relevant suite/test details.
 - Prefer concise synthesis over copying suite findings.
+- Use JSON `locations` only when the review is attributable to source lines.
 - Do not edit source code, tests, xUnit files, or recordings.

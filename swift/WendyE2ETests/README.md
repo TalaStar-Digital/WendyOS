@@ -40,11 +40,30 @@ The E2E artifacts intentionally keep JSON sparse. Long-form content stays in
 plain artifact files: command recordings, replay scripts, xUnit output, review
 Markdown, rendered HTML, and Git diff command output.
 
-Current machine-readable metadata is limited to attempt manifests:
+Current machine-readable metadata is limited to attempt manifests and review
+front matter:
 
 ```text
 <attempt>/attempt.json
 <run>/<suite>/<test>/<target>/<attempt>/attempt.json
+<run>/review.<model-or-provider-default>/<slugged-title>.md
+<run>/<suite>/review.<model-or-provider-default>/<slugged-title>.md
+<run>/<suite>/<test>/review.<model-or-provider-default>/<slugged-title>.md
+```
+
+Review Markdown files live under `review.<model-or-provider-default>/`
+directories and start with a JSON front matter block, followed by a single
+`# Title`, a GitHub-comment-sized summary, and `## Details` for the full
+analysis/evidence. The file name must be the slugged review title, and the front
+matter `reviewer` must match the directory suffix. Concrete models use only the
+model slug, such as `review.claude-opus-4-7-1m`; unresolved defaults include the
+provider, such as `review.openai-default`.
+
+JSON schemas live under `Support/Schemas/`:
+
+```text
+Support/Schemas/wendy-e2e-attempt.schema.json
+Support/Schemas/wendy-e2e-review.schema.json
 ```
 
 The run layout itself is the index for suites, tests, targets, and attempts. Do

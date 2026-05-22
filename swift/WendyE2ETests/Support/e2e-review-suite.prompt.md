@@ -5,26 +5,23 @@ test bugs, flaky behavior, suspicious slowness, missing assertions, misleading
 output, or unresolved `// AI:` review notes.
 
 Use the full suite context before deciding what to write. A single agent session
-may write both per-test reviews and a suite review.
+may write both per-test reviews and suite reviews.
 
 Guidelines:
 
 - Prefer no files over low-value files.
-- If nothing is noteworthy for a test or suite, write neither file for that
+- Write one Markdown file per actionable review in the review directory named in
+  the generated prompt.
+- If nothing is noteworthy for a test or suite, write no review files for that
   scope.
-- For any noteworthy test or suite finding, always write both files:
-  `review.summary.md` and `review.details.md`.
 - Do not write pass/OK reviews for tests or suites.
 - Do not write status/severity lines such as `Status: pass`, `Status: concern`,
   or `Status: fail`.
-- `review.summary.md` is rendered inline and must be only a short Markdown bullet
-  list.
-- Each summary bullet should be one clear, actionable finding.
-- For suite-level summaries, include only suite-level or cross-test actions; do
-  not repeat or summarize findings already covered by per-test reviews.
-- Do not restate obvious counts/statuses that the report already shows.
-- `review.details.md` is linked from the report; put evidence and reasoning
-  there.
+- Each review summary should be GitHub-comment-sized: one concise explanation
+  plus the suggested action.
+- Put evidence, reasoning, and longer analysis under the review file's
+  `## Details` heading.
 - Cite concrete evidence in details: source paths, target/attempt names, result
   details, recording paths, and shell script paths.
+- Use JSON `locations` only when the review is attributable to source lines.
 - Do not edit source code, tests, xUnit files, or recordings.
