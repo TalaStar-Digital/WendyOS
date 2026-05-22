@@ -15,20 +15,23 @@ var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 // the network (mDNS, TXT records) before it is rendered in the terminal.
 func SanitiseDisplayName(s string) string { return sanitiseNetworkString(s, 64) }
 
-// sanitiseNetworkString strips ANSI escape sequences and ASCII control
-// characters from a string sourced from the network, then truncates to maxLen.
-// This prevents terminal injection from rogue mDNS/DNS-SD advertisers.
+// sanitiseNetworkString strips ANSI escape sequences and C0/C1/DEL control
+// characters from a string sourced from the network, then truncates to maxLen
+// runes. This prevents terminal injection from rogue mDNS/DNS-SD advertisers.
 func sanitiseNetworkString(s string, maxLen int) string {
 	s = ansiEscapeRE.ReplaceAllString(s, "")
 	var b strings.Builder
 	for _, r := range s {
-		if r >= 0x20 {
+		if r >= 0x20 && r != 0x7f {
 			b.WriteRune(r)
 		}
 	}
 	s = strings.TrimSpace(b.String())
-	if maxLen > 0 && len(s) > maxLen {
-		s = s[:maxLen]
+	if maxLen > 0 {
+		runes := []rune(s)
+		if len(runes) > maxLen {
+			s = string(runes[:maxLen])
+		}
 	}
 	return s
 }

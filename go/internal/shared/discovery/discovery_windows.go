@@ -31,10 +31,9 @@ func discoverLAN(ctx context.Context, timeout time.Duration) ([]models.LANDevice
 			queries = append(queries, &iface)
 		}
 	}
-	adapterLookup := windowsNetworkAdapterLookup{}
-	if len(queries) > 1 {
-		adapterLookup = newWindowsNetworkAdapterLookup(ctx)
-	}
+	// Always build the adapter lookup so USB detection works whether devices are
+	// found via the nil (all-interface) query or an interface-scoped query.
+	adapterLookup := newWindowsNetworkAdapterLookup(ctx)
 
 	resultsCh := make(chan []models.LANDevice, len(queries))
 	var wg sync.WaitGroup
