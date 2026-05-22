@@ -19,8 +19,11 @@ jobs:
       pull-requests: write
     steps:
       - name: Verify origin repo
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
         run: |
-          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
             echo "Fork PRs are not permitted to trigger this workflow."
             exit 1
           fi
@@ -28,15 +31,18 @@ jobs:
       - name: Get PR diff
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          gh pr diff ${{ github.event.pull_request.number }} \
-            --repo ${{ github.repository }} > pr.diff
+          gh pr diff "$PR_NUMBER" --repo "$REPO" > pr.diff 2>/dev/null || touch pr.diff
 
       - name: Export PR metadata
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} \
+          gh api "repos/$REPO/pulls/$PR_NUMBER" \
             --jq '{title, body, number}' > pr_meta.json
 
       - name: Set up Python
@@ -54,6 +60,7 @@ jobs:
           python3 << 'PYEOF'
           import anthropic
           import json
+          import os
           import pathlib
 
           client = anthropic.Anthropic()
@@ -148,9 +155,24 @@ jobs:
               }],
           )
 
+          import re
+
           report = message.content[0].text[:20000]
           pathlib.Path('review.md').write_text(report + '\n')
           print(report)
+
+          severities = re.findall(
+              r'^\|\s*(CRITICAL|HIGH|MEDIUM|LOW|INFORMATIONAL)\s*\|',
+              report,
+              re.MULTILINE,
+          )
+          has_high = any(s in ('CRITICAL', 'HIGH') for s in severities)
+          print(f'Severities found: {severities}')
+
+          github_env = os.environ.get('GITHUB_ENV', '')
+          if github_env and has_high:
+              with open(github_env, 'a') as genv:
+                  genv.write('HAS_HIGH_SEVERITY=true\n')
           PYEOF
 
       - name: Post review as PR comment
@@ -168,15 +190,12 @@ jobs:
                   block = paragraph.strip()
                   if not block:
                       continue
-
                   lines = block.splitlines()
                   while lines and re.match(r'^\s*#{1,6}\s+\S', lines[0]):
                       lines.pop(0)
-
                   summary = '\n'.join(lines).strip()
                   if summary:
                       return summary
-
               return '_No summary available._'
 
           with open('review.md') as f:
@@ -194,7 +213,6 @@ jobs:
               f.write('\n</details>\n')
           EXTRACT
 
-          # Replace previous security review comment if one exists
           EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
             --jq '.[] | select(.body | startswith("## AI Security Review")) | .id' | head -1)
 
@@ -204,3 +222,9 @@ jobs:
           else
             gh pr comment "${PR_NUM}" --repo "${REPO}" --body-file comment.md
           fi
+
+      - name: Fail on high or critical severity findings
+        if: env.HAS_HIGH_SEVERITY == 'true'
+        run: |
+          echo "Security review found HIGH or CRITICAL severity issues. Address them before merging."
+          exit 1

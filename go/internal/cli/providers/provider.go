@@ -5,7 +5,7 @@ package providers
 import (
 	"context"
 
-	"github.com/wendylabsinc/wendy/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 )
 
 // DeviceProvider is implemented by each target backend (local, Docker, ADB, etc.).

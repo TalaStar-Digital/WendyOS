@@ -15,10 +15,10 @@ import (
 	"github.com/distribution/reference"
 	"gopkg.in/yaml.v3"
 
-	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
-	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
-	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/shared/appconfig"
+	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
 // normalizeImageRef canonicalises a Docker short reference (e.g.
@@ -686,9 +686,8 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 				streamErr = stream.Send(&agentpb.AttachContainerRequest{
 					RequestType: &agentpb.AttachContainerRequest_AppName{AppName: appID},
 				})
-				if streamErr != nil {
-					_ = stream.CloseSend()
-				}
+				// Compose never forwards stdin; half-close so the server sees EOF.
+				_ = stream.CloseSend()
 			}
 			if streamErr != nil {
 				// Fall back to the server-streaming StartContainer when AttachContainer is unavailable.

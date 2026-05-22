@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wendylabsinc/wendy/internal/shared/certs"
+	"github.com/wendylabsinc/wendy/go/internal/shared/certs"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
@@ -76,13 +76,15 @@ func NewServer(certPEM, chainPEM, keyPEM string, extraOpts ...grpc.ServerOption)
 	creds := credentials.NewTLS(tlsConfig)
 	opts := []grpc.ServerOption{
 		grpc.Creds(creds),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             5 * time.Second,
-			PermitWithoutStream: true,
-		}),
+		grpc.InitialWindowSize(8 * 1024 * 1024),
+		grpc.InitialConnWindowSize(16 * 1024 * 1024),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    30 * time.Second,
 			Timeout: 10 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second,
+			PermitWithoutStream: true,
 		}),
 	}
 	opts = append(opts, extraOpts...)

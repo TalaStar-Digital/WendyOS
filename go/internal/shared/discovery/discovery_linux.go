@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/mdns"
-	"github.com/wendylabsinc/wendy/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 )
 
 // hasAvahiBrowse reports whether avahi-browse is available on the system.

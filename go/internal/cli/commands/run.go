@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,15 +23,15 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
-	"github.com/wendylabsinc/wendy/internal/cli/providers"
-	"github.com/wendylabsinc/wendy/internal/cli/swifttoolchain"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
-	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
-	"github.com/wendylabsinc/wendy/internal/shared/browseropen"
-	"github.com/wendylabsinc/wendy/internal/shared/config"
-	"github.com/wendylabsinc/wendy/internal/shared/models"
-	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
+	"github.com/wendylabsinc/wendy/go/internal/cli/providers"
+	"github.com/wendylabsinc/wendy/go/internal/cli/swifttoolchain"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/shared/appconfig"
+	"github.com/wendylabsinc/wendy/go/internal/shared/browseropen"
+	"github.com/wendylabsinc/wendy/go/internal/shared/config"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
 var cliStyle = lipgloss.NewStyle().Foreground(tui.ColorDim)
@@ -46,15 +47,19 @@ type dimWriter struct {
 }
 
 func (w *dimWriter) Write(p []byte) (int, error) {
-	for _, b := range p {
-		if b == '\n' {
-			fmt.Println(cliStyle.Render(w.buf.String()))
-			w.buf.Reset()
-		} else {
-			w.buf.WriteByte(b)
+	total := len(p)
+	for len(p) > 0 {
+		i := bytes.IndexByte(p, '\n')
+		if i < 0 {
+			w.buf.Write(p)
+			break
 		}
+		w.buf.Write(p[:i])
+		fmt.Println(cliStyle.Render(w.buf.String()))
+		w.buf.Reset()
+		p = p[i+1:]
 	}
-	return len(p), nil
+	return total, nil
 }
 
 func (w *dimWriter) Flush() {
@@ -937,6 +942,9 @@ func runWithProvider(ctx context.Context, p providers.DeviceProvider, device mod
 
 	// Resolve Swift product name from Package.swift.
 	if projectType == "swift" {
+		if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+			return fmt.Errorf("`wendy run` for Swift packages is not supported on %s; provide a Dockerfile", runtime.GOOS)
+		}
 		if err := swifttoolchain.EnsureSwiftVersion(ctx, &dimWriter{}, os.Stderr); err != nil {
 			return err
 		}

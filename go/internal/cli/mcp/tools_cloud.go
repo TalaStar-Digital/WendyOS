@@ -18,12 +18,12 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/wendylabsinc/wendy/internal/cli/clouddefaults"
-	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
-	"github.com/wendylabsinc/wendy/internal/shared/certs"
-	"github.com/wendylabsinc/wendy/internal/shared/config"
-	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
-	cloudpb "github.com/wendylabsinc/wendy/proto/gen/cloudpb"
+	"github.com/wendylabsinc/wendy/go/internal/cli/clouddefaults"
+	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
+	"github.com/wendylabsinc/wendy/go/internal/shared/certs"
+	"github.com/wendylabsinc/wendy/go/internal/shared/config"
+	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
+	cloudpb "github.com/wendylabsinc/wendy/go/proto/gen/cloudpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -141,6 +141,12 @@ func (s *mcpServer) registerCloudTools(srv *server.MCPServer) {
 		),
 		mcpgo.WithString("device_name",
 			mcpgo.Description("Cloud device name"),
+		),
+		mcpgo.WithString("cloud_grpc",
+			mcpgo.Description("Cloud gRPC endpoint to use when multiple auth sessions exist"),
+		),
+		mcpgo.WithString("broker_url",
+			mcpgo.Description("Tunnel broker host:port; omit to use the default derived from cloud_grpc (port 443 when cloud_grpc ends in :443, otherwise port 50052)"),
 		),
 		mcpgo.WithString("build_type",
 			mcpgo.Description("Build type: docker, swift, or python"),

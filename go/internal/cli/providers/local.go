@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/wendylabsinc/wendy/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 )
 
 // localBuildContext is stored in BuiltApp.Context for local builds.

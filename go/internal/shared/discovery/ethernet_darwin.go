@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/wendylabsinc/wendy/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 )
 
 // discoverEthernet enumerates network interfaces on macOS and returns those

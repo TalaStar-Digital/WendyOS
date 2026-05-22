@@ -11,7 +11,7 @@ import (
 
 	"github.com/distribution/reference"
 
-	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
 // normalizeImageName canonicalises a Docker short reference (e.g.

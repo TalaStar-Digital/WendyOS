@@ -1,6 +1,7 @@
 package containerd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,12 +33,12 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"go.uber.org/zap"
 
-	"github.com/wendylabsinc/wendy/internal/agent/cdi"
-	"github.com/wendylabsinc/wendy/internal/agent/dbusproxy"
-	localoci "github.com/wendylabsinc/wendy/internal/agent/oci"
-	"github.com/wendylabsinc/wendy/internal/agent/services"
-	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
-	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/agent/cdi"
+	"github.com/wendylabsinc/wendy/go/internal/agent/dbusproxy"
+	localoci "github.com/wendylabsinc/wendy/go/internal/agent/oci"
+	"github.com/wendylabsinc/wendy/go/internal/agent/services"
+	"github.com/wendylabsinc/wendy/go/internal/shared/appconfig"
+	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
 // Compile-time check that *Client satisfies services.ContainerdClient.
@@ -246,7 +247,7 @@ func (c *Client) AssembleImage(ctx context.Context, imageName string, layers []*
 		Digest:    configDigest,
 		Size:      int64(len(configData)),
 	}
-	if err := content.WriteBlob(ctx, cs, configDigest.String(), strings.NewReader(string(configData)), configDesc); err != nil {
+	if err := content.WriteBlob(ctx, cs, configDigest.String(), bytes.NewReader(configData), configDesc); err != nil {
 		if !errdefs.IsAlreadyExists(err) {
 			return fmt.Errorf("writing config blob: %w", err)
 		}
@@ -271,7 +272,7 @@ func (c *Client) AssembleImage(ctx context.Context, imageName string, layers []*
 		Digest:    manifestDigest,
 		Size:      int64(len(manifestData)),
 	}
-	if err := content.WriteBlob(ctx, cs, manifestDigest.String(), strings.NewReader(string(manifestData)), manifestDesc); err != nil {
+	if err := content.WriteBlob(ctx, cs, manifestDigest.String(), bytes.NewReader(manifestData), manifestDesc); err != nil {
 		if !errdefs.IsAlreadyExists(err) {
 			return fmt.Errorf("writing manifest blob: %w", err)
 		}
@@ -502,6 +503,7 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	if specErr == nil {
 		env = append(imageSpec.Config.Env, env...)
 	}
+	env = injectOTELEnvIfNeeded(env, appCfg)
 
 	// Build OCI spec using local oci package, then apply entitlements.
 	spec := localoci.DefaultSpec("rootfs", args)
@@ -771,7 +773,8 @@ var deviceHostnameWithSuffix = func() string {
 
 // buildContainerBaseEnv builds the wendy-injected env vars layered on top of
 // the image's own env. WENDY_HOSTNAME is the device's mDNS hostname
-// (omitted when unresolvable).
+// (omitted when unresolvable). OTEL_EXPORTER_OTLP_ENDPOINT points at the
+// agent's OTLP gRPC receiver so containers auto-configure their exporters.
 func buildContainerBaseEnv() []string {
 	env := []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -781,6 +784,49 @@ func buildContainerBaseEnv() []string {
 		env = append(env, "WENDY_HOSTNAME="+h)
 	}
 	return env
+}
+
+// injectOTELEnvIfNeeded appends OTEL exporter env vars to env when host
+// networking is in effect and the endpoint is not already configured.
+// It must be called after the image env has been merged so that image-set
+// values take precedence.
+func injectOTELEnvIfNeeded(env []string, appCfg *appconfig.AppConfig) []string {
+	if !hasHostNetworkEntitlement(appCfg) {
+		return env
+	}
+	hasEndpoint, hasProtocol := false, false
+	for _, e := range env {
+		if strings.HasPrefix(e, "OTEL_EXPORTER_OTLP_ENDPOINT=") {
+			hasEndpoint = true
+		}
+		if strings.HasPrefix(e, "OTEL_EXPORTER_OTLP_PROTOCOL=") {
+			hasProtocol = true
+		}
+	}
+	if hasEndpoint {
+		return env // image already configured the exporter; do not override
+	}
+	otelPort := os.Getenv("WENDY_OTEL_PORT")
+	if otelPort == "" {
+		otelPort = "4317"
+	}
+	if p, err := strconv.Atoi(otelPort); err != nil || p < 1 || p > 65535 {
+		otelPort = "4317"
+	}
+	env = append(env, "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:"+otelPort)
+	if !hasProtocol {
+		env = append(env, "OTEL_EXPORTER_OTLP_PROTOCOL=grpc")
+	}
+	return env
+}
+
+func hasHostNetworkEntitlement(appCfg *appconfig.AppConfig) bool {
+	for _, e := range appCfg.Entitlements {
+		if e.Type == appconfig.EntitlementNetwork && (e.Mode == "host" || e.Mode == "") {
+			return true
+		}
+	}
+	return false
 }
 
 func expandAgentHook(command, appName string) string {
@@ -1313,7 +1359,7 @@ func extractMemoryBytes(metric *types.Metric) int64 {
 // streamReader is a helper that continuously reads from a reader and sends
 // chunks to the output channel with the specified builder function.
 func streamReader(r io.Reader, ch chan<- services.ContainerOutput, buildOutput func([]byte) services.ContainerOutput) {
-	buf := make([]byte, 4096)
+	buf := make([]byte, 32*1024)
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {

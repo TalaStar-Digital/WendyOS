@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'go/**'
+      - 'Proto/**'
+      - 'go.mod'
+      - 'go.sum'
       - 'swift/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
@@ -35,7 +38,7 @@ jobs:
       is_prerelease: ${{ steps.set-version.outputs.is_prerelease }}
       tag_name: ${{ steps.set-version.outputs.tag_name }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -104,26 +107,24 @@ jobs:
             goarch: arm64
             product: wendy.exe
             cmd: wendy
-    defaults:
-      run:
-        working-directory: go
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v5
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Build
+        working-directory: go
         env:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${{ needs.determine-version.outputs.version }}"
-          LDFLAGS="-s -w -X github.com/wendylabsinc/wendy/internal/shared/version.Version=${VERSION}"
+          LDFLAGS="-s -w -X github.com/wendylabsinc/wendy/go/internal/shared/version.Version=${VERSION}"
           mkdir -p ../${{ matrix.artifact-name }}
           go build -ldflags "${LDFLAGS}" -o ../${{ matrix.artifact-name }}/${{ matrix.product }} ./cmd/${{ matrix.cmd }}
 
@@ -160,26 +161,24 @@ jobs:
             goarch: arm64
           - artifact-name: wendy-cli-darwin-amd64
             goarch: amd64
-    defaults:
-      run:
-        working-directory: go
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v5
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Build
+        working-directory: go
         env:
           CGO_ENABLED: "1"
           GOOS: darwin
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${{ needs.determine-version.outputs.version }}"
-          LDFLAGS="-s -w -X github.com/wendylabsinc/wendy/internal/shared/version.Version=${VERSION}"
+          LDFLAGS="-s -w -X github.com/wendylabsinc/wendy/go/internal/shared/version.Version=${VERSION}"
           mkdir -p ../${{ matrix.artifact-name }}
           go build -ldflags "${LDFLAGS}" -o ../${{ matrix.artifact-name }}/wendy ./cmd/wendy
 
@@ -205,7 +204,7 @@ jobs:
     timeout-minutes: 45
     needs: [determine-version]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Select Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
@@ -280,7 +279,7 @@ jobs:
             goarch: arm64
             rpm-arch: aarch64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Install FPM dependencies
         run: |
@@ -502,7 +501,7 @@ jobs:
       SIGNING_ACCOUNT: wendy-signing
       SIGNING_PROFILE: wendy-cli
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Install WiX
         run: dotnet tool install --global wix
@@ -569,7 +568,7 @@ jobs:
             -d ExePath="wendy-cli-windows-${{ matrix.goarch }}/wendy.exe" `
             -arch $MSI_ARCH `
             -o "wendy-cli-windows-${{ matrix.goarch }}-${VERSION}.msi" `
-            go/installer/windows/wendy.wxs
+            installer/windows/wendy.wxs
 
       - name: Sign MSI
         uses: azure/trusted-signing-action@v2.0.0
@@ -595,8 +594,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [determine-version, package-linux, test-templates, integration-tests]
     if: |
+      always() &&
       needs.determine-version.outputs.is_release == 'true' &&
       needs.determine-version.outputs.is_prerelease == 'false' &&
+      needs.package-linux.result == 'success' &&
+      needs.test-templates.result == 'success' &&
       (needs.integration-tests.result == 'success' || needs.integration-tests.result == 'skipped')
     permissions:
       contents: read
@@ -702,7 +704,7 @@ jobs:
       # Update floating 'latest' tag for nightly prereleases
       - name: Checkout repo
         if: needs.determine-version.outputs.is_release != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Update 'latest' tag
@@ -745,77 +747,6 @@ jobs:
             echo "DISCORD_NIGHTLY_WEBHOOK_URL not configured, skipping notification"
           fi
 
-      # Discord notification for stable releases
-      - name: Notify Discord
-        if: needs.determine-version.outputs.is_prerelease == 'false'
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ needs.determine-version.outputs.tag_name }}"
-          REPO="${{ github.repository }}"
-          URL="https://github.com/${REPO}/releases/tag/${VERSION}"
-
-          # Fetch release body via gh CLI (safe from shell injection)
-          BODY=$(gh release view "$VERSION" --repo "$REPO" --json body -q .body 2>/dev/null || echo "")
-          BODY=$(echo "$BODY" | tr -d '\r')
-          SHORT_BODY=$(echo "$BODY" | head -c 800)
-
-          # Installation instructions
-          read -r -d '' INSTALL_INSTRUCTIONS << 'INSTALL_EOF' || true
-          ## Install the Wendy CLI
-
-          **Linux/macOS**
-          ```
-          curl -fsSL https://install.wendy.sh/cli.sh | bash
-          ```
-
-          **Windows (install)**
-          ```
-          winget install WendyLabs.Wendy
-          ```
-          **Windows (update)**
-          ```
-          winget upgrade WendyLabs.Wendy
-          ```
-
-          ## Install the Wendy Agent
-
-          **Linux/macOS**
-          ```
-          curl -fsSL https://install.wendy.sh/agent.sh | bash
-          ```
-          INSTALL_EOF
-
-          FULL_DESCRIPTION="${SHORT_BODY}
-
-          ${INSTALL_INSTRUCTIONS}"
-
-          ESCAPED_DESC=$(echo "$FULL_DESCRIPTION" | jq -Rs .)
-
-          cat > /tmp/discord_payload.json << PAYLOAD_EOF
-          {
-            "content": "🚀 **New CLI release**: **${VERSION}**",
-            "embeds": [
-              {
-                "title": "Release ${VERSION}",
-                "url": "${URL}",
-                "description": ${ESCAPED_DESC},
-                "color": 5814783,
-                "footer": { "text": "${REPO} • ${VERSION}" }
-              }
-            ]
-          }
-          PAYLOAD_EOF
-
-          if [ -n "$DISCORD_WEBHOOK_URL" ]; then
-            curl -sS -X POST -H "Content-Type: application/json" \
-              -d @/tmp/discord_payload.json \
-              "$DISCORD_WEBHOOK_URL" && echo "Discord notification sent" || echo "Discord notification failed"
-          else
-            echo "DISCORD_WEBHOOK_URL not configured, skipping notification"
-          fi
-
       # Bump Homebrew tap formula and cask
       - name: Create GitHub App Token
         id: app-token
@@ -827,7 +758,7 @@ jobs:
           repositories: homebrew-tap
 
       - name: Checkout tap
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: wendylabsinc/homebrew-tap
           token: ${{ steps.app-token.outputs.token }}
@@ -1025,7 +956,11 @@ jobs:
     name: Publish AUR Packages
     runs-on: ubuntu-latest
     needs: [determine-version, release]
-    if: needs.determine-version.outputs.is_release == 'true' && needs.determine-version.outputs.is_prerelease == 'false'
+    if: |
+      always() &&
+      needs.release.result == 'success' &&
+      needs.determine-version.outputs.is_release == 'true' &&
+      needs.determine-version.outputs.is_prerelease == 'false'
     strategy:
       matrix:
         include:
@@ -1038,7 +973,7 @@ jobs:
             x86_64_artifact: wendy-agent-linux-amd64
             aarch64_artifact: wendy-agent-linux-arm64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Calculate checksums from release
         id: checksums
@@ -1109,7 +1044,11 @@ jobs:
     name: Publish to Winget
     runs-on: windows-latest
     needs: [determine-version, release]
-    if: needs.determine-version.outputs.is_release == 'true' && needs.determine-version.outputs.is_prerelease == 'false'
+    if: |
+      always() &&
+      needs.release.result == 'success' &&
+      needs.determine-version.outputs.is_release == 'true' &&
+      needs.determine-version.outputs.is_prerelease == 'false'
     steps:
       - name: Install wingetcreate
         run: |
@@ -1337,6 +1276,110 @@ jobs:
             exit $submitResult.ExitCode
           }
           Write-Host "Initial Winget manifest submitted successfully."
+
+  announce:
+    name: Announce Release
+    runs-on: ubuntu-latest
+    needs: [determine-version, release, publish-linux-repos, publish-aur, publish-winget]
+    if: |
+      always() &&
+      needs.determine-version.result == 'success' &&
+      needs.release.result == 'success' &&
+      needs.publish-linux-repos.result == 'success' &&
+      needs.publish-aur.result == 'success' &&
+      needs.publish-winget.result == 'success' &&
+      needs.determine-version.outputs.is_prerelease == 'false'
+    permissions:
+      contents: read
+    steps:
+      - name: Notify Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.determine-version.outputs.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          URL="https://github.com/${REPO}/releases/tag/${VERSION}"
+
+          # Fetch release body via gh CLI (safe from shell injection)
+          BODY=$(gh release view "$VERSION" --repo "$REPO" --json body -q .body 2>/dev/null || echo "")
+          BODY=$(echo "$BODY" | tr -d '\r')
+          SHORT_BODY=$(echo "$BODY" | head -c 800)
+
+          # Installation instructions
+          read -r -d '' INSTALL_INSTRUCTIONS << 'INSTALL_EOF' || true
+          ## Install the Wendy CLI
+
+          **Linux/macOS**
+          ```
+          curl -fsSL https://install.wendy.sh/cli.sh | bash
+          ```
+
+          **Windows (install)**
+          ```
+          winget install WendyLabs.Wendy
+          ```
+          **Windows (update)**
+          ```
+          winget upgrade WendyLabs.Wendy
+          ```
+
+          ## Install the Wendy Agent
+
+          **Linux/macOS**
+          ```
+          curl -fsSL https://install.wendy.sh/agent.sh | bash
+          ```
+          INSTALL_EOF
+
+          FULL_DESCRIPTION="${SHORT_BODY}
+
+          ${INSTALL_INSTRUCTIONS}"
+
+          PAYLOAD_FILE=$(mktemp /tmp/discord_payload.XXXXXX.json)
+          trap 'rm -f "$PAYLOAD_FILE"' EXIT
+
+          # Build payload via jq so all values are properly escaped (no JSON injection)
+          jq -n \
+            --arg version "$VERSION" \
+            --arg url "$URL" \
+            --arg desc "$FULL_DESCRIPTION" \
+            --arg repo "$REPO" \
+            '{
+              content: ("🚀 **New CLI release**: **" + $version + "**"),
+              embeds: [{
+                title: ("Release " + $version),
+                url: $url,
+                description: $desc,
+                color: 5814783,
+                footer: { text: ($repo + " • " + $version) }
+              }]
+            }' > "$PAYLOAD_FILE"
+
+          if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+            # Validate URL is a Discord webhook before use
+            if [[ ! "$DISCORD_WEBHOOK_URL" =~ ^https://discord(app)?\.com/api/webhooks/ ]]; then
+              echo "Invalid webhook URL format, skipping notification" >&2
+              exit 1
+            fi
+
+            for attempt in 1 2 3; do
+              if curl -sS --fail -X POST -H "Content-Type: application/json" \
+                  --url "$DISCORD_WEBHOOK_URL" \
+                  -d @"$PAYLOAD_FILE"; then
+                echo "Discord notification sent (attempt ${attempt})"
+                break
+              fi
+              echo "Attempt ${attempt} failed" >&2
+              if [ "$attempt" -eq 3 ]; then
+                echo "All Discord notification attempts failed — release succeeded, notification skipped" >&2
+              else
+                sleep 5
+              fi
+            done
+          else
+            echo "DISCORD_WEBHOOK_URL not configured, skipping notification"
+          fi
 
   test-templates:
     name: Template Tests

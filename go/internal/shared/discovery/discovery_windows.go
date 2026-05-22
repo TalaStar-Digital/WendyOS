@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/mdns"
-	"github.com/wendylabsinc/wendy/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 )
 
 // discoverLAN uses hashicorp/mdns to find WendyOS devices on Windows.

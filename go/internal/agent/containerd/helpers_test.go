@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
 func TestComputeChainID_FirstLayer(t *testing.T) {

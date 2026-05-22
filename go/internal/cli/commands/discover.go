@@ -17,14 +17,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
-	"github.com/wendylabsinc/wendy/internal/cli/providers"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
-	"github.com/wendylabsinc/wendy/internal/shared/config"
-	"github.com/wendylabsinc/wendy/internal/shared/discovery"
-	"github.com/wendylabsinc/wendy/internal/shared/env"
-	"github.com/wendylabsinc/wendy/internal/shared/models"
-	"github.com/wendylabsinc/wendy/internal/shared/version"
-	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/cli/providers"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/shared/config"
+	"github.com/wendylabsinc/wendy/go/internal/shared/discovery"
+	"github.com/wendylabsinc/wendy/go/internal/shared/env"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/shared/version"
+	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
 func newDiscoverCmd() *cobra.Command {
@@ -1039,6 +1039,14 @@ func runClipboardCommand(cmd *exec.Cmd, timeout time.Duration) error {
 	case err := <-done:
 		return err
 	case <-timer.C:
+		// Non-blocking check: if the command completed at the same moment the
+		// timer fired (select race), return the real exit status instead of a
+		// spurious timeout error.
+		select {
+		case err := <-done:
+			return err
+		default:
+		}
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}

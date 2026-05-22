@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/mdns"
-	"github.com/wendylabsinc/wendy/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 )
 
 // ── avahiUnescape ───────────────────────────────────────────────────
