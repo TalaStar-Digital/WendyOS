@@ -30,6 +30,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build CLI
+        working-directory: go
         run: make build-cli
 
       - name: Clear cache and scan for WendyOS devices
@@ -39,9 +40,9 @@ jobs:
           WORKDIR="$(pwd)"
           SSH_ENV="export PATH='$PATH'"
 
-          $SSH "$SSH_ENV && cd '$WORKDIR' && ./bin/wendy os cache clear"
+          $SSH "$SSH_ENV && cd '$WORKDIR' && ./go/bin/wendy os cache clear"
 
-          RESULT=$($SSH "$SSH_ENV && cd '$WORKDIR' && ./bin/wendy discover --json --type lan --timeout 10s")
+          RESULT=$($SSH "$SSH_ENV && cd '$WORKDIR' && ./go/bin/wendy discover --json --type lan --timeout 10s")
           echo "$RESULT" | jq '[.lanDevices[] | select(.isWendyDevice) | {name: .displayName, address: (.hostname // .ipAddress)}]'
 
           MATRIX=$(echo "$RESULT" | jq -c \
@@ -79,6 +80,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build CLI
+        working-directory: go
         run: make build-cli
 
       - name: Current version
@@ -88,7 +90,7 @@ jobs:
           WORKDIR="$(pwd)"
           SSH_ENV="export PATH='$PATH'"
 
-          INFO=$($SSH "$SSH_ENV && cd '$WORKDIR' && ./bin/wendy device info --json --device '$DEVICE_HOSTNAME'" || true)
+          INFO=$($SSH "$SSH_ENV && cd '$WORKDIR' && ./go/bin/wendy device info --json --device '$DEVICE_HOSTNAME'" || true)
           echo "$INFO" | jq '{osVersion, agentVersion: .version, deviceType}' || true
           DEVICE_TYPE=$(echo "$INFO" | jq -r '.deviceType // ""' 2>/dev/null || true)
           echo "device_type=$DEVICE_TYPE" >> "$GITHUB_OUTPUT"
@@ -105,9 +107,9 @@ jobs:
 
           # wendy os update blocks until the device reboots and comes back
           # online, with a 5-minute internal timeout.
-          $SSH "$SSH_ENV && cd '$WORKDIR' && ./bin/wendy os update --device '$DEVICE_HOSTNAME'"
+          $SSH "$SSH_ENV && cd '$WORKDIR' && ./go/bin/wendy os update --device '$DEVICE_HOSTNAME'"
 
-          $SSH "$SSH_ENV && cd '$WORKDIR' && ./bin/wendy device info --json --device '$DEVICE_HOSTNAME'" \
+          $SSH "$SSH_ENV && cd '$WORKDIR' && ./go/bin/wendy device info --json --device '$DEVICE_HOSTNAME'" \
             | jq '{osVersion, agentVersion: .version}'
 
-          $SSH "$SSH_ENV && cd '$WORKDIR' && scripts/test-templates.sh -w ./bin/wendy -h '$DEVICE_HOSTNAME'"
+          $SSH "$SSH_ENV && cd '$WORKDIR' && go/scripts/test-templates.sh -w ./go/bin/wendy -h '$DEVICE_HOSTNAME'"

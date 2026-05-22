@@ -3,13 +3,10 @@ name: Go Tests
 on:
   pull_request:
     paths:
-      - 'cmd/**'
-      - 'internal/**'
-      - 'proto/**'
+      - 'go/**'
+      - 'Proto/**'
       - 'go.mod'
       - 'go.sum'
-      - 'Makefile'
-      - 'proto-defs/**'
       - '.github/workflows/**'
 
 concurrency:
@@ -36,6 +33,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - name: Run tests
+        working-directory: go
         run: go test ./... -race -count=1 -timeout 120s
 
       # Compile the Windows-shipping CLI packages so //go:build windows files
@@ -45,6 +43,7 @@ jobs:
       # release workflow. The agent intentionally is not cross-compiled —
       # it uses Linux-only syscalls and only the CLI ships to Windows.
       - name: Cross-compile Windows CLI packages
+        working-directory: go
         env:
           GOOS: windows
           GOARCH: amd64
@@ -68,6 +67,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - name: Run go vet
+        working-directory: go
         run: go vet ./...
 
   format:
@@ -83,6 +83,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Check formatting
+        working-directory: go
         run: |
           UNFORMATTED=$(gofmt -l -s .)
           if [ -n "$UNFORMATTED" ]; then

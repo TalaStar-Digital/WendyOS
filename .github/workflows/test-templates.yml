@@ -71,9 +71,11 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build CLI
+        working-directory: go
         run: make build-cli
 
       - name: Run template generation tests
+        working-directory: go
         env:
           INPUT_TEMPLATES_BRANCH: ${{ inputs.templates_branch }}
           INPUT_TEMPLATE: ${{ inputs.template }}
@@ -102,6 +104,7 @@ jobs:
 
       - name: Cleanup
         if: always()
+        working-directory: go
         run: make clean
 
   deploy-to-device:
@@ -137,9 +140,11 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build CLI
+        working-directory: go
         run: make build-cli
 
       - name: Run template tests with deploy
+        working-directory: go
         run: |
           ARGS=(-w ./bin/wendy)
 
@@ -167,6 +172,7 @@ jobs:
 
       - name: Cleanup
         if: always()
+        working-directory: go
         run: make clean
 
   summary:

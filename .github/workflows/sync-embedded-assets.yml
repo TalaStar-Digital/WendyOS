@@ -28,7 +28,7 @@ jobs:
 
       - name: Sync skills
         run: |
-          SKILLS_DST=internal/cli/assets/skills
+          SKILLS_DST=go/internal/cli/assets/skills
           SKILLS_SRC=_skills_src
           rm -rf "$SKILLS_DST"
           mkdir -p "$SKILLS_DST"

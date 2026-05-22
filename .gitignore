@@ -26,9 +26,10 @@ WendyCLI.app/
 *.msi
 .wendy
 *.resolved
-wendy-agent
-wendy
-bin/
+go/wendy-agent
+go/wendy
+go/bin/
+go/local-pki-test
 *.exe
 *.dll
 *.so
@@ -42,7 +43,6 @@ vendor/
 
 # Git worktrees
 .worktrees/
-local-pki-test
 
 # Superpowers planning docs (local dev tooling)
 docs/superpowers/

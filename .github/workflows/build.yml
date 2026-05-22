@@ -4,12 +4,10 @@ on:
   push:
     branches: [main]
     paths:
-      - 'cmd/**'
-      - 'internal/**'
-      - 'proto/**'
+      - 'go/**'
+      - 'Proto/**'
       - 'go.mod'
       - 'go.sum'
-      - 'Makefile'
       - 'swift/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
@@ -119,15 +117,16 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build
+        working-directory: go
         env:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${{ needs.determine-version.outputs.version }}"
-          LDFLAGS="-s -w -X github.com/wendylabsinc/wendy/internal/shared/version.Version=${VERSION}"
-          mkdir -p ${{ matrix.artifact-name }}
-          go build -ldflags "${LDFLAGS}" -o ${{ matrix.artifact-name }}/${{ matrix.product }} ./cmd/${{ matrix.cmd }}
+          LDFLAGS="-s -w -X github.com/wendylabsinc/wendy/go/internal/shared/version.Version=${VERSION}"
+          mkdir -p ../${{ matrix.artifact-name }}
+          go build -ldflags "${LDFLAGS}" -o ../${{ matrix.artifact-name }}/${{ matrix.product }} ./cmd/${{ matrix.cmd }}
 
       - name: Create archive
         working-directory: .
@@ -172,15 +171,16 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build
+        working-directory: go
         env:
           CGO_ENABLED: "1"
           GOOS: darwin
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${{ needs.determine-version.outputs.version }}"
-          LDFLAGS="-s -w -X github.com/wendylabsinc/wendy/internal/shared/version.Version=${VERSION}"
-          mkdir -p ${{ matrix.artifact-name }}
-          go build -ldflags "${LDFLAGS}" -o ${{ matrix.artifact-name }}/wendy ./cmd/wendy
+          LDFLAGS="-s -w -X github.com/wendylabsinc/wendy/go/internal/shared/version.Version=${VERSION}"
+          mkdir -p ../${{ matrix.artifact-name }}
+          go build -ldflags "${LDFLAGS}" -o ../${{ matrix.artifact-name }}/wendy ./cmd/wendy
 
       - name: Create archive
         working-directory: .
