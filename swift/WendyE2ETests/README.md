@@ -34,6 +34,26 @@ make e2e-review
 make e2e-report
 ```
 
+## Artifact metadata
+
+The E2E artifacts intentionally keep JSON sparse. Long-form content stays in
+plain artifact files: command recordings, replay scripts, xUnit output, review
+Markdown, rendered HTML, and Git diff command output.
+
+Current machine-readable metadata is limited to attempt manifests:
+
+```text
+<attempt>/attempt.json
+<run>/<suite>/<test>/<target>/<attempt>/attempt.json
+```
+
+The run layout itself is the index for suites, tests, targets, and attempts. Do
+not add JSON files that merely duplicate directory names or list files already
+visible in the tree. If a future stage needs structured data that cannot be
+inferred from the artifact layout, add a narrowly named file for that producer,
+such as `aggregate.json`, `review.json`, or `report.json`, and keep prose/logs
+as separate files referenced by path.
+
 For reproducible command recordings when invoking SwiftPM directly:
 
 ```bash
