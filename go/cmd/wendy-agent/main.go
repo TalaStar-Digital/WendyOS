@@ -277,12 +277,25 @@ func main() {
 	// forwarding to their telemetry backend.
 	collectDmesg, _ := strconv.ParseBool(os.Getenv("WENDY_COLLECT_DMESG"))
 	if collectDmesg {
-		logger.Info("kernel dmesg collection enabled", zap.String("source", "/dev/kmsg"))
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			services.CollectDmesgLogs(ctx, logger, broadcaster)
-		}()
+		// Dual-control gate: env-var (WENDY_COLLECT_DMESG) is the first domain;
+		// the DPIA confirmation file is the second, filesystem domain. A process
+		// with only env-var write access cannot enable collection on its own.
+		// CollectDmesgLogs enforces this independently, but the pre-check here
+		// makes both controls visible at the callsite and avoids starting a
+		// goroutine that would immediately return on DPIA failure.
+		if _, statErr := os.Stat(services.DmesgDPIAConfirmFile); statErr != nil {
+			logger.Info("kernel dmesg collection skipped: DPIA confirmation file absent",
+				zap.String("file", services.DmesgDPIAConfirmFile),
+				zap.String("reason", "filesystem-domain gate not satisfied; WENDY_COLLECT_DMESG alone is insufficient"),
+			)
+		} else {
+			logger.Info("kernel dmesg collection enabled", zap.String("source", "/dev/kmsg"))
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				services.CollectDmesgLogs(ctx, logger, broadcaster)
+			}()
+		}
 	} else {
 		logger.Info("kernel dmesg collection disabled (set WENDY_COLLECT_DMESG=true to enable)")
 	}

@@ -40,14 +40,6 @@ const (
 	// guarding against integer overflow in the tsUS*1000 multiplication.
 	maxReasonableTsUS = int64(100 * 365 * 24 * 3600 * 1e6) // 100 years in µs
 
-	// dmesgDPIAConfirmFile must exist on-disk with non-empty content to enable
-	// dmesg collection. A file-based confirmation:
-	//   1. Requires explicit operator action on the host (cannot be satisfied by
-	//      copying an env-var block in a container spec or systemd override).
-	//   2. Produces an auditable filesystem-access record.
-	//   3. Content is read and logged at startup for non-repudiation.
-	dmesgDPIAConfirmFile = "/etc/wendy/dmesg-dpia-confirmed"
-
 	// dmesgPIIAllowFile must exist on-disk to enable WENDY_DMESG_REDACT=false.
 	// Requires filesystem write access separate from env-var permission domain.
 	dmesgPIIAllowFile = "/etc/wendy/dmesg-pii-allowed"
@@ -133,9 +125,9 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 	//   - Cannot be satisfied by copying an env block in a container spec
 	//   - Produces a filesystem access log entry (audit trail)
 	//   - Content is logged below for non-repudiation
-	dpiaContent, readErr := os.ReadFile(dmesgDPIAConfirmFile)
+	dpiaContent, readErr := os.ReadFile(DmesgDPIAConfirmFile)
 	if readErr != nil || len(strings.TrimSpace(string(dpiaContent))) == 0 {
-		logger.Error("kernel dmesg collection requires "+dmesgDPIAConfirmFile+" with non-empty content",
+		logger.Error("kernel dmesg collection requires "+DmesgDPIAConfirmFile+" with non-empty content",
 			zap.String("reason", "GDPR Art.35 requires a documented DPIA before forwarding kernel messages to an external backend"),
 		)
 		return
@@ -145,9 +137,17 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 	// non-repudiation without exposing the content to log sinks.
 	h := sha256.Sum256(dpiaContent)
 	logger.Info("dmesg DPIA confirmation found",
-		zap.String("file", dmesgDPIAConfirmFile),
+		zap.String("file", DmesgDPIAConfirmFile),
 		zap.String("confirmation_sha256", hex.EncodeToString(h[:])),
 		zap.Int("confirmation_len", len(strings.TrimSpace(string(dpiaContent)))),
+		// Best-effort caveat in the non-repudiation record so the limitation
+		// is visible alongside the DPIA acknowledgement rather than only in a
+		// later startup-warning log line that an operator might overlook.
+		zap.String("pii_redact_scope", "best-effort"),
+		zap.Strings("pii_redact_gaps", []string{
+			"NFS-paths", "unlabelled-kernel-fields",
+			"hostname-FQDN-variants", "hostname-mDNS-aliases",
+		}),
 	)
 
 	// redactAtomic: 1 = redact enabled (safe default), 0 = redact disabled.
@@ -230,7 +230,7 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 				"NFS-paths", "unlabelled-kernel-fields",
 				"hostname-FQDN-variants", "hostname-mDNS-aliases",
 			}),
-			zap.String("dpia_file", dmesgDPIAConfirmFile),
+			zap.String("dpia_file", DmesgDPIAConfirmFile),
 		)
 	} else {
 		logger.Warn("kernel dmesg collection started with PII redaction DISABLED",
@@ -285,9 +285,9 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if _, statErr := os.Stat(dmesgDPIAConfirmFile); statErr != nil {
+				if _, statErr := os.Stat(DmesgDPIAConfirmFile); statErr != nil {
 					logger.Warn("dmesg: DPIA confirmation file removed; stopping kernel log collection",
-						zap.String("file", dmesgDPIAConfirmFile),
+						zap.String("file", DmesgDPIAConfirmFile),
 					)
 					closeFile()
 					return
