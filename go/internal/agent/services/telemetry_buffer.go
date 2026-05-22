@@ -221,13 +221,12 @@ func (b *TelemetryBuffer) openLatestWriter(sig SignalType) error {
 
 func (b *TelemetryBuffer) rotateWriter(sig SignalType) error {
 	w := b.writers[sig]
-	if w != nil {
-		w.f.Close()
-	}
 	seqNum := 1
 	if w != nil {
+		w.f.Close()
 		seqNum = w.seqNum + 1
 	}
+	b.writers[sig] = nil // cleared so a subsequent open failure leaves a known state
 	path := filepath.Join(b.cfg.Dir, segmentFilename(sig, seqNum))
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -311,16 +310,23 @@ func (b *TelemetryBuffer) writeFrame(sig SignalType, msg proto.Message) {
 			return
 		}
 		w = b.writers[sig]
+		if w == nil {
+			return
+		}
 	}
 
 	var hdr [4]byte
 	binary.BigEndian.PutUint32(hdr[:], uint32(len(data)))
 	if _, err := w.f.Write(hdr[:]); err != nil {
 		b.logger.Warn("telemetry buffer: write header failed", zap.Error(err))
+		// Force rotation so the orphan header is isolated in a sealed segment.
+		b.rotateWriter(sig) //nolint:errcheck
 		return
 	}
 	if _, err := w.f.Write(data); err != nil {
 		b.logger.Warn("telemetry buffer: write payload failed", zap.Error(err))
+		// Force rotation so the partial frame is isolated in a sealed segment.
+		b.rotateWriter(sig) //nolint:errcheck
 		return
 	}
 	w.size += needed
