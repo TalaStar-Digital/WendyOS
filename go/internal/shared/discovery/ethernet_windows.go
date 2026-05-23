@@ -50,7 +50,7 @@ func discoverEthernet(ctx context.Context) ([]models.EthernetInterface, error) {
 }
 
 func readNetAdapterEntries(ctx context.Context) ([]netAdapterEntry, error) {
-	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", netAdapterPowershell)
+	cmd := exec.CommandContext(ctx, powershellExe, "-NoProfile", "-NonInteractive", "-Command", netAdapterPowershell)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("running Get-NetAdapter: %w", err)

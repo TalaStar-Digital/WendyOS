@@ -21,7 +21,7 @@ func TestRunWithProvider_SwiftRejectedOnWindows(t *testing.T) {
 		t.Fatalf("creating Package.swift: %v", err)
 	}
 
-	err := runWithProvider(context.Background(), nil, models.ExternalDevice{}, dir, "", runOptions{})
+	err := runWithProvider(context.Background(), nil, models.ExternalDevice{}, dir, "", nil, runOptions{})
 	if err == nil {
 		t.Fatal("runWithProvider(swift) on Windows: error = nil, want non-nil")
 	}
