@@ -286,7 +286,6 @@ jobs:
             "${attempt_dirs[@]}"
 
       - name: Review Swift E2E run
-        continue-on-error: true
         working-directory: swift
         shell: bash
         env:
