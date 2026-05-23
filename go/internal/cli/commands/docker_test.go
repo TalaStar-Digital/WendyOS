@@ -1320,13 +1320,13 @@ func TestResolveDockerfile_MultipleNonInteractiveVariantOnlyPrefersFirst(t *test
 }
 
 func TestValidateDockerfileName(t *testing.T) {
-	valid := []string{"Dockerfile", "Dockerfile.prod", "Dockerfile.dev", "Dockerfile-prod", "Dockerfile.my.variant"}
+	valid := []string{"Dockerfile", "Dockerfile.prod", "Dockerfile.dev", "Dockerfile-prod", "Dockerfile.my.variant", "./Dockerfile.prod"}
 	for _, name := range valid {
 		if err := validateDockerfileName(name); err != nil {
 			t.Errorf("validateDockerfileName(%q) unexpected error: %v", name, err)
 		}
 	}
-	invalid := []string{"-flag", "dockerfile", "DOCKERFILE", "not-a-dockerfile", "Dockerfile/evil", ".hidden", "Dockerfile.dockerignore", "Dockerfile.prod.dockerignore", "Dockerfile.-prod", "Dockerfile..hidden", "Dockerfile-.prod"}
+	invalid := []string{"-flag", "dockerfile", "DOCKERFILE", "not-a-dockerfile", "Dockerfile/evil", "subdir/Dockerfile.prod", "../Dockerfile", ".hidden", "Dockerfile.dockerignore", "Dockerfile.prod.dockerignore", "Dockerfile.-prod", "Dockerfile..hidden", "Dockerfile-.prod"}
 	for _, name := range invalid {
 		if err := validateDockerfileName(name); err == nil {
 			t.Errorf("validateDockerfileName(%q) expected error, got nil", name)
@@ -1357,6 +1357,27 @@ func TestConfinedDockerfilePath_Valid(t *testing.T) {
 	got, err := confinedDockerfilePath(dir, name)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == "" {
+		t.Fatal("expected non-empty resolved path")
+	}
+}
+
+// TestConfinedDockerfilePath_DoubleDotPrefixDirAllowed guards against the
+// HasPrefix(rel, "..") regression: a child directory whose name starts with
+// ".." (like "..cache") must not be mistaken for a parent-directory reference.
+func TestConfinedDockerfilePath_DoubleDotPrefixDirAllowed(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "..cache")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "Dockerfile"), []byte("FROM scratch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := confinedDockerfilePath(dir, filepath.Join("..cache", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("confinedDockerfilePath: %v", err)
 	}
 	if got == "" {
 		t.Fatal("expected non-empty resolved path")

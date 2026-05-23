@@ -160,8 +160,13 @@ func (p *DockerProvider) BuildWithDockerfile(ctx context.Context, device models.
 		if err != nil {
 			return nil, fmt.Errorf("resolving dockerfile path: %w", err)
 		}
+		// A plain HasPrefix check on ".." would reject sibling directory names
+		// like "..cache" that begin with two dots; require a ".." path segment.
+		escapes := func(rel string) bool {
+			return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+		}
 		rel, err := filepath.Rel(absProject, joined)
-		if err != nil || strings.HasPrefix(rel, "..") {
+		if err != nil || escapes(rel) {
 			return nil, fmt.Errorf("dockerfile %q must be within the project directory", dockerfile)
 		}
 		resolved, err := filepath.EvalSymlinks(joined)
@@ -169,7 +174,7 @@ func (p *DockerProvider) BuildWithDockerfile(ctx context.Context, device models.
 			return nil, fmt.Errorf("dockerfile %q: %w", dockerfile, err)
 		}
 		rel, err = filepath.Rel(absProject, resolved)
-		if err != nil || strings.HasPrefix(rel, "..") {
+		if err != nil || escapes(rel) {
 			return nil, fmt.Errorf("dockerfile %q must be within the project directory", dockerfile)
 		}
 		args = append(args, "-f", resolved)

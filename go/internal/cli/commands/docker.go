@@ -103,37 +103,56 @@ func detectProjectType(dir string) (string, error) {
 // "Dockerfile" followed by a dot or hyphen and one or more safe characters.
 var validDockerfileNameRe = regexp.MustCompile(`^Dockerfile([.\-][a-zA-Z0-9][a-zA-Z0-9._-]*)?$`)
 
-// validateDockerfileName returns an error when the base filename of name does
-// not follow the Dockerfile naming convention. This prevents filenames that
-// start with "-" from being misinterpreted as Docker CLI flags, and rejects
-// names with control characters or other unsafe content.
+// validateDockerfileName returns an error when name does not follow the
+// Dockerfile naming convention. This prevents filenames that start with "-"
+// from being misinterpreted as Docker CLI flags, rejects names with control
+// characters or other unsafe content, and rejects values containing path
+// separators. The path-separator check keeps --dockerfile a plain filename so
+// it lines up with the root-level Dockerfile entries produced by
+// detectBuildOptions; a leading "./" is allowed since filepath.Clean strips it.
 func validateDockerfileName(name string) error {
-	base := filepath.Base(name)
-	if strings.HasSuffix(base, ".dockerignore") {
-		return fmt.Errorf("invalid Dockerfile name %q: .dockerignore files are not Dockerfiles", base)
+	cleaned := filepath.Clean(name)
+	if cleaned != filepath.Base(cleaned) {
+		return fmt.Errorf("invalid Dockerfile name %q: path separators are not allowed", name)
 	}
-	if !validDockerfileNameRe.MatchString(base) {
-		return fmt.Errorf("invalid Dockerfile name %q: must be Dockerfile, Dockerfile.<variant>, or Dockerfile-<variant>", base)
+	if strings.HasSuffix(cleaned, ".dockerignore") {
+		return fmt.Errorf("invalid Dockerfile name %q: .dockerignore files are not Dockerfiles", cleaned)
+	}
+	if !validDockerfileNameRe.MatchString(cleaned) {
+		return fmt.Errorf("invalid Dockerfile name %q: must be Dockerfile, Dockerfile.<variant>, or Dockerfile-<variant>", cleaned)
 	}
 	return nil
 }
 
 // validComposeDockerfileNameRe matches the broader naming convention allowed by
-// Docker Compose (e.g. "web.Dockerfile", "Containerfile", "Dockerfile.prod").
-// The allowlist rejects whitespace, shell metacharacters, path separators, and
-// names starting with "-" that could be misread as CLI flags.
+// Docker Compose for the final path segment (e.g. "web.Dockerfile",
+// "Containerfile", "Dockerfile.prod"). The allowlist rejects whitespace, shell
+// metacharacters, and names starting with "-" that could be misread as CLI
+// flags.
 var validComposeDockerfileNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 // validateComposeDockerfileName validates a dockerfile name sourced from a
 // Compose service config. It applies a broader allowlist than validateDockerfileName
-// to accommodate names like "web.Dockerfile" and "Containerfile", while still
-// rejecting dangerous characters (whitespace, shell metacharacters, path separators).
+// to accommodate names like "web.Dockerfile" and "Containerfile". Subpaths
+// (e.g. "build/web.Dockerfile") are accepted because Compose configs may point
+// at a Dockerfile in a subdirectory; only the final path segment is regex-checked
+// here, and confinement plus regular-file checks are enforced separately by
+// confinedDockerfilePath.
 func validateComposeDockerfileName(name string) error {
 	base := filepath.Base(name)
 	if !validComposeDockerfileNameRe.MatchString(base) {
 		return fmt.Errorf("invalid compose dockerfile name %q: must start with a letter or digit and contain only letters, digits, dots, underscores, or hyphens", base)
 	}
 	return nil
+}
+
+// escapesBase reports whether a path returned by filepath.Rel walks outside
+// the base directory. A plain prefix check on ".." is unsafe because directory
+// names like "..cache" share that prefix without being a parent reference;
+// only an exact ".." or a ".." segment followed by a separator counts as an
+// escape.
+func escapesBase(rel string) bool {
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // confinedDockerfilePath resolves dockerfile relative to base, uses
@@ -154,7 +173,7 @@ func confinedDockerfilePath(base, dockerfile string) (string, error) {
 	// Check containment before EvalSymlinks so that a non-existent path still
 	// gets a clear "outside project" error rather than a confusing stat error.
 	rel, err := filepath.Rel(absBase, joined)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || escapesBase(rel) {
 		return "", fmt.Errorf("dockerfile %q must be within the project directory", dockerfile)
 	}
 
@@ -167,7 +186,7 @@ func confinedDockerfilePath(base, dockerfile string) (string, error) {
 		return "", fmt.Errorf("resolving dockerfile: %w", err)
 	}
 	rel, err = filepath.Rel(absBase, resolved)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || escapesBase(rel) {
 		return "", fmt.Errorf("dockerfile %q must be within the project directory", dockerfile)
 	}
 
@@ -1137,9 +1156,12 @@ func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, pl
 		"--platform", platform,
 	}
 	if dockerfile != "" {
-		if err := validateDockerfileName(dockerfile); err != nil {
-			return err
-		}
+		// Callers validate the filename at their own boundary: the CLI flag path
+		// uses the strict validateDockerfileName, and Compose uses the broader
+		// validateComposeDockerfileName so names like "Containerfile" and
+		// "web.Dockerfile" pass through. confinedDockerfilePath enforces
+		// containment and regular-file checks and yields an absolute path, which
+		// docker buildx -f cannot misinterpret as a flag.
 		resolvedDockerfile, err := confinedDockerfilePath(dir, dockerfile)
 		if err != nil {
 			return err
