@@ -74,6 +74,32 @@ func (b *TelemetryBroadcaster) SubscribeLogs() (string, <-chan *otelpb.ExportLog
 	return id, ch
 }
 
+// SubscribeLogsNoPrefill adds a log subscriber without pre-filling cached logs.
+// Use this when the caller will replay disk history itself (via ReadLastN) to
+// avoid sending the same recent batches twice — once from disk and again from
+// the in-memory cache. Live telemetry published after this call is buffered in
+// the returned channel and will be delivered after the caller's history replay.
+func (b *TelemetryBroadcaster) SubscribeLogsNoPrefill() (string, <-chan *otelpb.ExportLogsServiceRequest) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	id := b.nextSubID()
+	ch := make(chan *otelpb.ExportLogsServiceRequest, 64)
+	b.logSubs[id] = ch
+	return id, ch
+}
+
+// SubscribeMetricsNoPrefill adds a metrics subscriber without pre-filling cached snapshots.
+// Use when the caller replays disk history to avoid duplicate metric deliveries.
+func (b *TelemetryBroadcaster) SubscribeMetricsNoPrefill() (string, <-chan *otelpb.ExportMetricsServiceRequest) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	id := b.nextSubID()
+	ch := make(chan *otelpb.ExportMetricsServiceRequest, 64)
+	b.metricSubs[id] = ch
+	return id, ch
+}
+
+// UnsubscribeLogs removes a log subscriber.
 func (b *TelemetryBroadcaster) UnsubscribeLogs(id string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -296,7 +322,20 @@ func (s *TelemetryService) Broadcaster() *TelemetryBroadcaster {
 func (s *TelemetryService) StreamLogs(req *agentpb.StreamLogsRequest, stream grpc.ServerStreamingServer[agentpb.StreamLogsResponse]) error {
 	ctx := stream.Context()
 
-	// Replay history if requested.
+	// When replaying history, subscribe without cache prefill first so that
+	// live telemetry published during replay is buffered rather than lost,
+	// and to avoid sending the same recent batches twice (once from disk and
+	// once from the broadcaster's in-memory ring buffer).
+	var id string
+	var ch <-chan *otelpb.ExportLogsServiceRequest
+	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil {
+		id, ch = s.broadcaster.SubscribeLogsNoPrefill()
+	} else {
+		id, ch = s.broadcaster.SubscribeLogs()
+	}
+	defer s.broadcaster.UnsubscribeLogs(id)
+
+	// Replay history if requested (after subscribing so no live items are missed).
 	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil {
 		entries := s.buffer.ReadLastN(SignalLogs, int(*req.LastN))
 		for _, e := range entries {
@@ -315,9 +354,6 @@ func (s *TelemetryService) StreamLogs(req *agentpb.StreamLogsRequest, stream grp
 			}
 		}
 	}
-
-	id, ch := s.broadcaster.SubscribeLogs()
-	defer s.broadcaster.UnsubscribeLogs(id)
 
 	s.logger.Info("StreamLogs client connected", zap.String("sub_id", id))
 
@@ -350,6 +386,18 @@ func (s *TelemetryService) StreamLogs(req *agentpb.StreamLogsRequest, stream grp
 func (s *TelemetryService) StreamMetrics(req *agentpb.StreamMetricsRequest, stream grpc.ServerStreamingServer[agentpb.StreamMetricsResponse]) error {
 	ctx := stream.Context()
 
+	// Subscribe first (without cache prefill when replaying history) so that
+	// live telemetry is buffered during the replay window and not lost.
+	var id string
+	var ch <-chan *otelpb.ExportMetricsServiceRequest
+	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil {
+		id, ch = s.broadcaster.SubscribeMetricsNoPrefill()
+	} else {
+		id, ch = s.broadcaster.SubscribeMetrics()
+	}
+	defer s.broadcaster.UnsubscribeMetrics(id)
+
+	// Replay history after subscribing.
 	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil {
 		entries := s.buffer.ReadLastN(SignalMetrics, int(*req.LastN))
 		for _, e := range entries {
@@ -368,9 +416,6 @@ func (s *TelemetryService) StreamMetrics(req *agentpb.StreamMetricsRequest, stre
 			}
 		}
 	}
-
-	id, ch := s.broadcaster.SubscribeMetrics()
-	defer s.broadcaster.UnsubscribeMetrics(id)
 
 	s.logger.Info("StreamMetrics client connected", zap.String("sub_id", id))
 
@@ -404,6 +449,12 @@ func (s *TelemetryService) StreamMetrics(req *agentpb.StreamMetricsRequest, stre
 func (s *TelemetryService) StreamTraces(req *agentpb.StreamTracesRequest, stream grpc.ServerStreamingServer[agentpb.StreamTracesResponse]) error {
 	ctx := stream.Context()
 
+	// Subscribe first so live traces published during history replay are buffered.
+	// Traces have no in-memory cache prefill so SubscribeTraces is always correct here.
+	id, ch := s.broadcaster.SubscribeTraces()
+	defer s.broadcaster.UnsubscribeTraces(id)
+
+	// Replay history after subscribing.
 	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil {
 		entries := s.buffer.ReadLastN(SignalTraces, int(*req.LastN))
 		for _, e := range entries {
@@ -422,9 +473,6 @@ func (s *TelemetryService) StreamTraces(req *agentpb.StreamTracesRequest, stream
 			}
 		}
 	}
-
-	id, ch := s.broadcaster.SubscribeTraces()
-	defer s.broadcaster.UnsubscribeTraces(id)
 
 	s.logger.Info("StreamTraces client connected", zap.String("sub_id", id))
 

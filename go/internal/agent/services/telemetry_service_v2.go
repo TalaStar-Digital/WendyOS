@@ -25,6 +25,19 @@ func NewTelemetryServiceV2(logger *zap.Logger, broadcaster *TelemetryBroadcaster
 }
 
 func (s *TelemetryServiceV2) StreamLogs(req *agentpbv2.StreamLogsRequest, stream grpc.ServerStreamingServer[agentpbv2.StreamLogsResponse]) error {
+	// Subscribe first (without cache prefill when replaying history) so live
+	// telemetry is buffered during replay and not lost, and to avoid duplicate
+	// deliveries from both the disk history and the in-memory ring buffer.
+	var subID string
+	var ch <-chan *otelpb.ExportLogsServiceRequest
+	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil {
+		subID, ch = s.broadcaster.SubscribeLogsNoPrefill()
+	} else {
+		subID, ch = s.broadcaster.SubscribeLogs()
+	}
+	defer s.broadcaster.UnsubscribeLogs(subID)
+
+	// Replay history after subscribing.
 	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil {
 		entries := s.buffer.ReadLastN(SignalLogs, int(*req.LastN))
 		for _, e := range entries {
@@ -44,9 +57,6 @@ func (s *TelemetryServiceV2) StreamLogs(req *agentpbv2.StreamLogsRequest, stream
 			}
 		}
 	}
-
-	subID, ch := s.broadcaster.SubscribeLogs()
-	defer s.broadcaster.UnsubscribeLogs(subID)
 
 	for {
 		select {
@@ -71,6 +81,18 @@ func (s *TelemetryServiceV2) StreamLogs(req *agentpbv2.StreamLogsRequest, stream
 }
 
 func (s *TelemetryServiceV2) StreamMetrics(req *agentpbv2.StreamMetricsRequest, stream grpc.ServerStreamingServer[agentpbv2.StreamMetricsResponse]) error {
+	// Subscribe first to buffer live items during replay; skip cache prefill
+	// when replaying history to avoid duplicate metric deliveries.
+	var subID string
+	var ch <-chan *otelpb.ExportMetricsServiceRequest
+	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil {
+		subID, ch = s.broadcaster.SubscribeMetricsNoPrefill()
+	} else {
+		subID, ch = s.broadcaster.SubscribeMetrics()
+	}
+	defer s.broadcaster.UnsubscribeMetrics(subID)
+
+	// Replay history after subscribing.
 	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil {
 		entries := s.buffer.ReadLastN(SignalMetrics, int(*req.LastN))
 		for _, e := range entries {
@@ -89,9 +111,6 @@ func (s *TelemetryServiceV2) StreamMetrics(req *agentpbv2.StreamMetricsRequest, 
 			}
 		}
 	}
-
-	subID, ch := s.broadcaster.SubscribeMetrics()
-	defer s.broadcaster.UnsubscribeMetrics(subID)
 
 	for {
 		select {
@@ -115,6 +134,12 @@ func (s *TelemetryServiceV2) StreamMetrics(req *agentpbv2.StreamMetricsRequest, 
 }
 
 func (s *TelemetryServiceV2) StreamTraces(req *agentpbv2.StreamTracesRequest, stream grpc.ServerStreamingServer[agentpbv2.StreamTracesResponse]) error {
+	// Subscribe first so live traces are buffered during history replay.
+	// Traces have no in-memory cache prefill, so SubscribeTraces is always correct.
+	subID, ch := s.broadcaster.SubscribeTraces()
+	defer s.broadcaster.UnsubscribeTraces(subID)
+
+	// Replay history after subscribing.
 	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil {
 		entries := s.buffer.ReadLastN(SignalTraces, int(*req.LastN))
 		for _, e := range entries {
@@ -133,9 +158,6 @@ func (s *TelemetryServiceV2) StreamTraces(req *agentpbv2.StreamTracesRequest, st
 			}
 		}
 	}
-
-	subID, ch := s.broadcaster.SubscribeTraces()
-	defer s.broadcaster.UnsubscribeTraces(subID)
 
 	for {
 		select {
