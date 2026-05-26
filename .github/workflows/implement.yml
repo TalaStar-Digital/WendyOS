@@ -114,7 +114,7 @@ jobs:
 
       - name: Check out repository
         if: steps.auth.outputs.authorized == 'true' && steps.check-existing.outputs.exists == 'false'
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           token: ${{ github.token }}
           fetch-depth: 0
@@ -225,7 +225,7 @@ jobs:
 
       - name: Install Node.js
         if: steps.auth.outputs.authorized == 'true' && steps.check-existing.outputs.exists == 'false'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: '20'
 
@@ -258,7 +258,7 @@ jobs:
           git config --local --unset-all credential.helper 2>/dev/null || true
           # Use env var for system prompt to keep instructions out of /proc/cmdline
           ANTHROPIC_SYSTEM_PROMPT="$SYSTEM_PROMPT" claude --print \
-            --allowedTools "Edit,Write,Read,MultiEdit" \
+            --allowedTools "Edit,Write,MultiEdit" \
             "$USER_PROMPT" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
@@ -270,7 +270,7 @@ jobs:
 
       - name: Upload run artifacts
         if: steps.auth.outputs.authorized == 'true' && steps.check-existing.outputs.exists == 'false'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: claude-implement-run-${{ github.run_id }}
           path: |
