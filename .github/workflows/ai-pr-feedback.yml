@@ -498,6 +498,8 @@ jobs:
           rm -f "$RUNNER_TEMP/system-prompt.txt" "$RUNNER_TEMP/prompt.txt"
           # Remove .git credential helpers before Claude runs
           git config --local --unset-all credential.helper 2>/dev/null || true
+          # Mask API key in workflow logs so it won't appear in log output or summaries
+          echo "::add-mask::$ANTHROPIC_API_KEY"
           # Use env -i to limit Claude's visible environment to only what it needs.
           # This keeps workflow secrets (GITHUB_TOKEN, etc.) out of /proc/self/environ
           # for the claude process.  ANTHROPIC_SYSTEM_PROMPT is used instead of
@@ -525,7 +527,7 @@ jobs:
             ${{ runner.temp }}/claude-output.txt
             ${{ runner.temp }}/claude-stderr.txt
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 1
 
       - name: Commit any uncommitted changes
         if: steps.circuit.outputs.tripped == 'false' && steps.guard.outputs.proceed == 'true'
