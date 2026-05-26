@@ -33,10 +33,10 @@ Before you begin, make sure you have:
     Connect your Raspberry Pi Zero 2 W to your computer using a USB cable.
 
     ```bash
-    wendy devices list
+    wendy discover
     ```
 
-    Verify that your Pi Zero 2 W appears in the list of connected devices.
+    Verify that your Pi Zero 2 W appears in the list of discovered devices.
   </Step>
 
   <Step>
@@ -45,10 +45,10 @@ Before you begin, make sure you have:
     Use the Wendy CLI to flash WendyOS to your Pi Zero 2 W:
 
     ```bash
-    wendy flash pi-zero-2-w
+    wendy os install
     ```
 
-    This process may take several minutes. The CLI will show progress updates.
+    Select **Raspberry Pi Zero 2 W** and then select your drive. This process may take several minutes. The CLI will show progress updates.
   </Step>
 
   <Step>
@@ -57,7 +57,7 @@ Before you begin, make sure you have:
     Once flashing is complete, verify the installation:
 
     ```bash
-    wendy devices info
+    wendy device info
     ```
 
     You should see your Raspberry Pi Zero 2 W running WendyOS.
@@ -82,4 +82,4 @@ Before you begin, make sure you have:
 
 ### Next Steps
 
-Now that WendyOS is installed, you can start deploying apps to your device. Check out the [Quick Start Guide](#) to build your first app.
+Now that WendyOS is installed, you can start deploying apps to your device. Check out the [Hello World Guide](/docs/guides/python/hello-world) to build your first app.
