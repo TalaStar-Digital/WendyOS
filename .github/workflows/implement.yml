@@ -146,8 +146,12 @@ jobs:
 
           title   = issue['title']
           body    = issue.get('body') or '(no body)'
+          # Filter to trusted authors only to prevent prompt injection from external contributors
+          trusted = {'OWNER', 'MEMBER', 'COLLABORATOR'}
           comments = '\n'.join(
-              f'**{c["user"]["login"]}:** {c["body"]}' for c in comments_raw
+              f'**{c["user"]["login"]}:** {c["body"]}'
+              for c in comments_raw
+              if c.get('author_association') in trusted
           )
 
           prompt = f"""You are an engineer working on WendyOS, an embedded/edge OS and CLI tool that deploys containerised apps to IoT devices.
@@ -197,7 +201,8 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          claude --print --dangerously-skip-permissions \
+          claude --print \
+            --allowedTools "Bash,Edit,Write,Read,MultiEdit" \
             "$(cat "$RUNNER_TEMP/prompt.txt")" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
@@ -217,6 +222,7 @@ jobs:
             ${{ runner.temp }}/claude-output.txt
             ${{ runner.temp }}/claude-stderr.txt
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Commit any uncommitted changes
         if: steps.auth.outputs.authorized == 'true' && steps.check-existing.outputs.exists == 'false'

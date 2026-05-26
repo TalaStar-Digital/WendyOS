@@ -129,10 +129,6 @@ jobs:
           if [ "$EVENT_NAME" = "workflow_run" ] && [ "$ACTOR" = "workflow_run" ]; then
             ALLOWED=true
           fi
-          # Copilot reviewer always trusted
-          if [ "$ACTOR" = "github-copilot[bot]" ]; then
-            ALLOWED=true
-          fi
 
           if [ "$ALLOWED" = "false" ]; then
             echo "Actor '$ACTOR' (assoc: $ACTOR_ASSOC) is not authorized — skipping"
@@ -250,16 +246,14 @@ jobs:
         run: |
           gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/comments" \
             --jq '[.[] | select(.author_association as $a |
-                   ["OWNER","MEMBER","COLLABORATOR"] | contains([$a]) or
-                   .user.login == "github-copilot[bot]") |
+                   ["OWNER","MEMBER","COLLABORATOR"] | contains([$a])) |
                   {user: .user.login, path: .path, body: .body}]' \
             > "$RUNNER_TEMP/inline-comments.json" 2>/dev/null \
             || echo "[]" > "$RUNNER_TEMP/inline-comments.json"
 
           gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
             --jq '[.[] | select(.author_association as $a |
-                   ["OWNER","MEMBER","COLLABORATOR"] | contains([$a]) or
-                   .user.login == "github-copilot[bot]") |
+                   ["OWNER","MEMBER","COLLABORATOR"] | contains([$a])) |
                   {user: .user.login, state: .state, body: .body}]' \
             > "$RUNNER_TEMP/reviews.json" 2>/dev/null \
             || echo "[]" > "$RUNNER_TEMP/reviews.json"
@@ -269,8 +263,7 @@ jobs:
             --jq '[.[] |
                    select(.user.login != "github-actions[bot]") |
                    select(.author_association as $a |
-                     ["OWNER","MEMBER","COLLABORATOR"] | contains([$a]) or
-                     .user.login == "github-copilot[bot]") |
+                     ["OWNER","MEMBER","COLLABORATOR"] | contains([$a])) |
                    {user: .user.login, body: .body}]' \
             > "$RUNNER_TEMP/issue-comments.json" 2>/dev/null \
             || echo "[]" > "$RUNNER_TEMP/issue-comments.json"
@@ -294,8 +287,9 @@ jobs:
           inline   = json.loads(pathlib.Path(f'{rt}/inline-comments.json').read_text())
           reviews  = json.loads(pathlib.Path(f'{rt}/reviews.json').read_text())
           comments = json.loads(pathlib.Path(f'{rt}/issue-comments.json').read_text())
-          ci_logs  = pathlib.Path(f'{rt}/ci-logs.txt').read_text()
-          diff     = pathlib.Path(f'{rt}/pr.diff').read_text()
+          # Sanitize to prevent tag-escape attacks before embedding in prompt
+          ci_logs  = pathlib.Path(f'{rt}/ci-logs.txt').read_text().replace('</untrusted_input>', '[end-untrusted]')
+          diff     = pathlib.Path(f'{rt}/pr.diff').read_text().replace('</untrusted_input>', '[end-untrusted]')
 
           sections = []
 
@@ -387,7 +381,8 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          claude --print --dangerously-skip-permissions \
+          claude --print \
+            --allowedTools "Bash,Edit,Write,Read,MultiEdit" \
             "$(cat "$RUNNER_TEMP/prompt.txt")" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
@@ -407,6 +402,7 @@ jobs:
             ${{ runner.temp }}/claude-output.txt
             ${{ runner.temp }}/claude-stderr.txt
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Commit any uncommitted changes
         if: steps.circuit.outputs.tripped == 'false' && steps.guard.outputs.proceed == 'true'
