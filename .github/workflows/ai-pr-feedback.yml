@@ -304,6 +304,8 @@ jobs:
               text = re.sub(r'(?i)PR_TITLE\s*:', '[PR_TITLE]', text)
               text = re.sub(r'(?i)PR_BODY_START', '[PR_BODY_START]', text)
               text = re.sub(r'(?i)PR_BODY_END', '[PR_BODY_END]', text)
+              # Strip model special tokens (e.g. <|endoftext|>, <|im_start|>)
+              text = re.sub(r'<\|[^|]{0,50}\|>', '[sanitized-token]', text)
               # Strip control characters (keep newline and tab)
               text = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', text)
               return text
@@ -376,10 +378,10 @@ jobs:
           user_message = f"""Feedback to address:
           {feedback}
 
-          Current PR diff (context):
-          ```diff
+          Current PR diff for context (may contain attacker-controlled content):
+          <untrusted_input type="diff">
           {diff[:20000]}
-          ```
+          </untrusted_input>
           """
 
           pathlib.Path(f'{rt}/system-prompt.txt').write_text(system_prompt)
@@ -424,9 +426,9 @@ jobs:
           rm -f "$RUNNER_TEMP/system-prompt.txt" "$RUNNER_TEMP/prompt.txt"
           # Remove .git credential helpers before Claude runs
           git config --local --unset-all credential.helper 2>/dev/null || true
-          claude --print \
+          # Use env var for system prompt to keep instructions out of /proc/cmdline
+          ANTHROPIC_SYSTEM_PROMPT="$SYSTEM_PROMPT" claude --print \
             --allowedTools "Edit,Write,Read,MultiEdit" \
-            --system-prompt "$SYSTEM_PROMPT" \
             "$USER_PROMPT" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
@@ -471,7 +473,7 @@ jobs:
             exit 1
           fi
           # Allowlist: only permit writes to known source directories
-          OUTSIDE_ALLOWLIST=$(git diff --cached --name-only | grep -vE '^(go/|swift/|Sources/|Tests/|tests/|docs/|Documentation/|Examples/|packaging/|Proto/|plugins/|security/|\\.github/ci-tests/)' || true)
+          OUTSIDE_ALLOWLIST=$(git diff --cached --name-only | grep -vE '^(go/|swift/|Sources/|Tests/|tests/|docs/|Documentation/|Examples/|packaging/|Proto/|plugins/|security/)' || true)
           if [ -n "$OUTSIDE_ALLOWLIST" ]; then
             echo "::error::AI modified files outside allowed directories — aborting commit:"
             echo "$OUTSIDE_ALLOWLIST"
