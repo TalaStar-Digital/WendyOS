@@ -302,6 +302,12 @@ jobs:
           # Block AI from modifying CI/security configuration files
           # Use -z (NUL-delimited) to prevent embedded-newline bypass in filenames
           while IFS= read -r -d '' f; do
+            # Reject non-ASCII paths to prevent Unicode homoglyph bypass attacks
+            if printf '%s' "$f" | LC_ALL=C grep -q '[^ -~]'; then
+              echo "::error::AI modified file with non-ASCII path: $f"
+              git reset HEAD
+              exit 1
+            fi
             if printf '%s' "$f" | grep -qE '^(\.github/|CODEOWNERS|SECURITY\.md|security/|.*\.(pem|key|p12|pfx))'; then
               echo "::error::AI modified protected file: $f"
               git reset HEAD
