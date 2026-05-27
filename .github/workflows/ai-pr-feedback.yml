@@ -24,9 +24,20 @@ jobs:
   respond:
     name: Address PR feedback via Claude Code
     # Prevent unauthorized events from receiving write credentials before job dispatch.
-    # All three comment/review event types are pre-filtered by author_association to
-    # avoid provisioning secrets for untrusted actors. These are event-payload values
-    # (pre-filter only); the Guard step re-verifies via API for authoritative enforcement.
+    # All three comment/review event types are pre-filtered by author_association at
+    # job level to avoid provisioning secrets for untrusted actors.
+    #
+    # ACCEPTED RISK: These pre-filter values come from the webhook event payload, not
+    # from a live API call. They serve as a first-pass gate only. The authoritative
+    # OWNER|MEMBER verification happens in the Guard step via API re-check
+    # (gh api repos/.../issues/comments/$COMMENT_ID and repos/.../pulls/$PR_NUMBER).
+    # Steps before Guard (Resolve, Guard) use GITHUB_TOKEN for read-only API calls
+    # only — no write-capable tokens are exercised until Guard confirms authorization.
+    # This residual risk is accepted because:
+    #   1. The Guard step blocks proceed=true without a confirmed OWNER|MEMBER API check.
+    #   2. Pre-Guard steps are read-only (Resolve: gh api reads; Circuit: gh api reads).
+    #   3. A compromised payload association would only get as far as job provisioning,
+    #      not execution of Claude or any write operation.
     if: |
       (github.event_name != 'workflow_run' ||
        github.event.workflow_run.head_repository.full_name == github.repository) &&
@@ -575,19 +586,27 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          # Mask API key immediately — before any other command — to minimise the
-          # window in which the key could appear unredacted in runner logs.
+          # Mask secrets immediately — before any other command — to minimise the
+          # window in which they could appear unredacted in runner logs.
           echo "::add-mask::$ANTHROPIC_API_KEY"
+          echo "::add-mask::$GITHUB_TOKEN"
           # Read prompts into shell vars, then delete the files so Claude's Read
           # tool cannot access them (or any other sensitive RUNNER_TEMP content)
           SYSTEM_PROMPT=$(cat "$RUNNER_TEMP/system-prompt.txt")
           USER_PROMPT=$(cat "$RUNNER_TEMP/prompt.txt")
           rm -f "$RUNNER_TEMP/system-prompt.txt" "$RUNNER_TEMP/prompt.txt"
-          # Remove .git credential helpers before Claude runs
+          # Clear all runner credential stores before Claude runs to prevent token
+          # exfiltration via /proc/self/environ of the parent process or on-disk stores.
+          # env -i strips the child environment, but the parent shell retains these vars
+          # and they may be accessible via /proc/*/environ or credential helper files.
+          unset ACTIONS_RUNTIME_TOKEN ACTIONS_RESULTS_URL ACTIONS_CACHE_URL RUNNER_TOKEN
+          rm -f "$HOME/.config/gh/hosts.yml"
           git config --local --unset-all credential.helper 2>/dev/null || true
+          git config --global --unset-all credential.helper 2>/dev/null || true
           # Use env -i to limit Claude's visible environment to only what it needs.
-          # This keeps workflow secrets (GITHUB_TOKEN, etc.) out of /proc/self/environ
-          # for the claude process.  ANTHROPIC_SYSTEM_PROMPT is used instead of
+          # Combined with the credential store cleanup above, this prevents GITHUB_TOKEN
+          # and runner tokens from reaching Claude via /proc/self/environ, on-disk auth
+          # caches, or credential helpers.  ANTHROPIC_SYSTEM_PROMPT is used instead of
           # --system-prompt to keep instructions out of /proc/cmdline.
           env -i HOME="$HOME" PATH="$PATH" \
             ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
