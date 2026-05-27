@@ -126,19 +126,10 @@ jobs:
           # Download tarball, verify its sha512 against hardcoded hash, then install
           # from the local file — eliminates any TOCTOU window between check and install.
           EXPECTED_INTEGRITY="sha512-nyeOyoc/pmGGRpffyPU16v5campztkynyRFcNKqD7pBvI0aPfljGVi3CizKbu7/dx1MijeE9XiQ0kHk1tmx5Gg=="
-          # Cross-reference our hardcoded hash against the npm registry's published integrity.
-          # Fail if registry is unreachable — proceeding without this check silently defeats it.
-          REGISTRY_INTEGRITY=$(npm view @anthropic-ai/claude-code@2.1.150 dist.integrity 2>/dev/null || echo "")
-          if [ -z "$REGISTRY_INTEGRITY" ]; then
-            echo "::error::Could not fetch integrity from npm registry for claude-code@2.1.150 — aborting"
-            exit 1
-          fi
-          if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then
-            echo "::error::Hardcoded integrity does not match npm registry for claude-code@2.1.150"
-            echo "  hardcoded: $EXPECTED_INTEGRITY"
-            echo "  registry:  $REGISTRY_INTEGRITY"
-            exit 1
-          fi
+          # The hardcoded sha512 hash IS the security control — reviewed via CODEOWNERS before merge.
+          # A registry cross-check against the same npm registry that served the tarball would be
+          # circular: a compromised registry could return the attacker's hash for both the tarball
+          # and the dist.integrity field. We rely solely on the out-of-band hardcoded hash.
           TARBALL=$(npm pack @anthropic-ai/claude-code@2.1.150 --dry-run=false 2>/dev/null | tail -1)
           if [ -z "$TARBALL" ] || [ ! -f "$TARBALL" ]; then
             echo "::error::Failed to download @anthropic-ai/claude-code@2.1.150"
