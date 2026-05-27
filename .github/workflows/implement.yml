@@ -351,6 +351,7 @@ jobs:
 
       - name: Push branch
         if: steps.auth.outputs.authorized == 'true' && steps.check-existing.outputs.exists == 'false' && steps.commit.outputs.changed == 'true'
+        id: push
         env:
           # WENDY_TEMPLATE_SYNC_TOKEN is a fine-grained PAT scoped to only
           # 'contents: write' on this repository (no other repos or permissions).
@@ -365,6 +366,16 @@ jobs:
           # inherited by unrelated child processes.  Token is never in the URL.
           printf '#!/bin/sh\nprintf "%%s" "${GIT_PUSH_TOKEN}"\n' > "$RUNNER_TEMP/askpass.sh"
           chmod +x "$RUNNER_TEMP/askpass.sh"
+          # If a prior AI run's branch still exists remotely (PR closed/merged but branch
+          # not deleted), append a short timestamp to avoid a non-fast-forward push failure.
+          if env -i HOME="$HOME" PATH="$PATH" \
+               GIT_ASKPASS="$RUNNER_TEMP/askpass.sh" GIT_PUSH_TOKEN="$TOKEN" \
+               git ls-remote --exit-code --heads \
+               "https://github.com/${GITHUB_REPOSITORY}.git" "$BRANCH" > /dev/null 2>&1; then
+            echo "::warning::Remote branch '$BRANCH' already exists — appending timestamp to avoid conflict"
+            BRANCH="${BRANCH}-$(date +%Y%m%d%H%M%S)"
+          fi
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           env -i HOME="$HOME" PATH="$PATH" \
             GIT_ASKPASS="$RUNNER_TEMP/askpass.sh" GIT_PUSH_TOKEN="$TOKEN" \
             git push --no-force \
@@ -398,7 +409,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          BRANCH: ${{ steps.branch.outputs.branch }}
+          BRANCH: ${{ steps.push.outputs.branch }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           PR_URL=$(gh pr create \

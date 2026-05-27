@@ -16,6 +16,10 @@ on:
       - Integration Test Review
     types: [completed]
 
+concurrency:
+  group: agentic-ci-loop-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
 jobs:
   iterate:
     name: Fix failing CI and resolve bot review comments
@@ -44,17 +48,26 @@ jobs:
             echo "No PR found — skipping"
             echo "pr_number=" >> "$GITHUB_OUTPUT"
           else
-            AUTHOR_ASSOC=$(gh api "repos/$REPO/pulls/$PR_NUMBER" \
-              --jq '.author_association' 2>/dev/null || echo "NONE")
-            case "$AUTHOR_ASSOC" in
-              MEMBER|OWNER|COLLABORATOR)
-                echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-                ;;
-              *)
-                echo "PR author is not a wendylabsinc member (association: $AUTHOR_ASSOC) — skipping"
-                echo "pr_number=" >> "$GITHUB_OUTPUT"
-                ;;
-            esac
+            PR_DATA=$(gh api "repos/$REPO/pulls/$PR_NUMBER" 2>/dev/null || echo '{}')
+            AUTHOR_ASSOC=$(printf '%s' "$PR_DATA" | jq -r '.author_association // "NONE"')
+            # ai-generated PRs are handled by ai-pr-feedback.yml — skip here to avoid two
+            # automation loops racing to commit to the same branch simultaneously.
+            HAS_AI_LABEL=$(printf '%s' "$PR_DATA" \
+              | jq '[.labels[].name] | contains(["ai-generated"]) | if . then "true" else "false" end')
+            if [ "$HAS_AI_LABEL" = "true" ]; then
+              echo "PR has ai-generated label — handled by ai-pr-feedback.yml, skipping"
+              echo "pr_number=" >> "$GITHUB_OUTPUT"
+            else
+              case "$AUTHOR_ASSOC" in
+                MEMBER|OWNER|COLLABORATOR)
+                  echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+                  ;;
+                *)
+                  echo "PR author is not a wendylabsinc member (association: $AUTHOR_ASSOC) — skipping"
+                  echo "pr_number=" >> "$GITHUB_OUTPUT"
+                  ;;
+              esac
+            fi
           fi
 
       - name: Check CI status and bot comments

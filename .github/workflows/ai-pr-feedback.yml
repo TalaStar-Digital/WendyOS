@@ -186,7 +186,7 @@ jobs:
 
           # Count consecutive github-actions[bot] commits since the later of
           # (last human commit) or (last /continue comment).
-          BOT_STREAK=$(gh api "repos/$REPO/pulls/$PR_NUMBER/commits?per_page=100" \
+          BOT_STREAK=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits?per_page=100" \
             --jq --arg ts "$CONTINUE_TS" '
               [
                 .[] |
@@ -218,8 +218,6 @@ jobs:
             --field body="$(cat <<'MSG'
           ⚠️ AI loop paused after 5 consecutive iterations without a human commit.
           Reply `/continue` to allow more iterations.
-
-          @joannis @EBro912
           MSG
           )"
 
@@ -441,6 +439,33 @@ jobs:
           print(f'Prompts written (system: {len(system_prompt)} chars, user: {len(user_message)} chars)')
           PYEOF
 
+      - name: Install Node.js
+        if: steps.circuit.outputs.tripped == 'false' && steps.guard.outputs.proceed == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: '20'
+
+      - name: Install Claude Code CLI
+        if: steps.circuit.outputs.tripped == 'false' && steps.guard.outputs.proceed == 'true'
+        run: |
+          # Install before checkout so a repo-controlled .npmrc cannot affect npm behaviour.
+          EXPECTED_INTEGRITY="sha512-nyeOyoc/pmGGRpffyPU16v5campztkynyRFcNKqD7pBvI0aPfljGVi3CizKbu7/dx1MijeE9XiQ0kHk1tmx5Gg=="
+          TARBALL=$(npm pack @anthropic-ai/claude-code@2.1.150 --dry-run=false 2>/dev/null | tail -1)
+          if [ -z "$TARBALL" ] || [ ! -f "$TARBALL" ]; then
+            echo "::error::Failed to download @anthropic-ai/claude-code@2.1.150"
+            exit 1
+          fi
+          ACTUAL_HASH="sha512-$(openssl dgst -sha512 -binary "$TARBALL" | openssl base64 -A)"
+          if [ "$ACTUAL_HASH" != "$EXPECTED_INTEGRITY" ]; then
+            echo "::error::claude-code@2.1.150 integrity mismatch — possible supply-chain compromise"
+            echo "  expected: $EXPECTED_INTEGRITY"
+            echo "    actual: $ACTUAL_HASH"
+            rm -f "$TARBALL"
+            exit 1
+          fi
+          npm install -g --ignore-scripts "$TARBALL"
+          rm -f "$TARBALL"
+
       - name: Check out PR branch
         if: steps.circuit.outputs.tripped == 'false' && steps.guard.outputs.proceed == 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -471,35 +496,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Install Node.js
-        if: steps.circuit.outputs.tripped == 'false' && steps.guard.outputs.proceed == 'true'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
-        with:
-          node-version: '20'
-
-      - name: Install Claude Code CLI
-        if: steps.circuit.outputs.tripped == 'false' && steps.guard.outputs.proceed == 'true'
-        run: |
-          # Download tarball, verify its sha512 against hardcoded hash, then install
-          # from the local file — eliminates any TOCTOU window between check and install.
-          # EXPECTED_INTEGRITY is hardcoded here, NOT fetched from the registry.
-          EXPECTED_INTEGRITY="sha512-nyeOyoc/pmGGRpffyPU16v5campztkynyRFcNKqD7pBvI0aPfljGVi3CizKbu7/dx1MijeE9XiQ0kHk1tmx5Gg=="
-          TARBALL=$(npm pack @anthropic-ai/claude-code@2.1.150 --dry-run=false 2>/dev/null | tail -1)
-          if [ -z "$TARBALL" ] || [ ! -f "$TARBALL" ]; then
-            echo "::error::Failed to download @anthropic-ai/claude-code@2.1.150"
-            exit 1
-          fi
-          ACTUAL_HASH="sha512-$(openssl dgst -sha512 -binary "$TARBALL" | openssl base64 -A)"
-          if [ "$ACTUAL_HASH" != "$EXPECTED_INTEGRITY" ]; then
-            echo "::error::claude-code@2.1.150 integrity mismatch — possible supply-chain compromise"
-            echo "  expected: $EXPECTED_INTEGRITY"
-            echo "    actual: $ACTUAL_HASH"
-            rm -f "$TARBALL"
-            exit 1
-          fi
-          npm install -g --ignore-scripts "$TARBALL"
-          rm -f "$TARBALL"
 
       - name: Run Claude Code
         if: steps.circuit.outputs.tripped == 'false' && steps.guard.outputs.proceed == 'true'
