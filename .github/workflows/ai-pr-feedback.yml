@@ -371,8 +371,21 @@ jobs:
                        'body': sanitize(r.get('body') or '')} for r in raw_reviews]
           comments = [{'user': san_user(c.get('user')),
                        'body': sanitize(c.get('body') or '')} for c in raw_comments]
-          # failing check names are workflow-author-controlled; sanitize defensively
+          # Filter failing check names against a strict allowlist of known CI check names.
+          # Workflow check names are mostly author-controlled, but third-party actions
+          # (e.g., test reporters) can set dynamic names from PR content — allowlist prevents
+          # attacker-controlled names from reaching the LLM prompt.
           failing  = sanitize(failing)
+          ALLOWED_CHECKS_RE = re.compile(
+              r'^(Build products and release|Go Tests|Swift Tests|Docs Review'
+              r'|Integration Test Review|Format Check|Vet|Test|Lint Swift Sources'
+              r'|Run WendyAgentCore Tests|Build WendyAgentMac app'
+              r'|Analyze \([a-z0-9\-]+\)|Review docs coverage'
+              r'|Review integration test coverage|Integration Tests \(macOS\)( / .+)?'
+              r'|Claude Security Review)$', re.IGNORECASE)
+          if failing:
+              allowed = [n.strip() for n in failing.split(',') if n.strip() and ALLOWED_CHECKS_RE.match(n.strip())]
+              failing = ', '.join(allowed)
           # Load and sanitize changed file paths. Filenames are PR-author-controlled and
           # may contain injection content; sanitize AND filter against the commit allowlist.
           ALLOWED_PATH_RE = re.compile(r'^(go/|swift/|Sources/|Tests/|tests/|docs/|Documentation/|Examples/)')
@@ -410,6 +423,14 @@ jobs:
 
           feedback = '\n\n'.join(sections) or '(No feedback found — checking for drift)'
 
+          # Generate a per-run UUID as the structured output sentinel.
+          # Unpredictable per-run: an attacker injecting review comments cannot know the
+          # sentinel in advance and therefore cannot forge the structured output markers.
+          import uuid as _uuid
+          sentinel = _uuid.uuid4().hex
+          begin_marker = f'PR_BODY_START_{sentinel}'
+          end_marker   = f'PR_BODY_END_{sentinel}'
+
           system_prompt = f"""You are an engineer working on WendyOS. You are iterating on PR #{pr}.
 
           Address ALL of the feedback provided in the user message by editing the relevant files.
@@ -418,7 +439,7 @@ jobs:
           When you are done, output — at the very end of your response — this exact block:
 
           PR_TITLE: <updated one-line title>
-          PR_BODY_START
+          {begin_marker}
           ## What this PR does
           <updated description>
 
@@ -427,7 +448,7 @@ jobs:
 
           ## Changes in this iteration
           <bullet list of what changed>
-          PR_BODY_END
+          {end_marker}
           """
 
           # File list is low-risk (just paths, no content); kept in user message for context.
@@ -440,6 +461,7 @@ jobs:
           {files_section}
           """
 
+          pathlib.Path(f'{rt}/sentinel.txt').write_text(sentinel)
           pathlib.Path(f'{rt}/system-prompt.txt').write_text(system_prompt)
           pathlib.Path(f'{rt}/prompt.txt').write_text(user_message)
           print(f'Prompts written (system: {len(system_prompt)} chars, user: {len(user_message)} chars)')
@@ -556,16 +578,6 @@ for fname in ['claude-output.txt', 'claude-stderr.txt']:
         p.write_text(p.read_text().replace(key, '[REDACTED]'))
 PYEOF
 
-      - name: Upload run artifacts
-        if: steps.circuit.outputs.tripped == 'false' && steps.guard.outputs.proceed == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
-        with:
-          name: claude-feedback-run-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/claude-output.txt
-            ${{ runner.temp }}/claude-stderr.txt
-          if-no-files-found: ignore
-          retention-days: 1
 
       - name: Commit any uncommitted changes
         if: steps.circuit.outputs.tripped == 'false' && steps.guard.outputs.proceed == 'true'
@@ -665,13 +677,23 @@ PYEOF
           repo = os.environ['REPO']
           pr = os.environ['PR_NUMBER']
 
+          # Read the per-run sentinel written by the Build feedback prompt step.
+          # The sentinel is a UUID unknown to the attacker; using it as the delimiter
+          # prevents fake-marker injection even if the LLM echoes sanitized input.
+          sentinel_path = pathlib.Path(f'{rt}/sentinel.txt')
+          if not sentinel_path.exists():
+              print('Sentinel file not found — skipping PR update')
+              raise SystemExit(0)
+          sentinel = sentinel_path.read_text().strip()
+          begin_marker = f'PR_BODY_START_{sentinel}'
+          end_marker   = f'PR_BODY_END_{sentinel}'
+
           output = pathlib.Path(f'{rt}/claude-output.txt').read_text()
 
           lines = output.splitlines()
 
-          # Use LAST PR_TITLE: and last PR_BODY_START...PR_BODY_END block.
-          # A fake earlier marker (from prompt injection) cannot override the real one
-          # the LLM places at the very end of its response per the system prompt.
+          # Use LAST PR_TITLE: and last sentinel-delimited body block.
+          # A per-run UUID means an attacker cannot predict or forge the marker.
           title_raw = ''
           for line in lines:
               if line.startswith('PR_TITLE:'):
@@ -680,11 +702,11 @@ PYEOF
           body_raw = ''
           last_start_idx = None
           for i, line in enumerate(lines):
-              if line == 'PR_BODY_START':
+              if line == begin_marker:
                   last_start_idx = i
           if last_start_idx is not None:
               for line in lines[last_start_idx + 1:]:
-                  if line == 'PR_BODY_END':
+                  if line == end_marker:
                       break
                   body_raw += line + '\n'
 
@@ -729,8 +751,7 @@ PYEOF
           file_count = len(rows)
           body = (
               f'**AI-generated changes ([run]({run_url})):**\n'
-              f'{file_count} file(s) changed, +{added}/-{removed} lines\n\n'
-              f'Full diff is available in the [workflow run artifact]({run_url}).'
+              f'{file_count} file(s) changed, +{added}/-{removed} lines'
           )
           subprocess.run(
               ['gh', 'api', f'repos/{repo}/issues/{pr}/comments',
@@ -745,9 +766,15 @@ PYEOF
           # do not trigger downstream workflow runs (GitHub design limitation).
           # WENDY_TEMPLATE_SYNC_TOKEN is a fine-grained PAT scoped to ONLY
           # 'contents: write' on this single repository — no other scopes or repos.
+          # Even with contents:write, blast radius is limited to this one repo.
+          # The git push below uses an explicit HEAD:${BRANCH} refspec where BRANCH
+          # is validated against ^ai/[a-z0-9] — the push targets only the specific
+          # ai/* branch under automation, never main or other protected branches.
+          # For additional server-side enforcement, configure branch protection rules
+          # to restrict this PAT's pushes to refs/heads/ai/* in repo Settings.
           # Rotate on a 90-day schedule; if compromised, revoke immediately at
           # https://github.com/settings/tokens and update this repo secret.
-          # It is isolated via env -i in the claude step and only available here.
+          # The token is isolated via env -i in the claude step and only available here.
           TOKEN: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
           BRANCH: ${{ steps.pr-info.outputs.head_branch }}
         run: |
