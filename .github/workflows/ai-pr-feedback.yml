@@ -72,11 +72,18 @@ jobs:
     #   - Branch verified to be the head of an open PR via gh api before push
     #   - Push uses explicit HEAD:${BRANCH} refspec with --no-force
     permissions:
-      contents: read
+      contents: read        # GITHUB_TOKEN: read-only; push uses WENDY_TEMPLATE_SYNC_TOKEN (step-level)
       pull-requests: write
       checks: read
       actions: read
       issues: write
+    # SECURITY NOTE — step-level secrets:
+    #   ANTHROPIC_API_KEY is injected only in the "Run Claude Code" step env, after the
+    #   Guard step confirms proceed=true. It is never a job-level env var and therefore
+    #   cannot be accessed by earlier steps or by steps that run when proceed=false.
+    #   WENDY_TEMPLATE_SYNC_TOKEN (PAT for git push) is likewise scoped to the "Push
+    #   changes" step env only, never job-level. Both secrets are zeroed / unset inside
+    #   their respective steps immediately after use.
 
     steps:
       - name: Resolve PR number and actor
@@ -358,6 +365,15 @@ jobs:
 
           import html, unicodedata
 
+          # Generate a per-run UUID sentinel BEFORE sanitize() so the sentinel strings
+          # can be stripped from untrusted inputs. Generating it here (rather than after
+          # sanitize() calls) means an attacker who somehow learns the sentinel value in
+          # advance still cannot inject it \u2014 sanitize() will strip it from any user input.
+          import uuid as _uuid
+          sentinel = _uuid.uuid4().hex
+          begin_marker = f'PR_BODY_START_{sentinel}'
+          end_marker   = f'PR_BODY_END_{sentinel}'
+
           def sanitize(text):
               """Strip content that could escape prompt delimiters or inject instructions."""
               # Decode HTML entities iteratively until stable (handles double-encoding)
@@ -379,10 +395,13 @@ jobs:
               text = re.sub(r'(?i)ignore\s+(all\s+)?previous\s+instructions?', '[filtered]', text)
               text = re.sub(r'(?i)new\s+instructions?\s*:', '[filtered]', text)
               text = re.sub(r'(?mi)^\s*system\s*:\s*', '[filtered] ', text)
-              # Block structured output markers (case-insensitive, allow surrounding whitespace)
+              # Block static structured output markers (case-insensitive)
               text = re.sub(r'(?i)PR_TITLE\s*:', '[PR_TITLE]', text)
               text = re.sub(r'(?i)PR_BODY_START', '[PR_BODY_START]', text)
               text = re.sub(r'(?i)PR_BODY_END', '[PR_BODY_END]', text)
+              # Strip the per-run sentinel markers so untrusted input cannot forge
+              # structured output boundaries even if the sentinel leaks.
+              text = text.replace(begin_marker, '[sentinel]').replace(end_marker, '[sentinel]')
               # Strip markdown link injection patterns: [text](url)
               text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'[\1]', text)
               # Strip control characters (keep newline and tab)
@@ -469,14 +488,6 @@ jobs:
               sections.append(f'## PR conversation comments\n{body}')
 
           feedback = '\n\n'.join(sections) or '(No feedback found — checking for drift)'
-
-          # Generate a per-run UUID as the structured output sentinel.
-          # Unpredictable per-run: an attacker injecting review comments cannot know the
-          # sentinel in advance and therefore cannot forge the structured output markers.
-          import uuid as _uuid
-          sentinel = _uuid.uuid4().hex
-          begin_marker = f'PR_BODY_START_{sentinel}'
-          end_marker   = f'PR_BODY_END_{sentinel}'
 
           system_prompt = f"""You are an engineer working on WendyOS. You are iterating on PR #{pr}.
 
@@ -644,8 +655,23 @@ jobs:
             "$USER_PROMPT" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
-          # Zero out sensitive shell vars immediately after Claude exits so they are
-          # no longer present in the parent shell's /proc/self/environ.
+          # Scrub ANTHROPIC_API_KEY from artifact files BEFORE zeroing env vars.
+          # The key is passed via sys.argv (not environment) so the scrubber
+          # works correctly even after ANTHROPIC_API_KEY is unset from the shell.
+          # ::add-mask:: protects the workflow UI log; this scrubs the files.
+          _KEY_FOR_SCRUB="$ANTHROPIC_API_KEY"
+          python3 - "$_KEY_FOR_SCRUB" <<PYEOF
+import sys, pathlib, os
+key = sys.argv[1] if len(sys.argv) > 1 else ''
+for fname in ['claude-output.txt', 'claude-stderr.txt']:
+    p = pathlib.Path(os.environ['RUNNER_TEMP']) / fname
+    if p.exists() and key:
+        p.write_text(p.read_text().replace(key, '[REDACTED]'))
+PYEOF
+          _KEY_FOR_SCRUB=""
+          unset _KEY_FOR_SCRUB
+          # Zero out sensitive shell vars AFTER scrubber — they are no longer
+          # needed and should not persist in the parent shell's environment.
           ANTHROPIC_API_KEY=""
           SYSTEM_PROMPT=""
           USER_PROMPT=""
@@ -655,16 +681,6 @@ jobs:
             echo "--- stderr ---"
             cat "$RUNNER_TEMP/claude-stderr.txt"
           fi
-          # Scrub ANTHROPIC_API_KEY from artifacts before upload — ::add-mask:: protects
-          # workflow UI logs but does not redact artifact file contents.
-          python3 - <<PYEOF
-import pathlib, os
-key = os.environ.get('ANTHROPIC_API_KEY', '')
-for fname in ['claude-output.txt', 'claude-stderr.txt']:
-    p = pathlib.Path(os.environ['RUNNER_TEMP']) / fname
-    if p.exists() and key:
-        p.write_text(p.read_text().replace(key, '[REDACTED]'))
-PYEOF
 
 
       - name: Commit any uncommitted changes
