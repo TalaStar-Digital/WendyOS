@@ -15,6 +15,11 @@ on:
       - Docs Review
       - Integration Test Review
     types: [completed]
+    # Scope to ai/* branches only: narrows the confused-deputy surface by ensuring
+    # this workflow only fires when CI ran on an AI-managed branch, not on arbitrary
+    # branches that happen to trigger the listed workflows.
+    branches:
+      - 'ai/**'
 
 concurrency:
   group: ai-pr-feedback-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha }}
@@ -180,6 +185,14 @@ jobs:
             exit 0
           fi
 
+          # Validate PR_NUMBER is purely numeric before using it in any gh api call.
+          # jq outputs integers but the variable could be corrupted by a malformed
+          # API response; rejecting non-numeric values prevents shell injection.
+          if ! printf '%s' "$PR_NUMBER" | grep -qE '^[0-9]+$'; then
+            echo "::error::PR_NUMBER '$PR_NUMBER' is not a valid integer — aborting"
+            exit 1
+          fi
+
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "actor=$ACTOR"         >> "$GITHUB_OUTPUT"
           echo "actor_assoc=$ACTOR_ASSOC" >> "$GITHUB_OUTPUT"
@@ -270,6 +283,12 @@ jobs:
     #   - Branch verified to be head of an open PR via gh api before push
     #   - Push uses explicit HEAD:${BRANCH} refspec with --no-force
     steps:
+      - name: Mask long-lived PAT secret
+        # Mask WENDY_TEMPLATE_SYNC_TOKEN immediately — before any other step can
+        # accidentally log it. This is the first step so masking takes effect for
+        # all subsequent steps in this job.
+        run: echo "::add-mask::${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}"
+
       - name: Re-verify authorization before any writes
         # Re-authorization at the START of the execute job — before secrets are used,
         # before code is checked out, before any writes occur. The gate job may have
