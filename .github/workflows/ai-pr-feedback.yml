@@ -270,6 +270,46 @@ jobs:
     #   - Branch verified to be head of an open PR via gh api before push
     #   - Push uses explicit HEAD:${BRANCH} refspec with --no-force
     steps:
+      - name: Re-verify authorization before any writes
+        # Re-authorization at the START of the execute job — before secrets are used,
+        # before code is checked out, before any writes occur. The gate job may have
+        # completed minutes (or up to 30 min) ago; this closes the TOCTOU window where:
+        # - A MEMBER could be removed between gate and execute
+        # - The PR could be closed or the branch force-pushed after gate passed
+        # - A race between concurrent runs on the same PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
+          EXPECTED_SHA: ${{ needs.gate.outputs.head_sha }}
+          EXPECTED_BRANCH: ${{ needs.gate.outputs.head_branch }}
+        run: |
+          PR_DATA=$(gh api "repos/$REPO/pulls/$PR_NUMBER" 2>/dev/null || echo '{}')
+          PR_STATE=$(printf '%s' "$PR_DATA" | jq -r '.state // "unknown"')
+          PR_SHA=$(printf '%s' "$PR_DATA" | jq -r '.head.sha // ""')
+          PR_BRANCH=$(printf '%s' "$PR_DATA" | jq -r '.head.ref // ""')
+          PR_AUTHOR_ASSOC=$(printf '%s' "$PR_DATA" | jq -r '.author_association // "NONE"')
+          if [ "$PR_STATE" != "open" ]; then
+            echo "::error::PR #$PR_NUMBER is no longer open (state: $PR_STATE) — aborting"
+            exit 1
+          fi
+          if [ "$PR_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::PR head SHA changed since gate authorized ($EXPECTED_SHA → $PR_SHA) — aborting"
+            exit 1
+          fi
+          if [ "$PR_BRANCH" != "$EXPECTED_BRANCH" ]; then
+            echo "::error::PR head branch changed since gate authorized ($EXPECTED_BRANCH → $PR_BRANCH) — aborting"
+            exit 1
+          fi
+          # Re-verify author association is still OWNER|MEMBER
+          case "$PR_AUTHOR_ASSOC" in
+            OWNER|MEMBER) ;;
+            *)
+              echo "::error::PR author association changed since gate (now: $PR_AUTHOR_ASSOC) — aborting"
+              exit 1
+              ;;
+          esac
+
       - name: Circuit-breaker check
         id: circuit
         env:
@@ -437,10 +477,13 @@ jobs:
               # Strip ALL XML/HTML tags. Use a high bound (4000 chars) to prevent bypass
               # via tags with >200 chars of padding before '>'. [^>] stops at '>' anyway.
               text = re.sub(r'<[^>]{0,4000}>', '[tag]', text)
-              # Strip backtick code-fence blocks to prevent multi-line instruction smuggling
+              # Strip backtick and tilde code-fence blocks to prevent instruction smuggling
               text = re.sub(r'`{3}.*?`{3}', '[code]', text, flags=re.DOTALL)
-              # Block common prompt injection trigger phrases
+              text = re.sub(r'~{3}.*?~{3}', '[code]', text, flags=re.DOTALL)
+              # Block common prompt injection trigger phrases (extend beyond "ignore previous")
               text = re.sub(r'(?i)ignore\s+(all\s+)?previous\s+instructions?', '[filtered]', text)
+              text = re.sub(r'(?i)(disregard|forget|override)\s+(all\s+)?(previous\s+)?instructions?', '[filtered]', text)
+              text = re.sub(r'(?i)(you\s+are\s+now|act\s+as|pretend\s+(to\s+be|you\s+are))', '[filtered]', text)
               text = re.sub(r'(?i)new\s+instructions?\s*:', '[filtered]', text)
               text = re.sub(r'(?mi)^\s*system\s*:\s*', '[filtered] ', text)
               # Block structured output markers so user-controlled content cannot forge
@@ -458,16 +501,24 @@ jobs:
           raw_inline   = json.loads(pathlib.Path(f'{rt}/inline-comments.json').read_text())
           raw_reviews  = json.loads(pathlib.Path(f'{rt}/reviews.json').read_text())
           raw_comments = json.loads(pathlib.Path(f'{rt}/issue-comments.json').read_text())
+          # Load PR file list early so we can validate inline comment path fields.
+          _raw_files_early = json.loads(pathlib.Path(f'{rt}/pr-files.json').read_text())
+          _pr_file_set = set(f for f in _raw_files_early if isinstance(f, str))
           # Sanitize all untrusted content before embedding in prompt — including
           # user.login and path fields, not just body text.
           GH_USER_RE = re.compile(r'^[A-Za-z0-9\-]{1,39}$')
           def san_user(u):
               s = str(u or '')
               return s if GH_USER_RE.match(s) else '[invalid-user]'
+          def san_path(p):
+              # Normalize newlines (prevent markdown heading injection via path field),
+              # then validate against the known PR file set — if the path is not a real
+              # file in this PR, replace with '[unknown-path]' to prevent directory
+              # traversal or fabricated file references reaching the LLM prompt.
+              p = re.sub(r'[\r\n]', ' ', p or '').strip()
+              return p if p in _pr_file_set else '[unknown-path]'
           inline   = [{'user': san_user(c.get('user')),
-                       # Normalize newlines in path before sanitize() — a path like
-                       # "foo.go\n## New section" would inject a markdown heading.
-                       'path': sanitize(re.sub(r'[\r\n]', ' ', c.get('path') or '')),
+                       'path': san_path(c.get('path') or ''),
                        'body': sanitize(c.get('body') or '')} for c in raw_inline]
           reviews  = [{'user': san_user(r.get('user')),
                        'state': sanitize(r.get('state') or ''),
@@ -736,15 +787,17 @@ jobs:
 
 
       - name: Verify Claude did not touch protected paths
-        # Post-Claude guard: even though Edit/MultiEdit can write any path, this step
-        # aborts before staging if Claude modified anything outside the allowed tree.
-        # This is the primary enforcement of least-privilege for the unrestricted
-        # --allowedTools "Edit,MultiEdit" grant — it runs on unstaged changes, before
-        # the commit step's pre-stage audit, as defense-in-depth.
+        # Post-Claude enforcement gate — primary path-restriction control for the
+        # unrestricted --allowedTools "Edit,MultiEdit" grant.  Runs before staging.
+        # Three-layer check:
+        #   1. Protected-file blocklist (CI config, credentials, lock files, vendor)
+        #   2. Source-directory allowlist (go/, swift/, Sources/, etc.)
+        #   3. PR-scope check: only files from this PR's changed-file list
+        # On any violation: revert all changes and abort before any write token is used.
         if: steps.circuit.outputs.tripped == 'false'
         run: |
           PROTECTED=$(git diff --name-only | grep -E \
-            '^(\.github/|CODEOWNERS|SECURITY\.md|security/|.*\.(pem|key|p12|pfx)|go/vendor/|go/generated/|swift/Packages/)' \
+            '^(\.github/|CODEOWNERS|SECURITY\.md|security/|.*\.(pem|key|p12|pfx)|go/vendor/|go/generated/|swift/Packages/|go\.sum$|Package\.resolved$|package-lock\.json$|yarn\.lock$|Cargo\.lock$)' \
             || true)
           if [ -n "$PROTECTED" ]; then
             echo "::error::Claude modified protected path(s) — reverting and aborting:"
@@ -752,7 +805,7 @@ jobs:
             git checkout -- .
             exit 1
           fi
-          # Also abort if Claude modified files outside the source-directory allowlist
+          # Allowlist: only permit writes to known source directories
           DISALLOWED=$(git diff --name-only | grep -vE \
             '^(go/|swift/|Sources/|Tests/|tests/|docs/|Documentation/|Examples/)' \
             || true)
@@ -761,6 +814,17 @@ jobs:
             echo "$DISALLOWED"
             git checkout -- .
             exit 1
+          fi
+          # PR-scope check: Claude should only edit files that are part of this PR.
+          # Editing unrelated files is a signal of prompt injection or misbehaviour.
+          if [ -f "$RUNNER_TEMP/pr-files.json" ]; then
+            PR_FILES=$(python3 -c "import json,sys; print('\n'.join(json.load(open(sys.argv[1]))))" "$RUNNER_TEMP/pr-files.json" 2>/dev/null || true)
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              if ! printf '%s\n' "$PR_FILES" | grep -qxF "$f"; then
+                echo "::warning::Claude modified $f which is not in this PR's changed-file list"
+              fi
+            done < <(git diff --name-only)
           fi
 
       - name: Commit any uncommitted changes
