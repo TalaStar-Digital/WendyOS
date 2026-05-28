@@ -12,11 +12,22 @@ name: AI PR Feedback Loop
 #   The PAT is required because GITHUB_TOKEN pushes do not trigger CI runs.
 #
 # CLAUDE CODE INVOCATION:
-#   --allowedTools "Edit,MultiEdit"  (positive allowlist — blocks all unlisted tools)
+#   --allowedTools "Edit,MultiEdit"  EXCLUSIVE allowlist: Claude Code CLI blocks
+#     ALL tools not explicitly listed here. Reconnaissance tools (Bash, Read,
+#     LS, Glob, SearchFiles, etc.), web access (WebFetch, WebSearch), and MCP
+#     tools are ALL blocked by this allowlist alone. Claude cannot enumerate
+#     files, read arbitrary paths, execute shell commands, or exfiltrate data.
 #   --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,
 #     LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,
-#     AskFollowupQuestion,mcp__*"  (belt-and-suspenders explicit denial)
+#     AskFollowupQuestion,mcp__*"  Belt-and-suspenders: explicit denial in
+#     addition to the allowlist, for defense-in-depth.
 #   env -i isolates environment (no GITHUB_TOKEN, no runner tokens)
+#   ACCEPTED RISK: ANTHROPIC_API_KEY is visible in /proc/<pid>/environ of the
+#     Claude process to same-UID processes for the duration of the invocation.
+#     On GitHub-hosted runners, no other same-UID process is spawned after the
+#     step starts; the runner agent itself does not inspect subprocess environ.
+#     Mitigation: Claude CLI does not support file-descriptor or named-pipe key
+#     delivery; env var is the only supported mechanism. Risk accepted.
 #   Post-run "Verify Claude did not touch protected paths" step reverts and
 #   aborts if Claude modified .github/, lock files, or files outside the
 #   source allowlist (go/, swift/, Sources/, Tests/, docs/, etc.)
