@@ -57,6 +57,24 @@ jobs:
 
           if days_until_due <= 14:
               title = f'SECURITY: Rotate WENDY_TEMPLATE_SYNC_TOKEN PAT (due in {days_until_due} days)'
+
+              # Deduplication: check for an existing open issue with the same title prefix
+              # to avoid creating a new reminder issue on every weekly run.
+              existing = subprocess.run(
+                  ['gh', 'issue', 'list',
+                   '--repo', os.environ['REPO'],
+                   '--state', 'open',
+                   '--search', 'SECURITY: Rotate WENDY_TEMPLATE_SYNC_TOKEN PAT in:title',
+                   '--json', 'number,title'],
+                  capture_output=True, text=True
+              )
+              if existing.returncode == 0:
+                  import json
+                  open_issues = json.loads(existing.stdout or '[]')
+                  if any('Rotate WENDY_TEMPLATE_SYNC_TOKEN PAT' in i.get('title', '') for i in open_issues):
+                      print(f'Reminder issue already open — skipping duplicate creation')
+                      raise SystemExit(0)
+
               body = (
                   f'The WENDY_TEMPLATE_SYNC_TOKEN PAT was last rotated on {last}.\n\n'
                   f'It is due for rotation in {days_until_due} days per the {rotation_days}-day rotation policy.\n\n'
