@@ -351,10 +351,14 @@ jobs:
 
           # Count consecutive github-actions[bot] commits since the later of
           # (last human commit) or (last /continue comment).
+          # Count consecutive bot commits from the TIP backward using reverse[].
+          # index("break") from the front would stop at the first gap from the oldest
+          # commit, giving a wrong count if humans/bots interleave earlier in history.
+          # Reversing the array ensures we count unbroken bot commits at HEAD.
           BOT_STREAK=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits?per_page=100" \
             --jq --arg ts "$CONTINUE_TS" '
               [
-                .[] |
+                reverse[] |
                 if ((.author?.login // "") == "github-actions[bot]" and
                     .commit.committer.date > $ts)
                 then 1
@@ -364,6 +368,13 @@ jobs:
               index("break") // length
             ' 2>&1) || { echo "::error::Circuit-breaker commit-count API call failed — aborting as fail-safe"; exit 1; }
 
+          # Validate BOT_STREAK is a non-negative integer before shell arithmetic.
+          # jq outputs a number but a malformed API response could return non-numeric
+          # content; rejecting it prevents arithmetic injection or mis-comparison.
+          if ! printf '%s' "$BOT_STREAK" | grep -qE '^[0-9]+$'; then
+            echo "::error::BOT_STREAK '$BOT_STREAK' is not a valid integer — aborting as fail-safe"
+            exit 1
+          fi
           echo "bot_streak=$BOT_STREAK" >> "$GITHUB_OUTPUT"
           if [ "$BOT_STREAK" -ge 3 ]; then
             echo "tripped=true" >> "$GITHUB_OUTPUT"
