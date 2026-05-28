@@ -171,6 +171,33 @@ raise SystemExit(1)
             exit 1
           fi
 
+      - name: Re-verify authorization before any writes
+        # Live API re-check at the START of the implement job — before any code is checked
+        # out or secrets used. Closes the TOCTOU window between gate and implement:
+        # - A MEMBER could be removed between gate completing and this job running
+        # - The issue or comment could be deleted/modified after gate authorized it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          COMMENT_DATA=$(gh api "repos/$REPO/issues/comments/$COMMENT_ID" 2>/dev/null || echo '{}')
+          LIVE_ASSOC=$(printf '%s' "$COMMENT_DATA" | jq -r '.author_association // "NONE"')
+          case "$LIVE_ASSOC" in
+            OWNER|MEMBER) ;;
+            *)
+              echo "::error::Comment author association changed since gate (now: $LIVE_ASSOC) — aborting"
+              exit 1
+              ;;
+          esac
+          ISSUE_DATA=$(gh api "repos/$REPO/issues/$ISSUE_NUMBER" 2>/dev/null || echo '{}')
+          ISSUE_STATE=$(printf '%s' "$ISSUE_DATA" | jq -r '.state // "unknown"')
+          if [ "$ISSUE_STATE" != "open" ]; then
+            echo "::error::Issue #$ISSUE_NUMBER is no longer open (state: $ISSUE_STATE) — aborting"
+            exit 1
+          fi
+
       - name: Mask long-lived PAT secret
         # Mask at job start so the value never appears in any subsequent log line.
         env:
@@ -201,7 +228,8 @@ raise SystemExit(1)
           # circular: a compromised registry could return the attacker's hash for both the tarball
           # and the dist.integrity field. We rely solely on the out-of-band hardcoded hash.
           # --prefer-online forces a fresh fetch, bypassing the npm cache.
-          # --json parses the filename field deterministically (avoids tail -1 TOCTOU bypass).
+          # --json outputs structured data; we parse the filename field deterministically.
+          # This is the same approach used in ai-pr-feedback.yml (matches for consistency).
           TARBALL=$(npm pack @anthropic-ai/claude-code@2.1.150 --prefer-online --json 2>/dev/null \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["filename"])')
           # Validate filename matches expected pattern — prevents path injection via malicious npm output.
@@ -388,8 +416,9 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
             "$USER_PROMPT" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
-          # Post-run verification: --allowedTools "Edit,MultiEdit" blocks Write, so Claude
-          # cannot create new files. Verify this invariant holds. Abort if any new files exist.
+          # Invariant check: --allowedTools "Edit,MultiEdit" is an EXCLUSIVE list that
+          # blocks Write, preventing new-file creation. Belt-and-suspenders: abort if
+          # the invariant is violated (e.g., due to SDK bug or unexpected tool).
           NEW_FILES=$(git ls-files --others --exclude-standard | head -5 || true)
           if [ -n "$NEW_FILES" ]; then
             echo "::error::Claude created new files despite Write not being in --allowedTools — aborting:"

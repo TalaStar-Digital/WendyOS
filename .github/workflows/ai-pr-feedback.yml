@@ -762,7 +762,7 @@ jobs:
           EXPECTED_INTEGRITY="sha512-nyeOyoc/pmGGRpffyPU16v5campztkynyRFcNKqD7pBvI0aPfljGVi3CizKbu7/dx1MijeE9XiQ0kHk1tmx5Gg=="
           # --prefer-online forces a fresh fetch, bypassing the npm cache.
           # Without this, npm pack may hash a previously-downloaded (potentially stale) tarball.
-          # --json parses the filename field deterministically (avoids tail -1 TOCTOU bypass).
+          # --json outputs structured data; we parse the filename field deterministically.
           # chmod 400 immediately after download closes the race window before the hash check.
           TARBALL=$(npm pack @anthropic-ai/claude-code@2.1.150 --prefer-online --json 2>/dev/null \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["filename"])')
