@@ -74,9 +74,16 @@ raise SystemExit(1)
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
+          # Validate ISSUE_NUMBER is numeric before any interpolation into API/jq expressions.
+          if ! printf '%s' "$ISSUE_NUMBER" | grep -qE '^[0-9]+$'; then
+            echo "::error::ISSUE_NUMBER '$ISSUE_NUMBER' is not a valid integer — aborting"
+            exit 1
+          fi
           BRANCH_PREFIX="ai/issue-${ISSUE_NUMBER}-"
+          # Pass BRANCH_PREFIX via --arg to prevent jq string-injection if ISSUE_NUMBER is
+          # ever non-numeric (belt-and-suspenders after the validation above).
           EXISTING_PR=$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
-            --jq ".[] | select(.head.ref | startswith(\"$BRANCH_PREFIX\")) | .html_url" \
+            --jq --arg pfx "$BRANCH_PREFIX" '.[] | select(.head.ref | startswith($pfx)) | .html_url' \
             2>/dev/null | head -1 || true)
           if [ -n "$EXISTING_PR" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"

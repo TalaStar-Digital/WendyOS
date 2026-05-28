@@ -1,0 +1,60 @@
+name: PAT Rotation Reminder
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 09:00 UTC
+  workflow_dispatch:
+
+jobs:
+  check-rotation:
+    name: Check WENDY_TEMPLATE_SYNC_TOKEN rotation
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Check PAT rotation deadline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # Update PAT_LAST_ROTATED (YYYY-MM-DD) whenever WENDY_TEMPLATE_SYNC_TOKEN is rotated.
+          # This file is CODEOWNERS-gated so date changes require CODEOWNERS review.
+          PAT_LAST_ROTATED: "2026-01-28"
+          PAT_ROTATION_DAYS: "90"
+        run: |
+          python3 << 'PYEOF'
+          import datetime, os, subprocess, sys
+
+          last = datetime.date.fromisoformat(os.environ['PAT_LAST_ROTATED'])
+          rotation_days = int(os.environ['PAT_ROTATION_DAYS'])
+          today = datetime.date.today()
+          days_since = (today - last).days
+          days_until_due = rotation_days - days_since
+
+          print(f'PAT last rotated: {last} ({days_since} days ago)')
+          print(f'Rotation due in: {days_until_due} days (policy: {rotation_days}-day rotation)')
+
+          if days_until_due <= 14:
+              title = f'SECURITY: Rotate WENDY_TEMPLATE_SYNC_TOKEN PAT (due in {days_until_due} days)'
+              body = (
+                  f'The WENDY_TEMPLATE_SYNC_TOKEN PAT was last rotated on {last}.\n\n'
+                  f'It is due for rotation in {days_until_due} days per the {rotation_days}-day rotation policy.\n\n'
+                  '## Rotation steps\n'
+                  '1. Generate a new fine-grained PAT scoped to contents:write on this repo only, expiring in 90 days.\n'
+                  '2. Update the WENDY_TEMPLATE_SYNC_TOKEN secret in repository Settings > Secrets.\n'
+                  '3. Update PAT_LAST_ROTATED in .github/workflows/pat-rotation-reminder.yml to today date.\n'
+                  '4. Commit and merge via PR (CODEOWNERS review required).\n\n'
+                  'This issue was opened automatically by the PAT rotation reminder workflow.'
+              )
+              result = subprocess.run(
+                  ['gh', 'issue', 'create',
+                   '--repo', os.environ['REPO'],
+                   '--title', title,
+                   '--body', body,
+                   '--label', 'security'],
+                  capture_output=True, text=True
+              )
+              if result.returncode == 0:
+                  print(f'Created reminder issue: {result.stdout.strip()}')
+              else:
+                  print(f'Warning: could not create issue: {result.stderr.strip()}', file=sys.stderr)
+          PYEOF

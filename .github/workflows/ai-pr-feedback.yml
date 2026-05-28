@@ -12,8 +12,10 @@ name: AI PR Feedback Loop
 #   The PAT is required because GITHUB_TOKEN pushes do not trigger CI runs.
 #
 # CLAUDE CODE INVOCATION:
-#   --allowedTools "Edit,MultiEdit"
-#   --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use"
+#   --allowedTools "Edit,MultiEdit"  (positive allowlist — blocks all unlisted tools)
+#   --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,
+#     LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,
+#     AskFollowupQuestion,mcp__*"  (belt-and-suspenders explicit denial)
 #   env -i isolates environment (no GITHUB_TOKEN, no runner tokens)
 #   Post-run "Verify Claude did not touch protected paths" step reverts and
 #   aborts if Claude modified .github/, lock files, or files outside the
@@ -617,8 +619,9 @@ jobs:
           inline   = [{'user': san_user(c.get('user')),
                        'path': san_path(c.get('path') or ''),
                        'body': sanitize(c.get('body') or '')} for c in raw_inline]
+          _VALID_REVIEW_STATES = {'APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED', 'PENDING'}
           reviews  = [{'user': san_user(r.get('user')),
-                       'state': sanitize(r.get('state') or ''),
+                       'state': (r.get('state', '').upper() if r.get('state', '').upper() in _VALID_REVIEW_STATES else '[UNKNOWN]'),
                        'body': sanitize(r.get('body') or '')} for r in raw_reviews]
           comments = [{'user': san_user(c.get('user')),
                        'body': sanitize(c.get('body') or '')} for c in raw_comments]
@@ -845,7 +848,7 @@ jobs:
             ANTHROPIC_SYSTEM_PROMPT="$SYSTEM_PROMPT" \
             claude --print \
             --allowedTools "Edit,MultiEdit" \
-            --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use" \
+            --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*" \
             "$USER_PROMPT" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
