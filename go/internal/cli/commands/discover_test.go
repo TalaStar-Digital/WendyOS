@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/shared/config"
 	"github.com/wendylabsinc/wendy/go/internal/shared/discovery"
 	"github.com/wendylabsinc/wendy/go/internal/shared/env"
 	"github.com/wendylabsinc/wendy/go/internal/shared/models"
@@ -166,6 +167,31 @@ func TestDiscoverModel_TableNavigation(t *testing.T) {
 
 	if um.table.Cursor() != 1 {
 		t.Fatalf("expected cursor to move to row 1, got %d", um.table.Cursor())
+	}
+}
+
+func TestDiscoverModel_DKeySetsDefaultAndMarksSelectedDevice(t *testing.T) {
+	setTempConfig(t, &config.Config{})
+
+	m := newDiscoverModel(context.Background(), defaultOpts())
+	updated, _ := m.Update(lanScanMsg{devices: []models.LANDevice{{
+		DisplayName: "ubuntu",
+		Hostname:    "ubuntu.local",
+		Port:        defaultAgentPort,
+	}}})
+	m = updated.(discoverModel)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	um := updated.(discoverModel)
+
+	if um.flashMessage != "Default device set to: ubuntu.local" {
+		t.Fatalf("flash message = %q, want default device confirmation", um.flashMessage)
+	}
+	if cmd == nil {
+		t.Fatal("expected clearFlashAfter cmd")
+	}
+	if !strings.Contains(um.table.View(), "★") {
+		t.Fatalf("expected selected default device to show marker, got %q", um.table.View())
 	}
 }
 

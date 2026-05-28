@@ -22,6 +22,10 @@ type PickerItem struct {
 	// Items with the same DedupKey (case-insensitive) are merged via MergeItem.
 	DedupKey string
 
+	// DefaultKeys are optional alternate identities compared against
+	// PickerModel.DefaultKey when rendering the default marker.
+	DefaultKeys []string
+
 	// SortKey overrides the sort order when set. Items are sorted by SortKey
 	// first (when non-empty), then by name. Use this to pin items to a specific
 	// position (e.g. "0_first", "z_last") without affecting the display name.
@@ -408,11 +412,7 @@ func pickerRows(items []PickerItem, cols []pickerColumnDef, defaultKey string, h
 		var row bubbleTable.Row
 		// Always add the ★ column when default tracking is enabled.
 		if hasDefaultCol {
-			key := strings.ToLower(item.DedupKey)
-			if key == "" {
-				key = strings.ToLower(item.Name)
-			}
-			if defaultKey != "" && key == defaultKey {
+			if pickerItemMatchesDefaultKey(item, defaultKey) {
 				row = append(row, "★")
 			} else {
 				row = append(row, "")
@@ -428,6 +428,23 @@ func pickerRows(items []PickerItem, cols []pickerColumnDef, defaultKey string, h
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+func pickerItemMatchesDefaultKey(item PickerItem, defaultKey string) bool {
+	defaultKey = strings.ToLower(strings.TrimSpace(defaultKey))
+	if defaultKey == "" {
+		return false
+	}
+	for _, key := range item.DefaultKeys {
+		if strings.ToLower(strings.TrimSpace(key)) == defaultKey {
+			return true
+		}
+	}
+	key := strings.ToLower(strings.TrimSpace(item.DedupKey))
+	if key == "" {
+		key = strings.ToLower(strings.TrimSpace(item.Name))
+	}
+	return key == defaultKey
 }
 
 func pickerColumns(rows []bubbleTable.Row, defs []pickerColumnDef, hasDefaultCol bool) []bubbleTable.Column {

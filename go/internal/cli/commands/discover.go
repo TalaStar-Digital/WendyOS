@@ -923,7 +923,11 @@ func discoverTableItems(collection *models.DevicesCollection) []discoverTableIte
 func discoverPickerItems(items []discoverTableItem) []tui.PickerItem {
 	pickerItems := make([]tui.PickerItem, 0, len(items))
 	for _, item := range items {
-		pickerItems = append(pickerItems, item.picker)
+		pickerItem := item.picker
+		if item.defaultDevice != "" {
+			pickerItem.DefaultKeys = append(pickerItem.DefaultKeys, item.defaultDevice)
+		}
+		pickerItems = append(pickerItems, pickerItem)
 	}
 	return pickerItems
 }

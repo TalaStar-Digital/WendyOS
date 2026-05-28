@@ -116,6 +116,22 @@ func TestPickerModel_DefaultKeyShowsStar(t *testing.T) {
 	}
 }
 
+func TestPickerTableData_DefaultKeysShowStar(t *testing.T) {
+	_, rows := PickerTableData([]PickerItem{{
+		Name:        "ubuntu",
+		Type:        "LAN",
+		DedupKey:    "ubuntu",
+		DefaultKeys: []string{"ubuntu.local"},
+	}}, "ubuntu.local", true)
+
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0][0] != "★" {
+		t.Fatalf("default marker = %q, want ★", rows[0][0])
+	}
+}
+
 func TestPickerModel_DKeySetsDefault(t *testing.T) {
 	m := NewPickerWithTitle("Select a device")
 	var setItem PickerItem
