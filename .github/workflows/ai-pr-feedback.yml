@@ -1,4 +1,33 @@
 name: AI PR Feedback Loop
+# =============================================================================
+# SECURITY CONTROLS SUMMARY (full implementation details inline below)
+# =============================================================================
+# ARCHITECTURE: gate job (read-only) → respond job (write). Write-capable
+#   GITHUB_TOKEN is only provisioned after gate completes successfully.
+#
+# PAT (WENDY_TEMPLATE_SYNC_TOKEN): fine-grained PAT scoped to ONLY
+#   'contents:write' on this single repository. No other scopes or repos.
+#   Masked with ::add-mask:: as the very first step of the respond job.
+#   Supplied only via GIT_ASKPASS (never in URL or env). Rotation: 90 days.
+#   The PAT is required because GITHUB_TOKEN pushes do not trigger CI runs.
+#
+# CLAUDE CODE INVOCATION:
+#   --allowedTools "Edit,MultiEdit"
+#   --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use"
+#   env -i isolates environment (no GITHUB_TOKEN, no runner tokens)
+#   Post-run "Verify Claude did not touch protected paths" step reverts and
+#   aborts if Claude modified .github/, lock files, or files outside the
+#   source allowlist (go/, swift/, Sources/, Tests/, docs/, etc.)
+#
+# PROMPT INJECTION: sanitize() strips HTML entities (iterative), NFKC,
+#   zero-width/direction/soft-hyphen/Hangul-filler chars, XML/HTML tags,
+#   triple+quadruple backtick fences, tilde fences, injection phrases,
+#   path fields validated against actual PR file set.
+#
+# AUTHORIZATION: live API re-check in gate job (early-actor-verification)
+#   + re-verify-authorization as first data step of respond job + push
+#   step re-verifies SHA+state immediately before --force-with-lease push.
+# =============================================================================
 
 on:
   pull_request_review:
@@ -503,13 +532,16 @@ jobs:
               # Soft hyphen survives NFKC but can split keywords to bypass phrase filters.
               # U+200D (ZERO WIDTH JOINER) and U+034F (COMBINING GRAPHEME JOINER) are also
               # stripped \u2014 both survive NFKC and can split marker strings to bypass filters.
-              text = re.sub(r'[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\ue0000-\ue007f\ufeff]', '', text)
+              # U+3164 (HANGUL FILLER) survives NFKC and acts as invisible padding.
+              text = re.sub(r'[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\u3164\ue0000-\ue007f\ufeff]', '', text)
               # Strip ALL XML/HTML tags. Use a high bound (4000 chars) to prevent bypass
               # via tags with >200 chars of padding before '>'. [^>] stops at '>' anyway.
               text = re.sub(r'<[^>]{0,4000}>', '[tag]', text)
-              # Strip backtick and tilde code-fence blocks to prevent instruction smuggling
-              text = re.sub(r'`{3}.*?`{3}', '[code]', text, flags=re.DOTALL)
-              text = re.sub(r'~{3}.*?~{3}', '[code]', text, flags=re.DOTALL)
+              # Strip backtick and tilde code-fence blocks (3+ chars) to prevent
+              # instruction smuggling. Using {3,} instead of {3} so that ````…````
+              # (4 backticks) does not bypass the pattern.
+              text = re.sub(r'`{3,}.*?`{3,}', '[code]', text, flags=re.DOTALL)
+              text = re.sub(r'~{3,}.*?~{3,}', '[code]', text, flags=re.DOTALL)
               # Block common prompt injection trigger phrases (extend beyond "ignore previous")
               text = re.sub(r'(?i)ignore\s+(all\s+)?previous\s+instructions?', '[filtered]', text)
               text = re.sub(r'(?i)(disregard|forget|override)\s+(all\s+)?(previous\s+)?instructions?', '[filtered]', text)
