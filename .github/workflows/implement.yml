@@ -40,6 +40,8 @@ jobs:
           # Cap comment body to 1000 chars before regex to guard against ReDoS on
           # pathological input; printf '%s' already prevents shell injection.
           COMMENT_BODY="${COMMENT_BODY:0:1000}"
+          # Strip CRLF line endings so ^ anchor works correctly regardless of payload encoding.
+          COMMENT_BODY="${COMMENT_BODY//$'\r'/}"
           # Require /implement at the start of a line (not buried in prose)
           if ! printf '%s' "$COMMENT_BODY" | grep -qE '(^|\n)\s*/implement(\s|$)'; then
             echo "authorized=false" >> "$GITHUB_OUTPUT"
@@ -140,6 +142,18 @@ jobs:
       issues: write
 
     steps:
+      - name: Re-verify gate authorization
+        # Belt-and-suspenders runtime check: abort immediately if gate outputs indicate
+        # this job should not have started (guards against expression-evaluation edge cases).
+        env:
+          AUTHORIZED: ${{ needs.gate.outputs.authorized }}
+          EXISTS: ${{ needs.gate.outputs.exists }}
+        run: |
+          if [ "$AUTHORIZED" != "true" ] || [ "$EXISTS" = "true" ]; then
+            echo "::error::Gate authorization check failed — aborting"
+            exit 1
+          fi
+
       - name: Mask long-lived PAT secret
         # Mask at job start so the value never appears in any subsequent log line.
         env:
