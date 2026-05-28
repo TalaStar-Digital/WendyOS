@@ -431,7 +431,9 @@ jobs:
               text = unicodedata.normalize('NFKC', text)
               # Strip Unicode direction-override, zero-width, and soft-hyphen (U+00AD).
               # Soft hyphen survives NFKC but can split keywords to bypass phrase filters.
-              text = re.sub(r'[\u00ad\u200b-\u200f\u202a-\u202e\u2066-\u2069\ue0000-\ue007f\ufeff]', '', text)
+              # U+200D (ZERO WIDTH JOINER) and U+034F (COMBINING GRAPHEME JOINER) are also
+              # stripped \u2014 both survive NFKC and can split marker strings to bypass filters.
+              text = re.sub(r'[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\ue0000-\ue007f\ufeff]', '', text)
               # Strip ALL XML/HTML tags. Use a high bound (4000 chars) to prevent bypass
               # via tags with >200 chars of padding before '>'. [^>] stops at '>' anyway.
               text = re.sub(r'<[^>]{0,4000}>', '[tag]', text)
@@ -463,7 +465,9 @@ jobs:
               s = str(u or '')
               return s if GH_USER_RE.match(s) else '[invalid-user]'
           inline   = [{'user': san_user(c.get('user')),
-                       'path': sanitize(c.get('path') or ''),
+                       # Normalize newlines in path before sanitize() — a path like
+                       # "foo.go\n## New section" would inject a markdown heading.
+                       'path': sanitize(re.sub(r'[\r\n]', ' ', c.get('path') or '')),
                        'body': sanitize(c.get('body') or '')} for c in raw_inline]
           reviews  = [{'user': san_user(r.get('user')),
                        'state': sanitize(r.get('state') or ''),
@@ -707,18 +711,15 @@ jobs:
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
           # Scrub ANTHROPIC_API_KEY from artifact files BEFORE zeroing env vars.
-          # The key is passed via sys.argv (not environment) so the scrubber
-          # works correctly even after ANTHROPIC_API_KEY is unset from the shell.
-          # ::add-mask:: protects the workflow UI log; this scrubs the files.
+          # Key is passed via stdin (not argv or env) so it does not appear in
+          # /proc/cmdline. ::add-mask:: protects the runner log; this scrubs files.
           _KEY_FOR_SCRUB="$ANTHROPIC_API_KEY"
-          python3 - "$_KEY_FOR_SCRUB" <<PYEOF
-import sys, pathlib, os
-key = sys.argv[1] if len(sys.argv) > 1 else ''
-for fname in ['claude-output.txt', 'claude-stderr.txt']:
-    p = pathlib.Path(os.environ['RUNNER_TEMP']) / fname
-    if p.exists() and key:
-        p.write_text(p.read_text().replace(key, '[REDACTED]'))
-PYEOF
+          for _sf in "$RUNNER_TEMP/claude-output.txt" "$RUNNER_TEMP/claude-stderr.txt"; do
+            [ -f "$_sf" ] && [ -n "$_KEY_FOR_SCRUB" ] && \
+              printf '%s' "$_KEY_FOR_SCRUB" | python3 -c \
+              "import sys,pathlib; k=sys.stdin.read(); p=pathlib.Path(sys.argv[1]); p.write_text(p.read_text().replace(k,'[REDACTED]')) if k else None" \
+              "$_sf"
+          done
           _KEY_FOR_SCRUB=""
           unset _KEY_FOR_SCRUB
           # Zero out sensitive shell vars AFTER scrubber — they are no longer
@@ -733,6 +734,34 @@ PYEOF
             cat "$RUNNER_TEMP/claude-stderr.txt"
           fi
 
+
+      - name: Verify Claude did not touch protected paths
+        # Post-Claude guard: even though Edit/MultiEdit can write any path, this step
+        # aborts before staging if Claude modified anything outside the allowed tree.
+        # This is the primary enforcement of least-privilege for the unrestricted
+        # --allowedTools "Edit,MultiEdit" grant — it runs on unstaged changes, before
+        # the commit step's pre-stage audit, as defense-in-depth.
+        if: steps.circuit.outputs.tripped == 'false'
+        run: |
+          PROTECTED=$(git diff --name-only | grep -E \
+            '^(\.github/|CODEOWNERS|SECURITY\.md|security/|.*\.(pem|key|p12|pfx)|go/vendor/|go/generated/|swift/Packages/)' \
+            || true)
+          if [ -n "$PROTECTED" ]; then
+            echo "::error::Claude modified protected path(s) — reverting and aborting:"
+            echo "$PROTECTED"
+            git checkout -- .
+            exit 1
+          fi
+          # Also abort if Claude modified files outside the source-directory allowlist
+          DISALLOWED=$(git diff --name-only | grep -vE \
+            '^(go/|swift/|Sources/|Tests/|tests/|docs/|Documentation/|Examples/)' \
+            || true)
+          if [ -n "$DISALLOWED" ]; then
+            echo "::error::Claude modified file(s) outside allowed source directories — reverting:"
+            echo "$DISALLOWED"
+            git checkout -- .
+            exit 1
+          fi
 
       - name: Commit any uncommitted changes
         if: steps.circuit.outputs.tripped == 'false'
@@ -983,6 +1012,7 @@ PYEOF
           # The token is isolated via env -i in the claude step and only available here.
           TOKEN: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
           BRANCH: ${{ needs.gate.outputs.head_branch }}
+          EXPECTED_SHA: ${{ needs.gate.outputs.head_sha }}
         run: |
           echo "::add-mask::$TOKEN"
           # Move token out of named env var immediately so it is absent from the
@@ -1000,12 +1030,21 @@ PYEOF
             echo "::error::Push target '$BRANCH' does not match allowed ai/ branch pattern — aborting"
             exit 1
           fi
-          # Verify BRANCH is the head of an open PR (not an arbitrary branch)
-          PR_HEAD=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open" \
-            --jq --arg b "$BRANCH" '.[] | select(.head.ref == $b) | .head.ref' \
+          # Re-verify PR state immediately before push to close the TOCTOU window
+          # between gate job authorization and this push. Verifies that:
+          #   1. The PR is still open (not closed/merged since gate ran)
+          #   2. The head SHA still matches what gate authorized (not force-pushed)
+          # This check is re-done here because up to 30 min can elapse between
+          # gate and push, and the concurrency group does not cancel queued runs.
+          CURRENT_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open" \
+            --jq --arg b "$BRANCH" '.[] | select(.head.ref == $b) | .head.sha' \
             2>/dev/null | head -1 || true)
-          if [ -z "$PR_HEAD" ]; then
+          if [ -z "$CURRENT_SHA" ]; then
             echo "::error::Branch '$BRANCH' is not the head of any open PR — aborting"
+            exit 1
+          fi
+          if [ "$CURRENT_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::PR head SHA changed since gate authorized push ($EXPECTED_SHA → $CURRENT_SHA) — aborting"
             exit 1
           fi
           # Use env -i to isolate the push subprocess so GIT_PUSH_TOKEN is not
@@ -1017,9 +1056,12 @@ PYEOF
           chmod 700 "$ASKPASS_FILE"
           trap 'rm -f "$ASKPASS_FILE"' EXIT
           printf '#!/bin/sh\nprintf "%%s" "${GIT_PUSH_TOKEN}"\n' > "$ASKPASS_FILE"
+          # --force-with-lease atomically aborts if the remote ref has diverged
+          # from EXPECTED_SHA since our last fetch, closing any remaining TOCTOU
+          # window not caught by the API re-check above.
           env -i HOME="$HOME" PATH="$PATH" \
             GIT_ASKPASS="$ASKPASS_FILE" GIT_PUSH_TOKEN="$PUSH_TOKEN" \
-            git push --no-force \
+            git push "--force-with-lease=refs/heads/${BRANCH}:${EXPECTED_SHA}" \
             "https://github.com/${GITHUB_REPOSITORY}.git" \
-            "HEAD:${BRANCH}"
+            "HEAD:refs/heads/${BRANCH}"
           rm -f "$ASKPASS_FILE"
