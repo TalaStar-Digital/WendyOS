@@ -511,6 +511,24 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
               exit 1
             fi
           done < <({ git diff -z --name-only; git ls-files -z --others --exclude-standard; } 2>/dev/null)
+          # Extension blocklist runs PRE-STAGE (before git add) to block script/config files.
+          # Running pre-commit ensures docs/evil.yml fails before staging, not post-commit.
+          BLOCKED_EXT=""
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              *.sh|*.bash|*.zsh|*.fish|*.py|*.rb|*.pl|*.lua|*.groovy|\
+              *.yml|*.yaml|*.json|*.toml|*.ini|*.cfg|\
+              Makefile|makefile|Dockerfile|*.dockerfile|*.mk)
+                BLOCKED_EXT="$BLOCKED_EXT $f"
+                ;;
+            esac
+          done < <({ git diff --name-only; git ls-files --others --exclude-standard; } 2>/dev/null)
+          if [ -n "$BLOCKED_EXT" ]; then
+            echo "::error::AI modified script/config file(s) — aborting:"
+            echo "$BLOCKED_EXT"
+            exit 1
+          fi
           git add -A
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -565,31 +583,14 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           git commit -m "chore: implement issue via Claude Code (run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Pre-push diff validation
+      - name: Post-commit exec-pattern scan
+        # Extension blocklist ran pre-commit (before git add) in the Commit step.
+        # This step logs the commit stat for audit and checks compiled-source exec calls.
         if: steps.commit.outputs.changed == 'true'
         run: |
           echo "=== Files changed in this commit ==="
           git show --stat HEAD
           echo ""
-          echo "=== Validating changed file extensions ==="
-          BLOCKED=""
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            case "$f" in
-              *.sh|*.bash|*.zsh|*.fish|*.py|*.rb|*.pl|*.lua|*.groovy|\
-              *.yml|*.yaml|*.json|*.toml|*.ini|*.cfg|\
-              Makefile|makefile|Dockerfile|*.dockerfile|*.mk)
-                BLOCKED="$BLOCKED $f"
-                ;;
-            esac
-          done < <(git show --name-only --format='' HEAD)
-          if [ -n "$BLOCKED" ]; then
-            echo "::error::AI modified script/config file(s) — aborting push:"
-            echo "$BLOCKED"
-            exit 1
-          fi
-          echo "Pre-push diff validation passed — no script/config files modified"
-          # Compiled-source exec guard: block push if AI-added lines introduce exec/subprocess calls.
           EXEC_PATTERNS=$(git show HEAD -- '*.go' '*.swift' 2>/dev/null \
             | grep -E '^\+.*(exec\.(Command|Cmd|LookPath)|syscall\.Exec|os\.StartProcess)' \
             | head -5 || true)
@@ -598,6 +599,7 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
             echo "$EXEC_PATTERNS"
             exit 1
           fi
+          echo "Post-commit exec-pattern scan passed"
 
       - name: Push branch
         if: steps.commit.outputs.changed == 'true'
