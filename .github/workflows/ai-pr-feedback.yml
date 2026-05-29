@@ -22,12 +22,17 @@ name: AI PR Feedback Loop
 #     AskFollowupQuestion,mcp__*"  Belt-and-suspenders: explicit denial in
 #     addition to the allowlist, for defense-in-depth.
 #   env -i isolates environment (no GITHUB_TOKEN, no runner tokens)
-#   ACCEPTED RISK: ANTHROPIC_API_KEY is visible in /proc/<pid>/environ of the
-#     Claude process to same-UID processes for the duration of the invocation.
+#   ACCEPTED RISK: ANTHROPIC_API_KEY and ANTHROPIC_SYSTEM_PROMPT (which contains
+#     the UUID sentinel) are both visible in /proc/<pid>/environ of the Claude
+#     process to same-UID processes for the duration of the invocation. The
+#     sentinel's confidentiality cannot be guaranteed via env var delivery.
 #     On GitHub-hosted runners, no other same-UID process is spawned after the
 #     step starts; the runner agent itself does not inspect subprocess environ.
-#     Mitigation: Claude CLI does not support file-descriptor or named-pipe key
-#     delivery; env var is the only supported mechanism. Risk accepted.
+#     Mitigation: Claude CLI does not support file-descriptor or named-pipe key/
+#     prompt delivery; env var is the only supported mechanism. Risk accepted.
+#     Primary security controls (allowlisted tools, post-Claude path checks,
+#     extension blocklist) do NOT depend on sentinel secrecy — they are independent
+#     defence-in-depth layers that hold even if the sentinel is compromised.
 #   Post-run "Verify Claude did not touch protected paths" step reverts and
 #   aborts if Claude modified .github/, lock files, or files outside the
 #   source allowlist (go/, swift/, Sources/, Tests/, docs/, etc.)
@@ -541,9 +546,11 @@ jobs:
 
           import html, unicodedata
 
-          # Per-run UUID sentinel — makes structured output delimiters unpredictable so an
-          # attacker injecting review comments cannot forge PR_BODY_START/END markers even
-          # if the system prompt is exposed via /proc/self/environ.
+          # Per-run UUID sentinel — makes structured output delimiters unpredictable.
+          # NOTE: The sentinel is passed via ANTHROPIC_SYSTEM_PROMPT (env var) and is
+          # therefore visible in /proc/<pid>/environ (ACCEPTED RISK, documented at top).
+          # Primary defences (path checks, extension blocklist) do not rely on sentinel
+          # secrecy; the sentinel is a secondary layer against delimiter injection only.
           # Stored only in GITHUB_OUTPUT (Actions-managed, never a custom disk file)
           # and in ANTHROPIC_SYSTEM_PROMPT. sanitize() also strips all PR_BODY_START/END
           # patterns from untrusted inputs as defense-in-depth.
@@ -1237,6 +1244,14 @@ Feedback to address:
             exit 1
           fi
           echo "Branch protection confirmed: main is protected"
+          # Secondary check: verify at least one repository ruleset exists.
+          # Fail closed: no rulesets means no server-side push restrictions configured.
+          RULESETS=$(gh api "repos/${GITHUB_REPOSITORY}/rulesets" --jq 'length' 2>/dev/null || echo '0')
+          if [ "$RULESETS" = "0" ]; then
+            echo "::error::No repository rulesets found — server-side push restrictions not configured (required control)"
+            exit 1
+          fi
+          echo "Repository rulesets: $RULESETS found"
           # Move token out of named env var immediately so it is absent from the
           # shell's /proc/self/environ for the rest of this step's child processes.
           PUSH_TOKEN="$TOKEN"
@@ -1247,6 +1262,18 @@ Feedback to address:
           # review before any merge, and the PAT is scoped to this repo only.
           # Tightened branch regex: no consecutive slashes/dots, no dot-segments,
           # disallows path-traversal patterns like ai/../main.
+          # Belt-and-suspenders: also explicitly reject git ref injection chars
+          # (^~:?*[]{}\ null) even though the whitelist already blocks them.
+          if printf '%s' "$BRANCH" | python3 -c "
+import sys, re
+b = sys.stdin.read()
+if re.search(r'[\x00^~:?*\[\]{}\\\\ ]', b):
+    sys.exit(1)
+sys.exit(0)
+"; then : ; else
+            echo "::error::BRANCH contains illegal git ref characters — aborting"
+            exit 1
+          fi
           if printf '%s' "$BRANCH" | grep -qE '(\.\.|//|@\{|\\)' || \
              ! printf '%s' "$BRANCH" | grep -qE '^ai/[a-z0-9][a-z0-9_-]{0,38}(/[a-z0-9][a-z0-9_-]{0,38}){0,3}$'; then
             echo "::error::Push target '$BRANCH' does not match allowed ai/ branch pattern — aborting"

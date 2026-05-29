@@ -484,15 +484,6 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
             cat "$RUNNER_TEMP/claude-stderr.txt"
           fi
 
-      - name: Upload run artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
-        with:
-          name: claude-implement-run-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/claude-output.txt
-            ${{ runner.temp }}/claude-stderr.txt
-          if-no-files-found: ignore
-          retention-days: 1
 
       - name: Commit any uncommitted changes
         id: commit
@@ -636,7 +627,26 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
             exit 1
           fi
           echo "Branch protection confirmed: main is protected"
+          # Secondary check: verify at least one repository ruleset exists.
+          # Fail closed: no rulesets means no server-side push restrictions configured.
+          RULESETS=$(gh api "repos/${GITHUB_REPOSITORY}/rulesets" --jq 'length' 2>/dev/null || echo '0')
+          if [ "$RULESETS" = "0" ]; then
+            echo "::error::No repository rulesets found — server-side push restrictions not configured (required control)"
+            exit 1
+          fi
+          echo "Repository rulesets: $RULESETS found"
           # Re-validate branch name at push time (belt-and-suspenders; gate also validates).
+          # Also explicitly reject git ref injection chars (^~:?*[]{}\ null).
+          if printf '%s' "$BRANCH" | python3 -c "
+import sys, re
+b = sys.stdin.read()
+if re.search(r'[\x00^~:?*\[\]{}\\\\ ]', b):
+    sys.exit(1)
+sys.exit(0)
+"; then : ; else
+            echo "::error::BRANCH contains illegal git ref characters — aborting"
+            exit 1
+          fi
           if ! printf '%s' "$BRANCH" | grep -qE '^ai/issue-[0-9]+(-[a-z0-9-]+)?(-[0-9]{14})?$'; then
             echo "::error::BRANCH '$BRANCH' does not match expected ai/issue-* pattern — aborting push"
             exit 1
