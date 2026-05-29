@@ -87,13 +87,7 @@ jobs:
           COMMENT_BODY="${COMMENT_BODY//$'\0'/}"
           # Require /implement at the start of a line.  Python's (?m) mode anchors ^ to
           # each line boundary reliably, regardless of how the shell expanded the env var.
-          if ! printf '%s' "$COMMENT_BODY" | python3 -c "
-import sys, re, os
-body = sys.stdin.read()
-if re.search(r'(?m)^\s*/implement(?:\s|\$)', body):
-    raise SystemExit(0)
-raise SystemExit(1)
-"; then
+          if ! printf '%s' "$COMMENT_BODY" | python3 -c 'import sys,re;b=sys.stdin.read();sys.exit(0 if re.search(r"(?m)^\s*/implement(?:\s|$)",b) else 1)'; then
             echo "authorized=false" >> "$GITHUB_OUTPUT"
             echo "/implement not found at start of line — skipping"
             exit 0
@@ -254,13 +248,7 @@ raise SystemExit(1)
           esac
           # Re-verify that the comment still contains /implement (comments are editable).
           LIVE_BODY=$(printf '%s' "$COMMENT_DATA" | jq -r '.body // ""')
-          if ! printf '%s' "$LIVE_BODY" | python3 -c "
-import sys, re
-body = sys.stdin.read()
-if re.search(r'(?m)^\s*/implement(?:\s|\$)', body):
-    raise SystemExit(0)
-raise SystemExit(1)
-"; then
+          if ! printf '%s' "$LIVE_BODY" | python3 -c 'import sys,re;b=sys.stdin.read();sys.exit(0 if re.search(r"(?m)^\s*/implement(?:\s|$)",b) else 1)'; then
             echo "::error::Comment no longer contains /implement — aborting"
             exit 1
           fi
@@ -322,10 +310,7 @@ raise SystemExit(1)
           fi
           # Restrict read access before hashing; node crypto produces canonical SRI base64.
           chmod 400 "$TARBALL"
-          ACTUAL_HASH=$(node -e "
-const c=require('crypto'),f=require('fs');
-process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(process.argv[1])).digest('base64'));
-" "$TARBALL")
+          ACTUAL_HASH=$(node -e 'const c=require("crypto"),f=require("fs");process.stdout.write("sha512-"+c.createHash("sha512").update(f.readFileSync(process.argv[1])).digest("base64"));' "$TARBALL")
           if [ "$ACTUAL_HASH" != "$EXPECTED_INTEGRITY" ]; then
             echo "::error::claude-code@2.1.150 integrity mismatch — possible supply-chain compromise"
             echo "  expected: $EXPECTED_INTEGRITY"
@@ -489,12 +474,19 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           PYEOF
 
       - name: Write API key to temp file
-        # Dedicated step: the ONLY place the API key value appears in script text.
-        # The Run Claude Code step has no key in env: or script text — reads from file.
+        # Dedicated step: the ONLY place the API key value is handled.
+        # The key arrives via env: — NOT inline ${{ secrets.* }} in script text — so it
+        # is never baked into the shell script literal. GitHub Actions masks all env: secret
+        # values in logs unconditionally; ::add-mask:: is also emitted as the first command
+        # so the value is registered for subsequent steps (defense-in-depth for any derived
+        # values). The "Run Claude Code" step has no key in env: or script text.
+        env:
+          _API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          echo "::add-mask::${{ secrets.ANTHROPIC_API_KEY }}"
+          echo "::add-mask::$_API_KEY"
           install -m 600 /dev/null "$RUNNER_TEMP/anthropic-key.txt"
-          printf '%s' "${{ secrets.ANTHROPIC_API_KEY }}" > "$RUNNER_TEMP/anthropic-key.txt"
+          printf '%s' "$_API_KEY" > "$RUNNER_TEMP/anthropic-key.txt"
+          unset _API_KEY
 
       - name: Run Claude Code
         # ANTHROPIC_API_KEY: NOT in env:, NOT in this step's script text.
@@ -777,13 +769,7 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           echo "Matching active rulesets for ai/**: $MATCHING_RULESETS found"
           # Re-validate branch name at push time (belt-and-suspenders; gate also validates).
           # Also explicitly reject git ref injection chars (^~:?*[]{}\ null).
-          if printf '%s' "$BRANCH" | python3 -c "
-import sys, re
-b = sys.stdin.read()
-if re.search(r'[\x00^~:?*\[\]{}\\\\ ]', b):
-    sys.exit(1)
-sys.exit(0)
-"; then : ; else
+          if printf '%s' "$BRANCH" | python3 -c 'import sys,re;b=sys.stdin.read();sys.exit(1 if re.search(r"[\x00^~:?*\[\]{}\\ ]",b) else 0)'; then : ; else
             echo "::error::BRANCH contains illegal git ref characters — aborting"
             exit 1
           fi
