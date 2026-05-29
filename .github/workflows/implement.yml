@@ -154,7 +154,7 @@ raise SystemExit(1)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: read      # github.token read-only; push uses WENDY_TEMPLATE_SYNC_TOKEN PAT (contents:write)
       pull-requests: write
       issues: write
 
@@ -447,7 +447,7 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # blocked by the Claude Code CLI. The Edit tool CAN create files at non-existent
           # paths in some CLI versions; the invariant check below enforces the edit-only model.
           # Snapshot all untracked files (including gitignored) BEFORE Claude runs.
-          PRE_RUN_UNTRACKED=$(git ls-files --others | sort)
+          PRE_RUN_UNTRACKED=$(git ls-files --others --exclude-standard | sort)
           env -i HOME="$HOME" PATH="$PATH" \
             ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
             ANTHROPIC_SYSTEM_PROMPT="$SYSTEM_PROMPT" \
@@ -468,7 +468,7 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # Enforce edit-only model: system prompt instructs Claude not to create new files;
           # this invariant check enforces it at the workflow level. Any new untracked file
           # is a violation — abort and clean up.
-          POST_RUN_UNTRACKED=$(git ls-files --others | sort)
+          POST_RUN_UNTRACKED=$(git ls-files --others --exclude-standard | sort)
           NEW_FILES=$(diff <(echo "$PRE_RUN_UNTRACKED") <(echo "$POST_RUN_UNTRACKED") \
             | grep '^>' | sed 's/^> //' | head -5 || true)
           if [ -n "$NEW_FILES" ]; then
@@ -522,7 +522,7 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
               echo "::error::AI created/modified file outside allowed directories: $f"
               exit 1
             fi
-          done < <({ git diff -z --name-only; git ls-files -z --others; } 2>/dev/null)
+          done < <({ git diff -z --name-only; git ls-files -z --others --exclude-standard; } 2>/dev/null)
           # Extension blocklist runs PRE-STAGE (before git add) to block script/config files.
           # Running pre-commit ensures docs/evil.yml fails before staging, not post-commit.
           BLOCKED_EXT=""
@@ -535,7 +535,7 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
                 BLOCKED_EXT="$BLOCKED_EXT $f"
                 ;;
             esac
-          done < <({ git diff -z --name-only; git ls-files -z --others; } 2>/dev/null)
+          done < <({ git diff -z --name-only; git ls-files -z --others --exclude-standard; } 2>/dev/null)
           if [ -n "$BLOCKED_EXT" ]; then
             echo "::error::AI modified script/config file(s) — aborting:"
             echo "$BLOCKED_EXT"

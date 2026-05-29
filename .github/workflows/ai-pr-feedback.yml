@@ -971,7 +971,7 @@ Feedback to address:
                 BLOCKED_EXT="$BLOCKED_EXT $f"
                 ;;
             esac
-          done < <({ git diff -z --name-only; git ls-files -z --others; } 2>/dev/null)
+          done < <({ git diff -z --name-only; git ls-files -z --others --exclude-standard; } 2>/dev/null)
           if [ -n "$BLOCKED_EXT" ]; then
             echo "::error::Claude modified script/config file(s) — reverting and aborting:"
             echo "$BLOCKED_EXT"
