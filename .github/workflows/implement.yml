@@ -379,10 +379,11 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # Instructions go in the system prompt (trusted, separate from user data)
           system_prompt = f"""You are an engineer working on WendyOS, an embedded/edge OS and CLI tool that deploys containerised apps to IoT devices.
 
-          Implement the GitHub issue provided in the user message by editing the relevant source files.
+          Implement the GitHub issue provided in the user message by editing existing source files.
+          Do NOT create new files — only modify files that already exist in the repository.
           Do not run git, commit, or push — the CI handles staging and committing your changes.
 
-          IMPORTANT: Only create or modify files inside these directories:
+          IMPORTANT: Only modify files inside these directories:
             go/        (Go source code)
             swift/     (Swift source code)
             Sources/   (Swift package sources)
@@ -425,14 +426,15 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          # Mask API key as the absolute first action — before any command that
+          # could echo environment variables or fail with key in the error output.
+          echo "::add-mask::$ANTHROPIC_API_KEY"
           # Read prompts into shell vars, then delete the files so Claude's Read
           # tool cannot access them (or any other sensitive RUNNER_TEMP content).
           # sentinel.txt is kept for the Parse PR metadata step to read.
           SYSTEM_PROMPT=$(cat "$RUNNER_TEMP/system-prompt.txt")
           USER_PROMPT=$(cat "$RUNNER_TEMP/prompt.txt")
           rm -f "$RUNNER_TEMP/system-prompt.txt" "$RUNNER_TEMP/prompt.txt"
-          # Mask API key before any action that could echo it (must be first)
-          echo "::add-mask::$ANTHROPIC_API_KEY"
           # Remove .git credential helpers before Claude runs
           git config --local --unset-all credential.helper 2>/dev/null || true
           # Pre-create output files with restricted permissions so no window exists
@@ -442,10 +444,10 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # Use env -i to limit Claude's visible environment to only what it needs.
           # This keeps workflow secrets out of /proc/self/environ for the claude process.
           # --allowedTools "Edit,MultiEdit" is an EXCLUSIVE allowlist — all other tools are
-          # blocked by the Claude Code CLI. Edit can create files at non-existent paths.
-          # New file creation is ALLOWED by design (implement.yml's system prompt says
-          # "create or modify files"); path and extension validation in the Commit step
-          # are the primary controls over what Claude can write.
+          # blocked by the Claude Code CLI. The Edit tool CAN create files at non-existent
+          # paths in some CLI versions; the invariant check below enforces the edit-only model.
+          # Snapshot all untracked files (including gitignored) BEFORE Claude runs.
+          PRE_RUN_UNTRACKED=$(git ls-files --others | sort)
           env -i HOME="$HOME" PATH="$PATH" \
             ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
             ANTHROPIC_SYSTEM_PROMPT="$SYSTEM_PROMPT" \
@@ -459,6 +461,19 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # path/extension checks in subsequent steps or hide files from git tooling.
           if git diff -z --name-only | tr '\0' '\n' | grep -qF '.gitignore'; then
             echo "::error::Claude modified .gitignore — aborting"
+            git clean -fd 2>/dev/null || true
+            git checkout -- . 2>/dev/null || true
+            exit 1
+          fi
+          # Enforce edit-only model: system prompt instructs Claude not to create new files;
+          # this invariant check enforces it at the workflow level. Any new untracked file
+          # is a violation — abort and clean up.
+          POST_RUN_UNTRACKED=$(git ls-files --others | sort)
+          NEW_FILES=$(diff <(echo "$PRE_RUN_UNTRACKED") <(echo "$POST_RUN_UNTRACKED") \
+            | grep '^>' | sed 's/^> //' | head -5 || true)
+          if [ -n "$NEW_FILES" ]; then
+            echo "::error::Claude created new files (edit-only model violated) — aborting:"
+            echo "$NEW_FILES"
             git clean -fd 2>/dev/null || true
             git checkout -- . 2>/dev/null || true
             exit 1
