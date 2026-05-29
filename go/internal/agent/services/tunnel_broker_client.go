@@ -24,6 +24,11 @@ const (
 	brokerMaxBackoff        = 90 * time.Second
 	brokerKeepaliveTime     = 30 * time.Second
 	brokerKeepaliveTimeout  = 10 * time.Second
+
+	// defaultMTLSPort is the well-known mTLS port the CLI always requests via the
+	// broker. When the agent is running on a non-default port, incoming tunnel
+	// requests for this port are remapped to the actual local mTLS port.
+	defaultMTLSPort = 50052
 )
 
 // TunnelBrokerClient maintains a persistent RegisterPresence stream with the broker
@@ -34,17 +39,21 @@ type TunnelBrokerClient struct {
 	orgID    int32
 	assetID  int32
 	chainPEM string
+	mtlsPort int
 }
 
 // NewTunnelBrokerClient creates a new TunnelBrokerClient.
 // chainPEM is the Wendy CA certificate chain used to verify the broker's TLS certificate.
-func NewTunnelBrokerClient(logger *zap.Logger, url string, orgID, assetID int32, chainPEM string) *TunnelBrokerClient {
+// mtlsPort is the actual local mTLS port; incoming broker requests for defaultMTLSPort
+// are remapped to this port when it differs from the default.
+func NewTunnelBrokerClient(logger *zap.Logger, url string, orgID, assetID int32, chainPEM string, mtlsPort int) *TunnelBrokerClient {
 	return &TunnelBrokerClient{
 		logger:   logger,
 		url:      url,
 		orgID:    orgID,
 		assetID:  assetID,
 		chainPEM: chainPEM,
+		mtlsPort: mtlsPort,
 	}
 }
 
@@ -211,7 +220,11 @@ func (c *TunnelBrokerClient) handleDialRequest(ctx context.Context, client cloud
 		return
 	}
 
-	addr := net.JoinHostPort(req.Host, fmt.Sprint(req.Port))
+	port := int(req.Port)
+	if c.mtlsPort != 0 && port == defaultMTLSPort && c.mtlsPort != defaultMTLSPort {
+		port = c.mtlsPort
+	}
+	addr := net.JoinHostPort(req.Host, fmt.Sprint(port))
 	c.logger.Info("dialing local service for tunnel",
 		zap.String("session_id", req.SessionId), zap.String("addr", addr))
 

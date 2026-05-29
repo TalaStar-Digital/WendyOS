@@ -424,17 +424,13 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # between Claude writing and the scrubber running with world-readable files.
           install -m 600 /dev/null "$RUNNER_TEMP/claude-output.txt"
           install -m 600 /dev/null "$RUNNER_TEMP/claude-stderr.txt"
-          # Snapshot ALL untracked files (including gitignored) BEFORE Claude runs.
-          # Omitting --exclude-standard ensures Claude cannot hide a new file by
-          # also writing a matching .gitignore pattern — all files are captured.
-          PRE_RUN_UNTRACKED=$(git ls-files --others | sort)
           # Use env -i to limit Claude's visible environment to only what it needs.
           # This keeps workflow secrets out of /proc/self/environ for the claude process.
           # --allowedTools "Edit,MultiEdit" is an EXCLUSIVE allowlist — all other tools are
-          # blocked by the Claude Code CLI. NOTE: Edit can create new files at non-existent
-          # paths in some CLI versions. Write is also in --disallowedTools as belt-and-
-          # suspenders, but the primary enforcement is the invariant check below that aborts
-          # and removes any new files if they appear.
+          # blocked by the Claude Code CLI. Edit can create files at non-existent paths.
+          # New file creation is ALLOWED by design (implement.yml's system prompt says
+          # "create or modify files"); path and extension validation in the Commit step
+          # are the primary controls over what Claude can write.
           env -i HOME="$HOME" PATH="$PATH" \
             ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
             ANTHROPIC_SYSTEM_PROMPT="$SYSTEM_PROMPT" \
@@ -444,25 +440,10 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
             "$USER_PROMPT" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
-          # Invariant check: compare snapshot taken BEFORE Claude ran against current state.
-          # Detects any files Claude created (Edit on non-existent path, CLI bug, etc.).
-          # Running the check here (immediately after Claude exits, before any git add)
-          # ensures no new files can be staged or committed.
-          # Abort if Claude modified .gitignore (belt-and-suspenders — the scan
-          # below already omits --exclude-standard, but a tampered .gitignore
-          # could affect other git tooling in subsequent steps).
+          # Abort if Claude modified .gitignore — a tampered .gitignore could affect
+          # path/extension checks in subsequent steps or hide files from git tooling.
           if git diff --name-only | grep -qF '.gitignore'; then
-            echo "::error::Claude modified .gitignore — aborting (could hide new files from detection)"
-            git clean -fd 2>/dev/null || true
-            git checkout -- . 2>/dev/null || true
-            exit 1
-          fi
-          POST_RUN_UNTRACKED=$(git ls-files --others | sort)
-          NEW_FILES=$(diff <(echo "$PRE_RUN_UNTRACKED") <(echo "$POST_RUN_UNTRACKED") \
-            | grep '^>' | sed 's/^> //' | head -5 || true)
-          if [ -n "$NEW_FILES" ]; then
-            echo "::error::Claude created new files (detected via pre/post snapshot) — aborting:"
-            echo "$NEW_FILES"
+            echo "::error::Claude modified .gitignore — aborting"
             git clean -fd 2>/dev/null || true
             git checkout -- . 2>/dev/null || true
             exit 1
@@ -661,25 +642,31 @@ sys.exit(0)
           printf '#!/bin/sh\nprintf "%%s" "${GIT_PUSH_TOKEN}"\n' > "$ASKPASS_FILE"
           # If a prior AI run's branch still exists remotely (PR closed/merged but branch
           # not deleted), append a short timestamp to avoid a non-fast-forward push failure.
-          if env -i HOME="$HOME" PATH="$PATH" \
-               GIT_ASKPASS="$ASKPASS_FILE" GIT_PUSH_TOKEN="$PUSH_TOKEN" \
-               git ls-remote --exit-code --heads \
-               "https://github.com/${GITHUB_REPOSITORY}.git" "$BRANCH" > /dev/null 2>&1; then
-            echo "::warning::Remote branch '$BRANCH' already exists — appending timestamp to avoid conflict"
+          # Capture the current remote SHA (empty string if branch doesn't exist).
+          # Used for explicit --force-with-lease=<ref>:<expect> to close TOCTOU window.
+          REMOTE_SHA=$(env -i HOME="$HOME" PATH="$PATH" \
+            GIT_ASKPASS="$ASKPASS_FILE" GIT_PUSH_TOKEN="$PUSH_TOKEN" \
+            git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/heads/${BRANCH}" 2>/dev/null | awk '{print $1}' || echo '')
+          if [ -n "$REMOTE_SHA" ]; then
+            echo "::warning::Remote branch '$BRANCH' already exists ($REMOTE_SHA) — appending timestamp to avoid conflict"
             BRANCH="${BRANCH}-$(date +%Y%m%d%H%M%S)"
             # Re-validate after timestamp append to ensure pattern still holds.
             if ! printf '%s' "$BRANCH" | grep -qE '^ai/issue-[0-9]+(-[a-z0-9-]+)?(-[0-9]{14})?$'; then
               echo "::error::Timestamp-suffixed BRANCH '$BRANCH' violates naming pattern — aborting"
               exit 1
             fi
+            # New branch after rename — no remote SHA to bind to.
+            REMOTE_SHA=""
           fi
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          # --force-with-lease aborts if the remote ref has moved since our ls-remote check,
-          # closing the race window for concurrent implement runs on the same issue.
-          # For a brand-new branch the lease expectation is "no remote ref", which is correct.
+          # Use explicit lease: --force-with-lease=<ref>:<expect> where expect is the
+          # remote SHA captured above (empty = expect ref to not exist for new branch).
+          # This closes the TOCTOU window between ls-remote and push, consistent with
+          # ai-pr-feedback.yml's use of the explicit SHA form.
           env -i HOME="$HOME" PATH="$PATH" \
             GIT_ASKPASS="$ASKPASS_FILE" GIT_PUSH_TOKEN="$PUSH_TOKEN" \
-            git push --force-with-lease \
+            git push "--force-with-lease=refs/heads/${BRANCH}:${REMOTE_SHA}" \
             "https://github.com/${GITHUB_REPOSITORY}.git" \
             "${BRANCH}"
           rm -f "$ASKPASS_FILE"
