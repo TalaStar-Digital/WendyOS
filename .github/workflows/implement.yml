@@ -318,13 +318,16 @@ jobs:
             rm -f "$TARBALL"
             exit 1
           fi
-          npm install -g --ignore-scripts "$TARBALL"
+          # Install to an explicit local prefix so the bin location is deterministic.
+          # npm install -g with setup-node@v4 puts the binary somewhere npm prefix -g
+          # doesn't reliably reflect; node_modules/.bin is always predictable.
+          CLAUDE_PREFIX="$RUNNER_TEMP/npm-claude"
+          mkdir -p "$CLAUDE_PREFIX"
+          npm install --prefix "$CLAUDE_PREFIX" --ignore-scripts "$TARBALL"
           rm -f "$TARBALL"
-          # setup-node@v4 uses a custom npm prefix; add its bin/ to PATH for this step
-          # and for all subsequent steps so the claude binary is findable.
-          NPM_BIN="$(npm prefix -g)/bin"
-          export PATH="$NPM_BIN:$PATH"
-          echo "$NPM_BIN" >> "$GITHUB_PATH"
+          CLAUDE_BIN_DIR="$CLAUDE_PREFIX/node_modules/.bin"
+          export PATH="$CLAUDE_BIN_DIR:$PATH"
+          echo "$CLAUDE_BIN_DIR" >> "$GITHUB_PATH"
           # Secondary verification: confirm installed binary reports expected version.
           # Provides an independent check beyond the sha512 tarball integrity test.
           INSTALLED_VERSION=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '')
