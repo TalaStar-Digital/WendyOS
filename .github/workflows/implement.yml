@@ -269,6 +269,14 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           fi
           npm install -g --ignore-scripts "$TARBALL"
           rm -f "$TARBALL"
+          # Secondary verification: confirm installed binary reports expected version.
+          # Provides an independent check beyond the sha512 tarball integrity test.
+          INSTALLED_VERSION=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '')
+          if [ "$INSTALLED_VERSION" != "2.1.150" ]; then
+            echo "::error::Installed claude reports version '$INSTALLED_VERSION', expected 2.1.150 — aborting"
+            exit 1
+          fi
+          echo "Secondary version check passed: $INSTALLED_VERSION"
 
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -290,7 +298,14 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RUNNER_TEMP: ${{ runner.temp }}
         run: |
+          # Pre-create temp files with mode 600 before Python writes to them.
+          # Python's write_text() opens existing files (preserving permissions)
+          # rather than creating them, avoiding a world-readable window.
+          install -m 600 /dev/null "$RUNNER_TEMP/sentinel.txt"
+          install -m 600 /dev/null "$RUNNER_TEMP/system-prompt.txt"
+          install -m 600 /dev/null "$RUNNER_TEMP/prompt.txt"
           python3 << 'PYEOF'
           import json, os, re, subprocess, pathlib
 
