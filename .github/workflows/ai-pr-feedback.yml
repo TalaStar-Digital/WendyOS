@@ -5,15 +5,15 @@ name: AI PR Feedback Loop
 # ARCHITECTURE: gate job (read-only) → respond job (write). Write-capable
 #   GITHUB_TOKEN is only provisioned after gate completes successfully.
 #
-# PAT (WENDY_TEMPLATE_SYNC_TOKEN): fine-grained PAT scoped to ONLY
-#   'contents:write' on this single repository. No other scopes or repos.
-#   Masked with ::add-mask:: as the very first step of the respond job.
+# PAT (WENDY_AI_FEEDBACK_TOKEN, fallback WENDY_TEMPLATE_SYNC_TOKEN): fine-grained
+#   PAT scoped to ONLY 'contents:write' on this single repository. No other scopes
+#   or repos. Masked with ::add-mask:: as the very first step of the respond job.
 #   Supplied only via GIT_ASKPASS (never in URL or env). Rotation: 90 days.
 #   The PAT is required because GITHUB_TOKEN pushes do not trigger CI runs.
-#   ACCEPTED RISK: This PAT is also used by implement.yml. Both workflows have
-#   identical scope (contents:write, this repo, ai/** branches via ruleset) so
-#   separate PATs provide no blast-radius reduction — each would have the same
-#   capabilities. A single revocation event covers both workflows simultaneously.
+#   Per-workflow isolation: WENDY_AI_FEEDBACK_TOKEN is dedicated to this workflow;
+#   if not yet created, it falls back to WENDY_TEMPLATE_SYNC_TOKEN. Creating the
+#   dedicated secret enables independent revocation and per-workflow audit trails
+#   in GitHub token usage logs without disrupting implement.yml operations.
 #
 # CLAUDE CODE INVOCATION:
 #   --allowedTools "Edit,MultiEdit"  EXCLUSIVE allowlist: Claude Code CLI blocks
@@ -41,6 +41,12 @@ name: AI PR Feedback Loop
 #   Post-run "Verify Claude did not touch protected paths" step reverts and
 #   aborts if Claude modified .github/, lock files, or files outside the
 #   source allowlist (go/, swift/, Sources/, Tests/, docs/, etc.)
+#   ACCEPTED RISK: Path enforcement is architecturally post-hoc — Edit/MultiEdit
+#   writes files before the enforcement step runs. Mitigations: (1) enforcement
+#   REVERTS unauthorized files with git checkout -- . before any staging; (2)
+#   unauthorized files are NEVER committed or pushed; (3) on ephemeral GitHub-
+#   hosted runners, git index corruption that would defeat git checkout -- . is
+#   extremely unlikely; (4) no other step reads arbitrary RUNNER_TEMP files.
 #
 # PROMPT INJECTION: sanitize() strips HTML entities (iterative), NFKC,
 #   zero-width/direction/soft-hyphen/Hangul-filler chars, XML/HTML tags,
@@ -356,7 +362,7 @@ jobs:
         # Secrets accessed via env: (not interpolated in run:) so their values are
         # never embedded in the step definition's shell script text.
         env:
-          WENDY_PAT: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
+          WENDY_PAT: ${{ secrets.WENDY_AI_FEEDBACK_TOKEN || secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
           GH_TOKEN_VAL: ${{ github.token }}
         run: |
           echo "::add-mask::$WENDY_PAT"
@@ -1258,7 +1264,7 @@ for f in json.load(open(sys.argv[1])):
           # Rotate on a 90-day schedule; if compromised, revoke immediately at
           # https://github.com/settings/tokens and update this repo secret.
           # The token is isolated via env -i in the claude step and only available here.
-          TOKEN: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
+          TOKEN: ${{ secrets.WENDY_AI_FEEDBACK_TOKEN || secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
           BRANCH: ${{ needs.gate.outputs.head_branch }}
           EXPECTED_SHA: ${{ needs.gate.outputs.head_sha }}
           GH_TOKEN: ${{ github.token }}

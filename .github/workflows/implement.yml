@@ -6,20 +6,20 @@ name: AI Implement Issue
 #   Write-capable GITHUB_TOKEN only provisioned after gate completes successfully.
 #   notify-existing job includes live re-authorization before any write action.
 #
-# PAT (WENDY_TEMPLATE_SYNC_TOKEN): fine-grained PAT scoped to ONLY
-#   'contents:write' on this single repository. No other scopes or repos.
-#   Rotation: 90 days (automated reminder via pat-rotation-reminder.yml).
+# PAT (WENDY_AI_IMPLEMENT_TOKEN, fallback WENDY_TEMPLATE_SYNC_TOKEN): fine-grained
+#   PAT scoped to ONLY 'contents:write' on this single repository. No other scopes
+#   or repos. Rotation: 90 days (automated reminder via pat-rotation-reminder.yml).
 #   MITIGATION: Server-side branch ruleset restricts PAT to refs/heads/ai/**
 #   branches only — PAT cannot push to main, develop, or any other branch.
 #   Runtime check verifies this ruleset is active before every push attempt.
 #   The PAT is used because GITHUB_TOKEN pushes do not trigger downstream CI.
+#   Per-workflow isolation: WENDY_AI_IMPLEMENT_TOKEN is dedicated to this workflow;
+#   if not yet created, it falls back to WENDY_TEMPLATE_SYNC_TOKEN. Creating the
+#   dedicated secret enables independent revocation and per-workflow audit trails
+#   in GitHub token usage logs without disrupting ai-pr-feedback.yml operations.
 #   ACCEPTED RISK: A workflow compromise before the branch-protection check
 #   could exfiltrate the PAT. Mitigations: supply-chain integrity pinning,
 #   OWNER/MEMBER-only gate, no actions from untrusted contributors in scope.
-#   ACCEPTED RISK: WENDY_TEMPLATE_SYNC_TOKEN is also used by ai-pr-feedback.yml.
-#   Both workflows have identical scope (contents:write, this repo, ai/**
-#   branches via ruleset) so separate PATs provide no blast-radius reduction.
-#   A single revocation event covers both workflows simultaneously.
 #
 # CLAUDE CODE INVOCATION:
 #   --allowedTools "Edit,MultiEdit"  EXCLUSIVE allowlist — all other tools
@@ -31,6 +31,12 @@ name: AI Implement Issue
 #   Post-run "Verify Claude did not touch protected paths" step enforces:
 #     (1) protected-file blocklist  (2) source-directory allowlist
 #     (3) edit-only invariant (no new files)  (4) extension blocklist
+#   ACCEPTED RISK: Path enforcement is architecturally post-hoc — Edit/MultiEdit
+#   writes files before the enforcement step runs. Mitigations: (1) enforcement
+#   REVERTS unauthorized files with git checkout -- . / git clean -fd before any
+#   staging; (2) unauthorized files are NEVER committed or pushed; (3) on ephemeral
+#   GitHub-hosted runners, git index corruption defeating revert is extremely
+#   unlikely; (4) no other step reads arbitrary files from the working tree.
 #
 # PROMPT INJECTION: issue title and body sanitized before LLM use.
 #
@@ -268,7 +274,7 @@ raise SystemExit(1)
       - name: Mask long-lived PAT secret
         # Mask at job start so the value never appears in any subsequent log line.
         env:
-          WENDY_PAT: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
+          WENDY_PAT: ${{ secrets.WENDY_AI_IMPLEMENT_TOKEN || secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
         run: echo "::add-mask::$WENDY_PAT"
 
       - name: React to command
@@ -517,7 +523,7 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # paths in some CLI versions; the invariant check below enforces the edit-only model.
           # Snapshot untracked files BEFORE Claude runs; saved so the dedicated
           # "Verify Claude did not touch protected paths" step can compare after.
-          git ls-files --others --exclude-standard | sort > "$RUNNER_TEMP/pre-run-untracked.txt"
+          git ls-files -z --others --exclude-standard | sort -z > "$RUNNER_TEMP/pre-run-untracked.txt"
           # ANTHROPIC_KEY_FILE is a file path (not the key value) — safe in cmdline.
           # The bash subshell reads the key via $(< file) shell assignment (no fork),
           # shreds the file, then exec-replaces itself with claude. The key value
@@ -567,10 +573,13 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
             git checkout -- . 2>/dev/null || true
             exit 1
           fi
-          # 2. Edit-only invariant: no new untracked files may appear after Claude runs
-          POST_RUN_UNTRACKED=$(git ls-files --others --exclude-standard | sort)
-          NEW_FILES=$(diff <(cat "$RUNNER_TEMP/pre-run-untracked.txt" 2>/dev/null || echo '') \
-            <(echo "$POST_RUN_UNTRACKED") | grep '^>' | sed 's/^> //' | head -5 || true)
+          # 2. Edit-only invariant: no new untracked files may appear after Claude runs.
+          # NUL-delimited comparison to safely handle filenames containing newlines.
+          git ls-files -z --others --exclude-standard | sort -z > "$RUNNER_TEMP/post-run-untracked.txt"
+          NEW_FILES=$(comm -z -23 \
+            <(sort -z < "$RUNNER_TEMP/post-run-untracked.txt") \
+            <(sort -z < "$RUNNER_TEMP/pre-run-untracked.txt" 2>/dev/null || printf '') \
+            | tr '\0' '\n' | head -5 || true)
           if [ -n "$NEW_FILES" ]; then
             echo "::error::Claude created new files (edit-only model violated) — reverting and aborting:"
             echo "$NEW_FILES"
@@ -706,7 +715,7 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # 'contents: write' on this repository (no other repos or permissions).
           # GITHUB_TOKEN cannot be used for push because pushes made by
           # GITHUB_TOKEN do not trigger subsequent workflow runs (CI).
-          TOKEN: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
+          TOKEN: ${{ secrets.WENDY_AI_IMPLEMENT_TOKEN || secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
           BRANCH: ${{ needs.gate.outputs.branch }}
           GH_TOKEN: ${{ github.token }}
         run: |
