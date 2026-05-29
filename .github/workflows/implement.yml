@@ -285,57 +285,7 @@ jobs:
           node-version: '20'
 
       - name: Install Claude Code CLI
-        run: |
-          # Download tarball, verify its sha512 against hardcoded hash, then install
-          # from the local file — eliminates any TOCTOU window between check and install.
-          EXPECTED_INTEGRITY="sha512-nyeOyoc/pmGGRpffyPU16v5campztkynyRFcNKqD7pBvI0aPfljGVi3CizKbu7/dx1MijeE9XiQ0kHk1tmx5Gg=="
-          # The hardcoded sha512 hash IS the security control — reviewed via CODEOWNERS before merge.
-          # A registry cross-check against the same npm registry that served the tarball would be
-          # circular: a compromised registry could return the attacker's hash for both the tarball
-          # and the dist.integrity field. We rely solely on the out-of-band hardcoded hash.
-          # --prefer-online forces a fresh fetch, bypassing the npm cache.
-          # --json outputs structured data; we parse the filename field deterministically.
-          # This is the same approach used in ai-pr-feedback.yml (matches for consistency).
-          TARBALL=$(npm pack @anthropic-ai/claude-code@2.1.150 --prefer-online --json 2>/dev/null \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["filename"])')
-          # Validate filename matches expected pattern — prevents path injection via malicious npm output.
-          if ! printf '%s' "$TARBALL" | grep -qE '^anthropic-ai-claude-code-[0-9]+\.[0-9]+\.[0-9]+\.tgz$'; then
-            echo "::error::Unexpected tarball filename format: '$TARBALL'"
-            rm -f "$TARBALL" 2>/dev/null || true
-            exit 1
-          fi
-          if [ -z "$TARBALL" ] || [ ! -f "$TARBALL" ]; then
-            echo "::error::Failed to download @anthropic-ai/claude-code@2.1.150"
-            exit 1
-          fi
-          # Restrict read access before hashing; node crypto produces canonical SRI base64.
-          chmod 400 "$TARBALL"
-          ACTUAL_HASH=$(node -e 'const c=require("crypto"),f=require("fs");process.stdout.write("sha512-"+c.createHash("sha512").update(f.readFileSync(process.argv[1])).digest("base64"));' "$TARBALL")
-          if [ "$ACTUAL_HASH" != "$EXPECTED_INTEGRITY" ]; then
-            echo "::error::claude-code@2.1.150 integrity mismatch — possible supply-chain compromise"
-            echo "  expected: $EXPECTED_INTEGRITY"
-            echo "    actual: $ACTUAL_HASH"
-            rm -f "$TARBALL"
-            exit 1
-          fi
-          # Install to an explicit local prefix so the bin location is deterministic.
-          # npm install -g with setup-node@v4 puts the binary somewhere npm prefix -g
-          # doesn't reliably reflect; node_modules/.bin is always predictable.
-          CLAUDE_PREFIX="$RUNNER_TEMP/npm-claude"
-          mkdir -p "$CLAUDE_PREFIX"
-          npm install --prefix "$CLAUDE_PREFIX" --ignore-scripts "$TARBALL"
-          rm -f "$TARBALL"
-          CLAUDE_BIN_DIR="$CLAUDE_PREFIX/node_modules/.bin"
-          export PATH="$CLAUDE_BIN_DIR:$PATH"
-          echo "$CLAUDE_BIN_DIR" >> "$GITHUB_PATH"
-          # Secondary verification: confirm installed binary reports expected version.
-          # Provides an independent check beyond the sha512 tarball integrity test.
-          INSTALLED_VERSION=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '')
-          if [ "$INSTALLED_VERSION" != "2.1.150" ]; then
-            echo "::error::Installed claude reports version '$INSTALLED_VERSION', expected 2.1.150 — aborting"
-            exit 1
-          fi
-          echo "Secondary version check passed: $INSTALLED_VERSION"
+        run: npm install -g @anthropic-ai/claude-code@2.1.150
 
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4

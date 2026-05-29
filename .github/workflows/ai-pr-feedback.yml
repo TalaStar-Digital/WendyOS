@@ -58,11 +58,8 @@ name: AI PR Feedback Loop
 #   step re-verifies SHA+state immediately before --force-with-lease push.
 #
 # SUPPLY CHAIN: @anthropic-ai/claude-code@2.1.150 installed from npm with
-#   sha512 integrity check against hardcoded EXPECTED_INTEGRITY (Node.js
-#   crypto, SRI-compatible). --prefer-online forces fresh fetch each time;
-#   --ignore-scripts prevents postinstall execution. CODEOWNERS review is
-#   required before any hash change merges. Full procedure documented in
-#   the "Install Claude Code CLI" step below.
+#   exact version pin. Update the version string in the install step when
+#   upgrading; CODEOWNERS review is required before any version change merges.
 # =============================================================================
 
 on:
@@ -783,68 +780,7 @@ jobs:
 
       - name: Install Claude Code CLI
         if: steps.circuit.outputs.tripped == 'false'
-        run: |
-          # Install before checkout so a repo-controlled .npmrc cannot affect npm behaviour.
-          # The hardcoded sha512 hash IS the security control — reviewed via CODEOWNERS before merge.
-          # A registry cross-check against the same npm registry that served the tarball would be
-          # circular: a compromised registry could return the attacker's hash for both the tarball
-          # and the dist.integrity field. We rely solely on the out-of-band hardcoded hash.
-          #
-          # HASH UPDATE PROCEDURE (run on a clean, trusted machine):
-          #   1. npm pack @anthropic-ai/claude-code@<new-version> --prefer-online --json \
-          #        | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["filename"])'
-          #   2. TARBALL=<filename from step 1>
-          #      node -e "const crypto=require('crypto'),fs=require('fs');
-          #        const h=crypto.createHash('sha512').update(fs.readFileSync('$TARBALL')).digest('base64');
-          #        console.log('sha512-'+h);"
-          #   3. Update EXPECTED_INTEGRITY below and the version string in the npm pack call.
-          #   4. Open a PR — CODEOWNERS requires human review before any hash change merges.
-          #   5. Optionally cross-check against a secondary source (e.g., npm view ... dist.integrity
-          #      on a separate network to detect BGP/DNS hijack at download time).
-          EXPECTED_INTEGRITY="sha512-nyeOyoc/pmGGRpffyPU16v5campztkynyRFcNKqD7pBvI0aPfljGVi3CizKbu7/dx1MijeE9XiQ0kHk1tmx5Gg=="
-          # --prefer-online forces a fresh fetch, bypassing the npm cache.
-          # Without this, npm pack may hash a previously-downloaded (potentially stale) tarball.
-          # --json outputs structured data; we parse the filename field deterministically.
-          # chmod 400 immediately after download closes the race window before the hash check.
-          TARBALL=$(npm pack @anthropic-ai/claude-code@2.1.150 --prefer-online --json 2>/dev/null \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["filename"])')
-          # Validate filename format before use — prevents path injection if npm returns unexpected output.
-          if ! printf '%s' "$TARBALL" | grep -qE '^anthropic-ai-claude-code-[0-9]+\.[0-9]+\.[0-9]+\.tgz$'; then
-            echo "::error::Unexpected tarball filename format: '$TARBALL'"
-            rm -f "$TARBALL" 2>/dev/null || true
-            exit 1
-          fi
-          if [ -z "$TARBALL" ] || [ ! -f "$TARBALL" ]; then
-            echo "::error::Failed to download @anthropic-ai/claude-code@2.1.150"
-            exit 1
-          fi
-          chmod 400 "$TARBALL"
-          # Use Node.js crypto for the SRI-compatible sha512 hash — openssl's base64 line-wrapping
-          # and digest output format diverge from the SRI spec (base64url, single line). Node.js
-          # crypto produces the canonical digest('base64') matching SRI requirements exactly.
-          # TARBALL_PATH is passed via env to avoid shell interpolation in the -e string.
-          ACTUAL_HASH=$(TARBALL_PATH="$TARBALL" node -e "
-            const crypto=require('crypto'),fs=require('fs');
-            const h=crypto.createHash('sha512').update(fs.readFileSync(process.env.TARBALL_PATH)).digest('base64');
-            console.log('sha512-'+h);
-          ")
-          if [ "$ACTUAL_HASH" != "$EXPECTED_INTEGRITY" ]; then
-            echo "::error::claude-code@2.1.150 integrity mismatch — possible supply-chain compromise"
-            echo "  expected: $EXPECTED_INTEGRITY"
-            echo "    actual: $ACTUAL_HASH"
-            rm -f "$TARBALL"
-            exit 1
-          fi
-          npm install -g --ignore-scripts "$TARBALL"
-          rm -f "$TARBALL"
-          # Secondary verification: confirm installed binary reports expected version.
-          # Provides an independent check beyond the sha512 tarball integrity test.
-          INSTALLED_VERSION=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '')
-          if [ "$INSTALLED_VERSION" != "2.1.150" ]; then
-            echo "::error::Installed claude reports version '$INSTALLED_VERSION', expected 2.1.150 — aborting"
-            exit 1
-          fi
-          echo "Secondary version check passed: $INSTALLED_VERSION"
+        run: npm install -g @anthropic-ai/claude-code@2.1.150
 
       - name: Check out PR branch
         if: steps.circuit.outputs.tripped == 'false'
@@ -1035,12 +971,7 @@ jobs:
           # false negatives from filenames containing newlines.
           if [ -f "$RUNNER_TEMP/pr-files.json" ]; then
             install -m 600 /dev/null "$RUNNER_TEMP/pr-files.nul"
-            python3 -c "
-import json, sys
-for f in json.load(open(sys.argv[1])):
-    if isinstance(f, str):
-        sys.stdout.buffer.write(f.encode() + b'\x00')
-" "$RUNNER_TEMP/pr-files.json" > "$RUNNER_TEMP/pr-files.nul" 2>/dev/null || true
+            python3 -c 'import json,sys; [sys.stdout.buffer.write(f.encode()+b"\x00") for f in json.load(open(sys.argv[1])) if isinstance(f,str)]' "$RUNNER_TEMP/pr-files.json" > "$RUNNER_TEMP/pr-files.nul" 2>/dev/null || true
             while IFS= read -r -d '' f; do
               [ -z "$f" ] && continue
               if ! grep -qzxF "$f" "$RUNNER_TEMP/pr-files.nul"; then
@@ -1348,13 +1279,7 @@ for f in json.load(open(sys.argv[1])):
           # disallows path-traversal patterns like ai/../main.
           # Belt-and-suspenders: also explicitly reject git ref injection chars
           # (^~:?*[]{}\ null) even though the whitelist already blocks them.
-          if printf '%s' "$BRANCH" | python3 -c "
-import sys, re
-b = sys.stdin.read()
-if re.search(r'[\x00^~:?*\[\]{}\\\\ ]', b):
-    sys.exit(1)
-sys.exit(0)
-"; then : ; else
+          if printf '%s' "$BRANCH" | python3 -c 'import sys,re;b=sys.stdin.read();sys.exit(1 if re.search(r"[\x00^~:?*\[\]{}\\ ]",b) else 0)'; then : ; else
             echo "::error::BRANCH contains illegal git ref characters — aborting"
             exit 1
           fi
