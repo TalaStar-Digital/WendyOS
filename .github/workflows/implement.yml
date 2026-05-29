@@ -505,10 +505,9 @@ jobs:
               _user_prompt=$(< "$USER_PROMPT_FILE")
               shred -u "$USER_PROMPT_FILE" 2>/dev/null || rm -f "$USER_PROMPT_FILE"
               unset USER_PROMPT_FILE
-              exec claude --print \
+              printf '%s\n' "$_user_prompt" | claude --print \
                 --allowedTools "Edit,MultiEdit,Read,Bash" \
-                --disallowedTools "Write,WebFetch,WebSearch,computer_use,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*" \
-                "$_user_prompt"
+                --disallowedTools "Write,WebFetch,WebSearch,computer_use,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*"
             ' \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt" || CLAUDE_EXIT=$?
