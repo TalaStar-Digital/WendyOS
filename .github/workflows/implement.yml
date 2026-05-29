@@ -424,6 +424,9 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # between Claude writing and the scrubber running with world-readable files.
           install -m 600 /dev/null "$RUNNER_TEMP/claude-output.txt"
           install -m 600 /dev/null "$RUNNER_TEMP/claude-stderr.txt"
+          # Snapshot untracked files BEFORE Claude runs so we can diff after.
+          # This detects new files even if they are later removed by Claude.
+          PRE_RUN_UNTRACKED=$(git ls-files --others --exclude-standard | sort)
           # Use env -i to limit Claude's visible environment to only what it needs.
           # This keeps workflow secrets out of /proc/self/environ for the claude process.
           # --allowedTools "Edit,MultiEdit" is an EXCLUSIVE allowlist — all other tools are
@@ -440,12 +443,15 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
             "$USER_PROMPT" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
-          # Invariant check: --allowedTools "Edit,MultiEdit" is an EXCLUSIVE list that
-          # blocks Write, preventing new-file creation. Belt-and-suspenders: abort if
-          # the invariant is violated (e.g., due to SDK bug or unexpected tool).
-          NEW_FILES=$(git ls-files --others --exclude-standard | head -5 || true)
+          # Invariant check: compare snapshot taken BEFORE Claude ran against current state.
+          # Detects any files Claude created (Edit on non-existent path, CLI bug, etc.).
+          # Running the check here (immediately after Claude exits, before any git add)
+          # ensures no new files can be staged or committed.
+          POST_RUN_UNTRACKED=$(git ls-files --others --exclude-standard | sort)
+          NEW_FILES=$(diff <(echo "$PRE_RUN_UNTRACKED") <(echo "$POST_RUN_UNTRACKED") \
+            | grep '^>' | sed 's/^> //' | head -5 || true)
           if [ -n "$NEW_FILES" ]; then
-            echo "::error::Claude created new files despite Write being blocked in --allowedTools AND --disallowedTools — aborting:"
+            echo "::error::Claude created new files (detected via pre/post snapshot) — aborting:"
             echo "$NEW_FILES"
             git clean -fd 2>/dev/null || true
             git checkout -- . 2>/dev/null || true
@@ -635,9 +641,12 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
             fi
           fi
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          # --force-with-lease aborts if the remote ref has moved since our ls-remote check,
+          # closing the race window for concurrent implement runs on the same issue.
+          # For a brand-new branch the lease expectation is "no remote ref", which is correct.
           env -i HOME="$HOME" PATH="$PATH" \
             GIT_ASKPASS="$ASKPASS_FILE" GIT_PUSH_TOKEN="$PUSH_TOKEN" \
-            git push --no-force \
+            git push --force-with-lease \
             "https://github.com/${GITHUB_REPOSITORY}.git" \
             "${BRANCH}"
           rm -f "$ASKPASS_FILE"
