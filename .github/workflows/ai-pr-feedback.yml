@@ -10,6 +10,10 @@ name: AI PR Feedback Loop
 #   Masked with ::add-mask:: as the very first step of the respond job.
 #   Supplied only via GIT_ASKPASS (never in URL or env). Rotation: 90 days.
 #   The PAT is required because GITHUB_TOKEN pushes do not trigger CI runs.
+#   ACCEPTED RISK: This PAT is also used by implement.yml. Both workflows have
+#   identical scope (contents:write, this repo, ai/** branches via ruleset) so
+#   separate PATs provide no blast-radius reduction — each would have the same
+#   capabilities. A single revocation event covers both workflows simultaneously.
 #
 # CLAUDE CODE INVOCATION:
 #   --allowedTools "Edit,MultiEdit"  EXCLUSIVE allowlist: Claude Code CLI blocks
@@ -22,17 +26,15 @@ name: AI PR Feedback Loop
 #     AskFollowupQuestion,mcp__*"  Belt-and-suspenders: explicit denial in
 #     addition to the allowlist, for defense-in-depth.
 #   env -i isolates environment (no GITHUB_TOKEN, no runner tokens)
-#   ACCEPTED RISK: ANTHROPIC_API_KEY is present in the parent shell's exported
-#     environment at step start (injected by the step env: block). We immediately
-#     unset it and move it to a shell-local var before the Claude invocation, so
-#     it is absent from the parent's /proc/<pid>/environ during the long-running
-#     call. ANTHROPIC_SYSTEM_PROMPT (containing the UUID sentinel) is visible in
-#     /proc/<claude-pid>/environ of the claude process to same-UID processes.
+#   ANTHROPIC_API_KEY is delivered to claude via a 600-mode temp file (not as a
+#     cmdline argument). The key is read inside a bash subshell via $(< file) —
+#     a shell builtin assignment that never appears in /proc/*/cmdline — then the
+#     file is shredded before exec. The key value never appears in any cmdline.
+#   ACCEPTED RISK (residual): ANTHROPIC_SYSTEM_PROMPT (containing the UUID
+#     sentinel) is visible in /proc/<claude-pid>/environ to same-UID processes.
 #     The sentinel's confidentiality cannot be guaranteed via env var delivery.
 #     On GitHub-hosted runners, no other same-UID process is spawned after the
 #     step starts; the runner agent itself does not inspect subprocess environ.
-#     Mitigation: Claude CLI does not support file-descriptor or named-pipe key/
-#     prompt delivery; env var is the only supported mechanism. Risk accepted.
 #     Primary security controls (allowlisted tools, post-Claude path checks,
 #     extension blocklist) do NOT depend on sentinel secrecy — they are independent
 #     defence-in-depth layers that hold even if the sentinel is compromised.
@@ -888,28 +890,33 @@ Feedback to address:
           # and runner tokens from reaching Claude via /proc/self/environ, on-disk auth
           # caches, or credential helpers.  ANTHROPIC_SYSTEM_PROMPT is used instead of
           # --system-prompt to keep instructions out of /proc/cmdline.
-          # Move ANTHROPIC_API_KEY to a shell-local (unexported) variable, then unset the
-          # exported env var. After this point ANTHROPIC_API_KEY no longer appears in the
-          # parent shell's /proc/<parent-pid>/environ for the duration of the Claude call.
-          # ACCEPTED RISK: _ANTHROPIC_KEY (below) is a shell-local var — not exported, so
-          # absent from /proc/environ. It IS briefly visible in /proc/<env-pid>/cmdline
-          # when the env -i assignment expands. ANTHROPIC_SYSTEM_PROMPT remains visible in
-          # /proc/self/environ of the claude process; sentinel is per-run random. Primary
-          # security controls (allowlisted tools, path checks, extension blocklist) do not
-          # depend on secrecy of these values — they are independent defence-in-depth layers.
+          # Deliver ANTHROPIC_API_KEY to claude via a 600-mode temp file, not as a
+          # cmdline argument. _ANTHROPIC_KEY is kept shell-local (unexported) solely
+          # for the post-run scrubber below.
           _ANTHROPIC_KEY="${ANTHROPIC_API_KEY}"
           unset ANTHROPIC_API_KEY
+          install -m 600 /dev/null "$RUNNER_TEMP/anthropic-key.txt"
+          printf '%s' "${_ANTHROPIC_KEY}" > "$RUNNER_TEMP/anthropic-key.txt"
           # Pre-create output files with restricted permissions — eliminates the race
           # window where unscrubbed content exists in world-readable files.
           install -m 600 /dev/null "$RUNNER_TEMP/claude-output.txt"
           install -m 600 /dev/null "$RUNNER_TEMP/claude-stderr.txt"
+          # ANTHROPIC_KEY_FILE is a file path (not the key value) — safe in cmdline.
+          # The bash subshell reads the key via $(< file) shell assignment (no fork),
+          # shreds the file, then exec-replaces itself with claude. The key value
+          # never appears in any /proc/*/cmdline.
           env -i HOME="$HOME" PATH="$PATH" \
-            ANTHROPIC_API_KEY="${_ANTHROPIC_KEY}" \
+            ANTHROPIC_KEY_FILE="$RUNNER_TEMP/anthropic-key.txt" \
             ANTHROPIC_SYSTEM_PROMPT="$SYSTEM_PROMPT" \
-            claude --print \
-            --allowedTools "Edit,MultiEdit" \
-            --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*" \
-            "$USER_PROMPT" \
+            bash -c '
+              ANTHROPIC_API_KEY=$(< "$ANTHROPIC_KEY_FILE") && export ANTHROPIC_API_KEY
+              shred -u "$ANTHROPIC_KEY_FILE" 2>/dev/null || rm -f "$ANTHROPIC_KEY_FILE"
+              unset ANTHROPIC_KEY_FILE
+              exec claude --print \
+                --allowedTools "Edit,MultiEdit" \
+                --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*" \
+                "$1"
+            ' _ "$USER_PROMPT" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
           # Scrub ANTHROPIC_API_KEY from artifact files BEFORE zeroing env vars.

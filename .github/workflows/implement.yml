@@ -16,6 +16,10 @@ name: AI Implement Issue
 #   ACCEPTED RISK: A workflow compromise before the branch-protection check
 #   could exfiltrate the PAT. Mitigations: supply-chain integrity pinning,
 #   OWNER/MEMBER-only gate, no actions from untrusted contributors in scope.
+#   ACCEPTED RISK: WENDY_TEMPLATE_SYNC_TOKEN is also used by ai-pr-feedback.yml.
+#   Both workflows have identical scope (contents:write, this repo, ai/**
+#   branches via ruleset) so separate PATs provide no blast-radius reduction.
+#   A single revocation event covers both workflows simultaneously.
 #
 # CLAUDE CODE INVOCATION:
 #   --allowedTools "Edit,MultiEdit"  EXCLUSIVE allowlist — all other tools
@@ -500,15 +504,13 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # between Claude writing and the scrubber running with world-readable files.
           install -m 600 /dev/null "$RUNNER_TEMP/claude-output.txt"
           install -m 600 /dev/null "$RUNNER_TEMP/claude-stderr.txt"
-          # Move ANTHROPIC_API_KEY to a shell-local (unexported) variable, then unset the
-          # exported env var so it no longer appears in parent shell's /proc/<pid>/environ
-          # for the duration of the Claude invocation.
-          # ACCEPTED RISK: _ANTHROPIC_KEY is a shell-local var — not exported, absent from
-          # /proc/environ. It IS briefly visible in /proc/<env-pid>/cmdline when the env -i
-          # assignment expands. Primary security controls (allowlisted tools, path checks,
-          # extension blocklist) are independent and do not rely on key secrecy.
+          # Deliver ANTHROPIC_API_KEY to claude via a 600-mode temp file, not as a
+          # cmdline argument. _ANTHROPIC_KEY is kept shell-local (unexported) solely
+          # for the post-run scrubber below.
           _ANTHROPIC_KEY="${ANTHROPIC_API_KEY}"
           unset ANTHROPIC_API_KEY
+          install -m 600 /dev/null "$RUNNER_TEMP/anthropic-key.txt"
+          printf '%s' "${_ANTHROPIC_KEY}" > "$RUNNER_TEMP/anthropic-key.txt"
           # Use env -i to limit Claude's visible environment to only what it needs.
           # --allowedTools "Edit,MultiEdit" is an EXCLUSIVE allowlist — all other tools are
           # blocked by the Claude Code CLI. The Edit tool CAN create files at non-existent
@@ -516,13 +518,22 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # Snapshot untracked files BEFORE Claude runs; saved so the dedicated
           # "Verify Claude did not touch protected paths" step can compare after.
           git ls-files --others --exclude-standard | sort > "$RUNNER_TEMP/pre-run-untracked.txt"
+          # ANTHROPIC_KEY_FILE is a file path (not the key value) — safe in cmdline.
+          # The bash subshell reads the key via $(< file) shell assignment (no fork),
+          # shreds the file, then exec-replaces itself with claude. The key value
+          # never appears in any /proc/*/cmdline.
           env -i HOME="$HOME" PATH="$PATH" \
-            ANTHROPIC_API_KEY="${_ANTHROPIC_KEY}" \
+            ANTHROPIC_KEY_FILE="$RUNNER_TEMP/anthropic-key.txt" \
             ANTHROPIC_SYSTEM_PROMPT="$SYSTEM_PROMPT" \
-            claude --print \
-            --allowedTools "Edit,MultiEdit" \
-            --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*" \
-            "$USER_PROMPT" \
+            bash -c '
+              ANTHROPIC_API_KEY=$(< "$ANTHROPIC_KEY_FILE") && export ANTHROPIC_API_KEY
+              shred -u "$ANTHROPIC_KEY_FILE" 2>/dev/null || rm -f "$ANTHROPIC_KEY_FILE"
+              unset ANTHROPIC_KEY_FILE
+              exec claude --print \
+                --allowedTools "Edit,MultiEdit" \
+                --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*" \
+                "$1"
+            ' _ "$USER_PROMPT" \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt"
           # Scrub API key from artifact files. ::add-mask:: protects runner logs; this scrubs files.
