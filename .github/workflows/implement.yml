@@ -488,14 +488,20 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           print(f'Prompts written (system: {len(system_prompt)} chars, user: {len(user_message)} chars)')
           PYEOF
 
-      - name: Run Claude Code
-        # ANTHROPIC_API_KEY is NOT in env: — key is delivered via inline ${{ }}
-        # expressions in the run block so it never appears in /proc/<pid>/environ.
+      - name: Write API key to temp file
+        # Dedicated step: the ONLY place the API key value appears in script text.
+        # The Run Claude Code step has no key in env: or script text — reads from file.
         run: |
-          # Mask the API key immediately. ${{ secrets.ANTHROPIC_API_KEY }} is
-          # substituted server-side into the script text — never assigned as an
-          # exported environment variable, so it never appears in /proc/<pid>/environ.
           echo "::add-mask::${{ secrets.ANTHROPIC_API_KEY }}"
+          install -m 600 /dev/null "$RUNNER_TEMP/anthropic-key.txt"
+          printf '%s' "${{ secrets.ANTHROPIC_API_KEY }}" > "$RUNNER_TEMP/anthropic-key.txt"
+
+      - name: Run Claude Code
+        # ANTHROPIC_API_KEY: NOT in env:, NOT in this step's script text.
+        # Key was written to a 600-mode temp file in the preceding step.
+        # ANTHROPIC_SYSTEM_PROMPT: delivered via SYSTEM_PROMPT_FILE — read inside
+        # the bash subshell, not as an env var value in the env -i invocation.
+        run: |
           # Read prompts into shell vars, then delete the files so Claude's Read
           # tool cannot access them (or any other sensitive RUNNER_TEMP content).
           # sentinel.txt is kept for the Parse PR metadata step to read.
@@ -516,12 +522,13 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # between Claude writing and the scrubber running with world-readable files.
           install -m 600 /dev/null "$RUNNER_TEMP/claude-output.txt"
           install -m 600 /dev/null "$RUNNER_TEMP/claude-stderr.txt"
-          # ANTHROPIC_API_KEY is written to a 600-mode temp file via inline ${{ }}
-          # expression — never an exported env var, never visible in /proc/<pid>/environ.
-          # _ANTHROPIC_KEY is shell-local (unexported) solely for the post-run scrubber.
-          install -m 600 /dev/null "$RUNNER_TEMP/anthropic-key.txt"
-          printf '%s' "${{ secrets.ANTHROPIC_API_KEY }}" > "$RUNNER_TEMP/anthropic-key.txt"
-          _ANTHROPIC_KEY="${{ secrets.ANTHROPIC_API_KEY }}"
+          # Read API key from pre-written file for scrubber (shell-local, unexported).
+          _ANTHROPIC_KEY=$(< "$RUNNER_TEMP/anthropic-key.txt")
+          # Write SYSTEM_PROMPT to a 600-mode temp file so env -i passes only the
+          # file path, not the content, to the bash subshell.
+          install -m 600 /dev/null "$RUNNER_TEMP/system-prompt-exec.txt"
+          printf '%s' "$SYSTEM_PROMPT" > "$RUNNER_TEMP/system-prompt-exec.txt"
+          unset SYSTEM_PROMPT
           install -m 600 /dev/null "$RUNNER_TEMP/user-prompt.txt"
           printf '%s' "$USER_PROMPT" > "$RUNNER_TEMP/user-prompt.txt"
           # Use env -i to limit Claude's visible environment to only what it needs.
@@ -531,18 +538,20 @@ process.stdout.write('sha512-'+c.createHash('sha512').update(f.readFileSync(proc
           # Snapshot untracked files BEFORE Claude runs; saved so the dedicated
           # "Verify Claude did not touch protected paths" step can compare after.
           git ls-files -z --others --exclude-standard | sort -z > "$RUNNER_TEMP/pre-run-untracked.txt"
-          # ANTHROPIC_KEY_FILE and USER_PROMPT_FILE are file paths — safe in cmdline.
-          # The bash subshell reads the key and prompt via $(< file) shell assignments
-          # (no fork), shreds the files, then exec-replaces itself with claude. Neither
-          # value ever appears in any /proc/*/cmdline.
+          # Only file PATHS are passed via env -i — no secret values in cmdline or
+          # parent-process environ. The bash subshell reads each value from its file,
+          # shreds the file, then exec-replaces itself with claude.
           env -i HOME="$HOME" PATH="$PATH" \
             ANTHROPIC_KEY_FILE="$RUNNER_TEMP/anthropic-key.txt" \
+            SYSTEM_PROMPT_FILE="$RUNNER_TEMP/system-prompt-exec.txt" \
             USER_PROMPT_FILE="$RUNNER_TEMP/user-prompt.txt" \
-            ANTHROPIC_SYSTEM_PROMPT="$SYSTEM_PROMPT" \
             bash -c '
               ANTHROPIC_API_KEY=$(< "$ANTHROPIC_KEY_FILE") && export ANTHROPIC_API_KEY
               shred -u "$ANTHROPIC_KEY_FILE" 2>/dev/null || rm -f "$ANTHROPIC_KEY_FILE"
               unset ANTHROPIC_KEY_FILE
+              ANTHROPIC_SYSTEM_PROMPT=$(< "$SYSTEM_PROMPT_FILE") && export ANTHROPIC_SYSTEM_PROMPT
+              shred -u "$SYSTEM_PROMPT_FILE" 2>/dev/null || rm -f "$SYSTEM_PROMPT_FILE"
+              unset SYSTEM_PROMPT_FILE
               _user_prompt=$(< "$USER_PROMPT_FILE")
               shred -u "$USER_PROMPT_FILE" 2>/dev/null || rm -f "$USER_PROMPT_FILE"
               unset USER_PROMPT_FILE
