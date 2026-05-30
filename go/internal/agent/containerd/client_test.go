@@ -63,7 +63,7 @@ func TestBuildContainerBaseEnvIncludesWendyHostname(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "wendyos-test-device.local" }
 
-	env := buildContainerBaseEnv()
+	env := buildContainerBaseEnv("demo-app")
 
 	want := "WENDY_HOSTNAME=wendyos-test-device.local"
 	for _, kv := range env {
@@ -79,11 +79,41 @@ func TestBuildContainerBaseEnvOmitsWendyHostnameWhenUnavailable(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "" }
 
-	env := buildContainerBaseEnv()
+	env := buildContainerBaseEnv("demo-app")
 
 	for _, kv := range env {
 		if len(kv) >= len("WENDY_HOSTNAME=") && kv[:len("WENDY_HOSTNAME=")] == "WENDY_HOSTNAME=" {
 			t.Errorf("env unexpectedly contains %q when device hostname is unresolvable", kv)
+		}
+	}
+}
+
+func TestBuildContainerBaseEnvIncludesAppID(t *testing.T) {
+	old := deviceHostnameWithSuffix
+	t.Cleanup(func() { deviceHostnameWithSuffix = old })
+	deviceHostnameWithSuffix = func() string { return "" }
+
+	env := buildContainerBaseEnv("demo-app")
+
+	want := "WENDY_APP_ID=demo-app"
+	for _, kv := range env {
+		if kv == want {
+			return
+		}
+	}
+	t.Errorf("env missing %q; got %v", want, env)
+}
+
+func TestBuildContainerBaseEnvOmitsAppIDWhenEmpty(t *testing.T) {
+	old := deviceHostnameWithSuffix
+	t.Cleanup(func() { deviceHostnameWithSuffix = old })
+	deviceHostnameWithSuffix = func() string { return "" }
+
+	env := buildContainerBaseEnv("")
+
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "WENDY_APP_ID=") {
+			t.Errorf("env unexpectedly contains %q when appID is empty", kv)
 		}
 	}
 }
@@ -200,6 +230,97 @@ func TestInjectOTELEnvInvalidPortFallsBackToDefault(t *testing.T) {
 		}
 	}
 	t.Errorf("expected fallback to default port; got %v", env)
+}
+
+func hostNetworkCfgWithID(appID string) *appconfig.AppConfig {
+	cfg := hostNetworkCfg()
+	cfg.AppID = appID
+	return cfg
+}
+
+func TestInjectOTELEnvSetsServiceNameAndResourceAttrs(t *testing.T) {
+	env := injectOTELEnvIfNeeded(nil, hostNetworkCfgWithID("my-app"))
+
+	wantService := false
+	wantAttrs := false
+	for _, kv := range env {
+		switch kv {
+		case "OTEL_SERVICE_NAME=my-app":
+			wantService = true
+		case "OTEL_RESOURCE_ATTRIBUTES=wendy.app.name=my-app":
+			wantAttrs = true
+		}
+	}
+	if !wantService {
+		t.Errorf("env missing OTEL_SERVICE_NAME=my-app; got %v", env)
+	}
+	if !wantAttrs {
+		t.Errorf("env missing OTEL_RESOURCE_ATTRIBUTES=wendy.app.name=my-app; got %v", env)
+	}
+}
+
+func TestInjectOTELEnvSetsIdentityWhenEndpointPreset(t *testing.T) {
+	// An image that presets only the endpoint should still get identity vars so
+	// its direct OTLP logs remain filterable by `wendy device logs --app <id>`.
+	existing := []string{"OTEL_EXPORTER_OTLP_ENDPOINT=http://custom-collector:4317"}
+
+	env := injectOTELEnvIfNeeded(existing, hostNetworkCfgWithID("my-app"))
+
+	endpointCount, wantService, wantAttrs := 0, false, false
+	for _, kv := range env {
+		switch {
+		case strings.HasPrefix(kv, "OTEL_EXPORTER_OTLP_ENDPOINT="):
+			endpointCount++
+		case kv == "OTEL_SERVICE_NAME=my-app":
+			wantService = true
+		case kv == "OTEL_RESOURCE_ATTRIBUTES=wendy.app.name=my-app":
+			wantAttrs = true
+		}
+	}
+	if endpointCount != 1 {
+		t.Errorf("expected image endpoint preserved (1 entry), got %d: %v", endpointCount, env)
+	}
+	if !wantService || !wantAttrs {
+		t.Errorf("expected identity vars injected alongside preset endpoint; got %v", env)
+	}
+}
+
+func TestInjectOTELEnvOmitsServiceNameWhenAppIDEmpty(t *testing.T) {
+	env := injectOTELEnvIfNeeded(nil, hostNetworkCfgWithID(""))
+
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "OTEL_SERVICE_NAME=") ||
+			strings.HasPrefix(kv, "OTEL_RESOURCE_ATTRIBUTES=") {
+			t.Errorf("env unexpectedly contains %q when appID is empty", kv)
+		}
+	}
+}
+
+func TestInjectOTELEnvDoesNotOverrideExistingServiceName(t *testing.T) {
+	existing := []string{
+		"OTEL_SERVICE_NAME=custom",
+		"OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod",
+	}
+
+	env := injectOTELEnvIfNeeded(existing, hostNetworkCfgWithID("my-app"))
+
+	serviceCount, attrCount := 0, 0
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "OTEL_SERVICE_NAME=") {
+			serviceCount++
+		}
+		if strings.HasPrefix(kv, "OTEL_RESOURCE_ATTRIBUTES=") {
+			attrCount++
+		}
+	}
+	if serviceCount != 1 || attrCount != 1 {
+		t.Errorf("expected image-set OTEL_SERVICE_NAME/OTEL_RESOURCE_ATTRIBUTES to be preserved; got %v", env)
+	}
+	for _, kv := range env {
+		if kv == "OTEL_SERVICE_NAME=my-app" || kv == "OTEL_RESOURCE_ATTRIBUTES=wendy.app.name=my-app" {
+			t.Errorf("image-set OTel resource values were overridden; got %v", env)
+		}
+	}
 }
 
 func TestHasHostNetworkEntitlementEmptyModeIsHost(t *testing.T) {
