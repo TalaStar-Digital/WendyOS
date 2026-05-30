@@ -560,18 +560,9 @@ jobs:
             <(sort -z < "$RUNNER_TEMP/post-run-untracked.txt") \
             <(sort -z < "$RUNNER_TEMP/pre-run-untracked.txt" 2>/dev/null || printf '') \
             | tr '\0' '\n' | head -20 || true)
-          BAD_NEW_FILES=""
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            # Allow new test files in allowed source directories
-            if printf '%s' "$f" | grep -qE '^(go/|swift/|Sources/|Tests/|tests/)' && \
-               printf '%s' "$f" | grep -qE '(_test\.go|_test\.swift|Test\.swift|Tests\.swift)$'; then
-              continue
-            fi
-            BAD_NEW_FILES="$BAD_NEW_FILES
-$f"
-          done <<< "$NEW_FILES"
-          BAD_NEW_FILES="${BAD_NEW_FILES#?}"  # strip leading newline
+          # Allow new test files inside allowed source directories; block everything else.
+          BAD_NEW_FILES=$(printf '%s\n' "$NEW_FILES" | grep -v '^$' | grep -vE \
+            '^(go|swift|Sources|Tests|tests)/.*(_test\.go|_test\.swift|Tests?\.swift)$' || true)
           if [ -n "$BAD_NEW_FILES" ]; then
             echo "::error::Claude created new non-test files (edit-only model violated) — reverting and aborting:"
             echo "$BAD_NEW_FILES"
