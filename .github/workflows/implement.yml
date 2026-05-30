@@ -618,7 +618,10 @@ jobs:
           if [ "$UNPUSHED" -gt 0 ]; then
             git reset --soft origin/main
           fi
-          git add -A
+          # Stage only changes to already-tracked files (git add -u).
+          # git add -A would also pick up untracked symlinks (e.g. docs/, skill dirs)
+          # that exist in the working tree but aren't in the index, causing false positives.
+          git add -u
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -638,8 +641,9 @@ jobs:
               exit 1
             fi
           done < <(git diff --cached -z --name-only)
-          # Block any staged symlinks (check git index directly; mode 120000 = symlink)
-          SYMLINKS=$(git ls-files -s | awk '$1 ~ /^120/ {print $4}' || true)
+          # Block newly staged symlinks — check the diff, not the full index, so pre-existing
+          # tracked symlinks in the repo don't trigger a false positive.
+          SYMLINKS=$(git diff --cached --raw | awk '$3 ~ /120000/ {print $NF}' || true)
           if [ -n "$SYMLINKS" ]; then
             echo "::error::AI staged symlinks — aborting commit:"
             echo "$SYMLINKS"
