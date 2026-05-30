@@ -391,7 +391,8 @@ jobs:
           system_prompt = f"""You are an engineer working on WendyOS, an embedded/edge OS and CLI tool that deploys containerised apps to IoT devices.
 
           Implement the GitHub issue provided in the user message by editing existing source files.
-          Do NOT create new files — only modify files that already exist in the repository.
+          You may create new test files (files ending in _test.go, _test.swift, Test.swift) inside the allowed source directories if the implementation warrants it.
+          Do NOT create any other new files.
           Do NOT run any git commands (commit, cherry-pick, push, merge, rebase, etc.) — the CI handles all git operations after you finish editing.
 
           CRITICAL: Never ask for clarification, never refuse to implement, and never wait for more information.
@@ -551,16 +552,29 @@ jobs:
             git checkout -- . 2>/dev/null || true
             exit 1
           fi
-          # 2. Edit-only invariant: no new untracked files may appear after Claude runs.
-          # NUL-delimited comparison to safely handle filenames containing newlines.
+          # 2. Edit-only invariant: no new untracked files may appear after Claude runs,
+          # EXCEPT new test files inside the allowed source directories — adding tests
+          # alongside an implementation is expected and desirable.
           git ls-files -z --others --exclude-standard | sort -z > "$RUNNER_TEMP/post-run-untracked.txt"
           NEW_FILES=$(comm -z -23 \
             <(sort -z < "$RUNNER_TEMP/post-run-untracked.txt") \
             <(sort -z < "$RUNNER_TEMP/pre-run-untracked.txt" 2>/dev/null || printf '') \
-            | tr '\0' '\n' | head -5 || true)
-          if [ -n "$NEW_FILES" ]; then
-            echo "::error::Claude created new files (edit-only model violated) — reverting and aborting:"
-            echo "$NEW_FILES"
+            | tr '\0' '\n' | head -20 || true)
+          BAD_NEW_FILES=""
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            # Allow new test files in allowed source directories
+            if printf '%s' "$f" | grep -qE '^(go/|swift/|Sources/|Tests/|tests/)' && \
+               printf '%s' "$f" | grep -qE '(_test\.go|_test\.swift|Test\.swift|Tests\.swift)$'; then
+              continue
+            fi
+            BAD_NEW_FILES="$BAD_NEW_FILES
+$f"
+          done <<< "$NEW_FILES"
+          BAD_NEW_FILES="${BAD_NEW_FILES#?}"  # strip leading newline
+          if [ -n "$BAD_NEW_FILES" ]; then
+            echo "::error::Claude created new non-test files (edit-only model violated) — reverting and aborting:"
+            echo "$BAD_NEW_FILES"
             git clean -fd 2>/dev/null || true
             git checkout -- . 2>/dev/null || true
             exit 1
