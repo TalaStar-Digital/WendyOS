@@ -643,7 +643,7 @@ jobs:
           done < <(git diff --cached -z --name-only)
           # Block newly staged symlinks — check the diff, not the full index, so pre-existing
           # tracked symlinks in the repo don't trigger a false positive.
-          SYMLINKS=$(git diff --cached --raw | awk '$3 ~ /120000/ {print $NF}' || true)
+          SYMLINKS=$(git diff --cached --raw | awk '$1 ~ /^:120000/ || $2 == "120000" {print $NF}' || true)
           if [ -n "$SYMLINKS" ]; then
             echo "::error::AI staged symlinks — aborting commit:"
             echo "$SYMLINKS"
