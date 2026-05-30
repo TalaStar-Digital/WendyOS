@@ -335,7 +335,7 @@ jobs:
               text = unicodedata.normalize('NFKC', text)
               # Strip Unicode direction-override, zero-width, soft-hyphen (U+00AD),
               # CGJ (U+034F), ZWJ (U+200D), Hangul filler (U+3164), tag block, BOM
-              text = re.sub(r'[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\u3164\ue0000-\ue007f\ufeff]', '', text)
+              text = re.sub('[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\u3164\U000E0000-\U000E007F\ufeff]', '', text)
               # Destructive fence stripping — prevents nested code-block injection
               text = re.sub(r'`{3,}', '[fence]', text)
               text = re.sub(r'~{3,}', '[fence]', text)
@@ -807,7 +807,7 @@ jobs:
                   prev = text
                   text = html.unescape(text)
               text = unicodedata.normalize('NFKC', text)
-              text = re.sub(r'[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\u3164\ue0000-\ue007f\ufeff]', '', text)
+              text = re.sub('[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\u3164\U000E0000-\U000E007F\ufeff]', '', text)
               text = re.sub(r'`{3,}', '[fence]', text)
               text = re.sub(r'~{3,}', '[fence]', text)
               text = re.sub(r'<[^>]{0,4000}>', '[tag]', text)
