@@ -442,7 +442,7 @@ jobs:
           # Use piped jq with --slurp so all paginated pages are merged before filtering;
           # gh api --jq runs per-page and would emit multiple timestamps with --paginate.
           CONTINUE_TS=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
-            | jq --slurp '
+            | jq -r --slurp '
               (add // []) |
               [ .[]
                 | select(.body | test("(?m)^\\r?/continue(\\s|$)"))

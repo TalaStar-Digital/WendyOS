@@ -92,15 +92,18 @@ jobs:
             | jq -r '[.check_runs[] | select(.status == "in_progress" or .status == "queued") | .name] | join(",")')
 
           # Count active (non-outdated) inline bot comments; position is null when the diff moves on.
-          BOT_INLINE=$(gh api "repos/$REPO/pulls/$PR_NUMBER/comments" \
-            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.position != null)] | length' \
-            2>/dev/null || echo "0")
+          # --paginate + jq --slurp ensures all pages are merged before counting.
+          BOT_INLINE=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/comments" \
+            2>/dev/null \
+            | jq --slurp '(add // []) | [.[] | select(.user.login == "github-actions[bot]") | select(.position != null)] | length' \
+            || echo "0")
 
           # Count bot reviews with CHANGES_REQUESTED or a non-empty COMMENTED body.
-          BOT_REVIEWS=$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" \
-            --jq '[.[] | select(.user.login == "github-actions[bot]") |
+          BOT_REVIEWS=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+            2>/dev/null \
+            | jq --slurp '(add // []) | [.[] | select(.user.login == "github-actions[bot]") |
                    select(.state == "CHANGES_REQUESTED" or (.state == "COMMENTED" and (.body // "") != ""))] | length' \
-            2>/dev/null || echo "0")
+            || echo "0")
 
           # Validate integers before arithmetic to avoid word-splitting on unexpected output.
           [[ "$BOT_INLINE"   =~ ^[0-9]+$ ]] || BOT_INLINE=0
