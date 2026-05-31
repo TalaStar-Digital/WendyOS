@@ -584,12 +584,20 @@ func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.
 			// point at the mTLS port), then fall back to port+1 (the normal case
 			// where discovery returns the plaintext port and mTLS is port+1).
 			mtlsAddrs := []string{plaintextAddr, hostPort(host, port+1)}
-			// Track TLS/non-TLS failures from index 1+ only (the dedicated mTLS port).
-			// Index 0 is plaintextAddr, which is probed speculatively; probing a plaintext
-			// port with TLS predictably gives a TLS-looking error ("error reading server
-			// preface: tls: ...") and a closed plaintext port gives connection refused.
-			// Neither is a reliable signal about whether the mTLS port rejected the cert.
-			var mtlsPortTLSFails, mtlsPortNonTLSFails int
+			// Two-bucket tracking per address index:
+			//
+			//   plaintextAddrCertReject — plaintextAddr itself was a TLS endpoint that
+			//   rejected our cert (tunnel/mTLS-only-discovery case where index 0 IS
+			//   already the mTLS port). isCertRejectionError only fires on server-sent
+			//   TLS alerts, not on "server sent non-TLS preface" errors from plaintext ports.
+			//
+			//   mtlsPortCertFails / mtlsPortNonCertFails — cert-rejection vs. other
+			//   failures at port+1 (the dedicated mTLS port in the normal case).
+			//
+			// Suppress the plaintext fallback if plaintextAddr itself was rejected, OR if
+			// all port+1 probe failures were cert rejections (none were just "unreachable").
+			var plaintextAddrCertReject bool
+			var mtlsPortCertFails, mtlsPortNonCertFails int
 			for addrIdx, mtlsAddr := range mtlsAddrs {
 				for i := range allCerts {
 					conn, tlsErr := grpcclient.ConnectWithTLS(ctx, mtlsAddr, &allCerts[i])
@@ -612,19 +620,20 @@ func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.
 						fmt.Fprintf(os.Stderr, "[tls-debug] GetAgentVersion(%s) error: %v\n", mtlsAddr, probeErr)
 					}
 					conn.Close()
-					if addrIdx > 0 {
-						if isTLSHandshakeError(probeErr) {
-							mtlsPortTLSFails++
+					if addrIdx == 0 {
+						if isCertRejectionError(probeErr) {
+							plaintextAddrCertReject = true
+						}
+					} else {
+						if isCertRejectionError(probeErr) {
+							mtlsPortCertFails++
 						} else {
-							mtlsPortNonTLSFails++
+							mtlsPortNonCertFails++
 						}
 					}
 				}
 			}
-			// Surface a TLS diagnostic only when every probe against the dedicated mTLS
-			// port (port+1) failed with a handshake error — no non-TLS failures that
-			// would indicate the port is simply unreachable.
-			if mtlsPortTLSFails > 0 && mtlsPortNonTLSFails == 0 {
+			if plaintextAddrCertReject || (mtlsPortCertFails > 0 && mtlsPortNonCertFails == 0) {
 				return nil, fmt.Errorf("TLS handshake rejected by device (possible clock skew or cert mismatch).\n  Check the device clock: ssh wendy@<host> 'timedatectl status'\n  For full TLS details rerun with WENDY_TLS_DEBUG=1")
 			}
 		}
@@ -632,15 +641,18 @@ func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.
 	return grpcclient.Connect(ctx, plaintextAddr)
 }
 
-// isTLSHandshakeError reports whether a gRPC probe error originates from a TLS
-// handshake failure rather than a plain TCP connectivity problem.
-func isTLSHandshakeError(err error) bool {
+// isCertRejectionError reports whether a gRPC probe error is a server-sent TLS
+// alert rejecting the client certificate, as distinct from the client failing to
+// complete the handshake because the server isn't a TLS endpoint at all.
+// Matches "remote error: tls:" (server sent an alert) and other cert-specific
+// signals; deliberately excludes "tls: first record does not look like a TLS
+// handshake" (plaintext server probed with TLS) and plain transport errors.
+func isCertRejectionError(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "tls:") ||
-		strings.Contains(msg, "bad certificate") ||
+	return strings.Contains(msg, "remote error: tls:") ||
 		strings.Contains(msg, "authentication handshake failed") ||
 		strings.Contains(msg, "certificate required")
 }

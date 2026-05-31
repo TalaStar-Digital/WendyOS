@@ -6,7 +6,6 @@ import (
 	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
-	"strings"
 	"time"
 
 	circlSign "github.com/cloudflare/circl/sign"
@@ -188,15 +187,10 @@ func logCertRejection(logger *zap.Logger, leaf *x509.Certificate, err error) {
 		zap.Error(err),
 	}
 	msg := "mTLS client certificate rejected"
-	// "not yet valid" comes from Go's x509 verifier (ECDSA path);
-	// "not valid at current time" comes from verifyMLDSAClientCert (ML-DSA path).
-	// Also check NotBefore directly so future error-message changes don't miss it.
-	errMsg := err.Error()
-	clockSkew := strings.Contains(errMsg, "not yet valid") ||
-		strings.Contains(errMsg, "not valid at current time") ||
-		strings.Contains(errMsg, "certificate has expired or is not yet valid") ||
-		time.Now().Before(leaf.NotBefore)
-	if clockSkew {
+	// Only hint at clock skew when the device clock is behind the cert's NotBefore.
+	// String-matching on the error text would also fire for expired certs, pointing
+	// operators at the wrong remediation (NTP sync won't help an expired cert).
+	if time.Now().Before(leaf.NotBefore) {
 		msg += ": certificate not yet valid — device clock may be skewed; check NTP sync with: timedatectl status"
 	}
 	logger.Warn(msg, fields...)
