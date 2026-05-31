@@ -126,7 +126,6 @@ Flags can be provided progressively — omitted values trigger interactive picke
 	return cmd
 }
 
-// runOSInstallDirect writes a local image file to the specified drive without interactive prompts.
 func runOSInstallDirect(imagePath string, driveID string, force bool, yesOverwriteInternal bool) error {
 	// Verify the image file exists.
 	if _, err := os.Stat(imagePath); err != nil {
@@ -604,12 +603,6 @@ func externalDrivePickerItems(drives []drive) []tui.PickerItem {
 	return items
 }
 
-// throttledProgress returns a sender that forwards ProgressUpdateMsg to p at
-// most once per minInterval. Bubble Tea ingests every Send into a buffered
-// channel and SetPercent kicks off a cascade of animation FrameMsgs, so a
-// busy I/O loop posting updates per chunk can pile up enough work to slow
-// the I/O loop itself. The terminal can't usefully render faster than the
-// throttle rate anyway, and a trailing ProgressDoneMsg always renders 100%.
 func throttledProgress(p *tea.Program, minInterval time.Duration) func(written, total int64) {
 	var lastNanos atomic.Int64
 	return func(written, total int64) {
@@ -828,8 +821,6 @@ func downloadImage(img *imageInfo) (string, error) {
 	return tmpFile.Name(), nil
 }
 
-// osCacheDir returns the OS image cache directory, e.g.
-// ~/Library/Caches/wendy/os-images (macOS) or ~/.cache/wendy/os-images (Linux).
 func osCacheDir() (string, error) {
 	base, err := config.CacheDir()
 	if err != nil {
@@ -842,8 +833,6 @@ func osCacheDir() (string, error) {
 	return dir, nil
 }
 
-// osCachedImagePath returns the expected cache path for a device+version image.
-// Format: <cache>/os-images/<device>-<version>.img
 func osCachedImagePath(deviceKey, version string) (string, error) {
 	// Sanitize to prevent path traversal from user-supplied --version flag.
 	safeDevice := filepath.Base(deviceKey)
@@ -860,8 +849,6 @@ func osCachedImagePath(deviceKey, version string) (string, error) {
 	return filepath.Join(dir, fmt.Sprintf("%s-%s.img", safeDevice, safeVersion)), nil
 }
 
-// osCachedZipPath returns the expected cache path for a device+version zip.
-// Format: <cache>/os-images/<device>-<version>.zip
 func osCachedZipPath(deviceKey, version string) (string, error) {
 	safeDevice := filepath.Base(deviceKey)
 	safeVersion := filepath.Base(version)
@@ -877,8 +864,6 @@ func osCachedZipPath(deviceKey, version string) (string, error) {
 	return filepath.Join(dir, fmt.Sprintf("%s-%s.zip", safeDevice, safeVersion)), nil
 }
 
-// zipReadCloser wraps a zip.ReadCloser and its entry's ReadCloser so both
-// are released with a single Close call.
 type zipReadCloser struct {
 	archive *zip.ReadCloser
 	entry   io.ReadCloser
@@ -935,9 +920,6 @@ func streamZipImageEntry(zipPath string) (io.ReadCloser, int64, error) {
 	return nil, 0, fmt.Errorf("no .img, .raw, or .wic file found in zip archive")
 }
 
-// resolveOSImage returns the path to a cached file ready for streaming.
-// For zip URLs: checks legacy .img cache, then .zip cache, then downloads.
-// For non-zip URLs: checks legacy .img cache, then downloads the img directly.
 func resolveOSImage(deviceKey string, img *imageInfo) (string, error) {
 	isZip := strings.HasSuffix(strings.ToLower(img.DownloadURL), ".zip")
 
@@ -1278,9 +1260,6 @@ var promptDeviceName = func(prompt, hint string, validate tui.ValidateFunc) (str
 	return tui.PromptText(prompt, hint, validate)
 }
 
-// resolveDeviceName returns the device name to pre-configure on first boot.
-// If flagName is set it is validated and returned directly. In interactive mode
-// the user is prompted; an empty response skips naming (auto-generated on device).
 func resolveDeviceName(flagName string) (string, error) {
 	if flagName != "" {
 		if err := validateDeviceName(flagName); err != nil {
@@ -1333,8 +1312,6 @@ func confirmOverwriteInternalDrive(d drive, force bool, yesOverwriteInternal boo
 }
 
 // provisionConfigPartition downloads the latest stable arm64 wendy-agent binary
-// and writes it (along with zero or more WiFi credentials and an optional
-// device name) to the config partition on d.
 func provisionConfigPartition(d drive, creds []wendyconf.WifiCredential, deviceName string, provisioningJSON []byte) error {
 	release, err := fetchAgentRelease(false)
 	if err != nil {

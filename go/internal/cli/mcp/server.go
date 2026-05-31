@@ -23,7 +23,6 @@ import (
 // ConnectFunc connects to a wendy agent at the given address (host:port).
 type ConnectFunc func(ctx context.Context, address string) (*grpcclient.AgentConnection, error)
 
-// mcpServer holds active connection state and implements all MCP tool handlers.
 type mcpServer struct {
 	cfg           *config.Config
 	connectFn     ConnectFunc
@@ -34,8 +33,6 @@ type mcpServer struct {
 	mu            sync.RWMutex
 }
 
-// New creates a new mcpServer. connectFn is called by device_connect; pass nil
-// to disable dynamic connection (useful in tests that set conn directly).
 func New(cfg *config.Config, connectFn ConnectFunc) *mcpServer {
 	return &mcpServer{
 		cfg:           cfg,
@@ -45,7 +42,6 @@ func New(cfg *config.Config, connectFn ConnectFunc) *mcpServer {
 	}
 }
 
-// GetConn returns the current active connection (nil if not connected).
 func (s *mcpServer) GetConn() *grpcclient.AgentConnection {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -72,7 +68,6 @@ func (s *mcpServer) SetConnType(t string) {
 	s.connType = t
 }
 
-// GetConnType returns the transport type of the active connection.
 func (s *mcpServer) GetConnType() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -120,7 +115,6 @@ func (s *mcpServer) Start(ctx context.Context) error {
 	return server.ServeStdio(srv)
 }
 
-// errNotConnected returns a tool error result when no device is connected.
 func errNotConnected() *mcpgo.CallToolResult {
 	return mcpgo.NewToolResultError("no device connected — use device_connect first")
 }
@@ -146,7 +140,6 @@ func intParam(req mcpgo.CallToolRequest, name string, defaultVal int) int {
 // registerContainerMCPTools scans running containers for mcp_port > 0 and
 // registers each container's tools on srv, prefixed with the app name.
 // Errors per-container are warnings; they do not prevent the session from starting.
-// It returns a slice of cleanup functions that must be called when the server stops.
 func (s *mcpServer) registerContainerMCPTools(ctx context.Context, srv *server.MCPServer) []func() {
 	conn := s.GetConn()
 	if conn == nil {

@@ -13,11 +13,6 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-// NewTLSConfig creates a TLS config from PEM-encoded certificate, chain, and private key.
-// The certificate and chain are concatenated to form the full server certificate chain.
-// Client certificates are required and verified against the chain as a CA pool.
-// ML-DSA (post-quantum) signed certificates are handled via a custom VerifyPeerCertificate
-// callback because Go's crypto/x509 does not natively support ML-DSA signature verification.
 func NewTLSConfig(certPEM, chainPEM, keyPEM string) (*tls.Config, error) {
 	if chainPEM == "" {
 		return nil, fmt.Errorf("CA chain PEM is required to verify client certificates; device may need to be re-provisioned")
@@ -65,8 +60,6 @@ func NewTLSConfig(certPEM, chainPEM, keyPEM string) (*tls.Config, error) {
 	}, nil
 }
 
-// NewServer creates a gRPC server with mTLS credentials.
-// Additional gRPC server options can be passed and will be applied alongside the TLS credentials.
 func NewServer(certPEM, chainPEM, keyPEM string, extraOpts ...grpc.ServerOption) (*grpc.Server, error) {
 	tlsConfig, err := NewTLSConfig(certPEM, chainPEM, keyPEM)
 	if err != nil {

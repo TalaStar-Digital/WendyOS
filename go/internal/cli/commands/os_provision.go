@@ -29,8 +29,6 @@ type preProvisionedState struct {
 	ChainPEM  string `json:"chainPem,omitempty"`
 }
 
-// PreEnrollDialer creates a gRPC connection for pre-enrollment.
-// Tests replace this with a dialer that connects to a local fake server.
 type PreEnrollDialer func(ctx context.Context, addr string, opt grpc.DialOption) (*grpc.ClientConn, error)
 
 func defaultPreEnrollDialer(_ context.Context, addr string, opt grpc.DialOption) (*grpc.ClientConn, error) {
@@ -130,14 +128,6 @@ type psPartition struct {
 	Size            int64   `json:"Size"`
 }
 
-// parseConfigPartition returns the partition number whose FAT32 filesystem
-// label is "config" from the JSON output of the Windows partition-listing
-// script. Lives in the platform-agnostic file so its tests run on the
-// Darwin/Linux host CI without a Windows runner.
-//
-// PowerShell emits a single object (not an array) when the pipeline yields
-// one row, so the parser accepts both shapes. Label matching ignores case
-// and FAT32's 11-char whitespace padding.
 func parseConfigPartition(jsonBytes []byte) (int, error) {
 	trimmed := strings.TrimSpace(string(jsonBytes))
 	if trimmed == "" {
@@ -186,8 +176,6 @@ func provisioningRequired(creds []wendyconf.WifiCredential, deviceName string, p
 	return len(creds) > 0 || deviceName != "" || len(provisioningJSON) > 0
 }
 
-// writeConfigFiles writes the agent binary, optional wendy.conf, and optional
-// provisioning.json to mountPoint.
 func writeConfigFiles(mountPoint string, agentBinary []byte, creds []wendyconf.WifiCredential, deviceName string, provisioningJSON []byte) error {
 	binPath := filepath.Join(mountPoint, "wendy-agent")
 	if err := os.WriteFile(binPath, agentBinary, 0o755); err != nil {

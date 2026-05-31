@@ -40,8 +40,6 @@ var execCommandContext = exec.CommandContext
 
 const linuxContainersOnMacsUnsupportedMessage = "Linux containers aren't supported on Macs yet. Support is planned for a future release. For now, deploy a native macOS app (platform: darwin) or target a Linux/WendyOS device."
 
-// dimWriter writes each line rendered through cliStyle (dim/background).
-// Incomplete lines are buffered until a newline or Flush is called.
 type dimWriter struct {
 	buf strings.Builder
 }
@@ -388,7 +386,6 @@ func createContainerWithProgress(ctx context.Context, svc agentpb.WendyContainer
 	return nil
 }
 
-// runOptions holds the parsed flags for the run command.
 type runOptions struct {
 	buildType            string
 	dockerfile           string
@@ -1417,11 +1414,6 @@ func waitForReadiness(ctx context.Context, cfg *appconfig.ReadinessConfig, hostn
 	}
 }
 
-// shellCommand returns the shell binary and the argument prefix for running a
-// command string. On Windows it returns cmd.exe with /S /C: /S makes quote
-// stripping predictable when the command contains nested quotes (under the
-// default /C rules cmd.exe behavior depends on the count of `"` characters).
-// On Unix it returns sh -c.
 func shellCommand() (string, []string) {
 	if runtime.GOOS == "windows" {
 		return "cmd.exe", []string{"/S", "/C"}

@@ -34,8 +34,6 @@ type provisioningState struct {
 	ChainPEM  string `json:"chainPem,omitempty"`
 }
 
-// CloudDialer is a function that creates a gRPC client connection to the cloud.
-// It can be replaced in tests to avoid real network calls.
 type CloudDialer func(ctx context.Context, addr string) (*grpc.ClientConn, error)
 
 // DefaultCloudDialer connects to the cloud gRPC server with plaintext transport.
@@ -74,8 +72,6 @@ type ProvisioningService struct {
 	OnProvisioned OnProvisionedFunc
 }
 
-// NewProvisioningService creates a new ProvisioningService.
-// configPath is the directory where provisioning state is stored (e.g., /etc/wendy).
 func NewProvisioningService(logger *zap.Logger, configPath string) *ProvisioningService {
 	svc := &ProvisioningService{
 		logger:      logger,
@@ -86,15 +82,12 @@ func NewProvisioningService(logger *zap.Logger, configPath string) *Provisioning
 	return svc
 }
 
-// ProvisioningCerts returns the stored certificate material if the agent is provisioned.
-// Returns empty strings if not provisioned.
 func (s *ProvisioningService) ProvisioningCerts() (certPEM, chainPEM, keyPEM string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.certPEM, s.chainPEM, s.keyPEM
 }
 
-// ProvisioningInfo returns the cloud host, org ID, and asset ID if the agent is provisioned.
 func (s *ProvisioningService) ProvisioningInfo() (cloudHost string, orgID, assetID int32, enrolled bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -234,7 +227,6 @@ func (s *ProvisioningService) StartProvisioning(ctx context.Context, req *agentp
 	return &agentpb.StartProvisioningResponse{}, nil
 }
 
-// statePath returns the path to the provisioning state file.
 func (s *ProvisioningService) statePath() string {
 	return filepath.Join(s.configPath, "provisioning.json")
 }
@@ -268,9 +260,6 @@ func (s *ProvisioningService) loadState() {
 	}
 }
 
-// loadOrGenerateKey returns the PEM-encoded private key for this device.
-// It reuses the key at {configPath}/device-key.pem if it exists, otherwise
-// generates a new one and persists it.
 func (s *ProvisioningService) loadOrGenerateKey() (string, error) {
 	keyPath := filepath.Join(s.configPath, "device-key.pem")
 	if data, err := os.ReadFile(keyPath); err == nil && len(data) > 0 {
@@ -291,13 +280,10 @@ func (s *ProvisioningService) loadOrGenerateKey() (string, error) {
 	return keyPEM, nil
 }
 
-// writePEMFiles writes individual PEM files for the container registry and
-// other services that read certs from the filesystem.
 func (s *ProvisioningService) writePEMFiles(keyPEM, certPEM, chainPEM string) error {
 	return WritePEMFiles(s.configPath, keyPEM, certPEM, chainPEM)
 }
 
-// saveState writes provisioning state to disk.
 func (s *ProvisioningService) saveState(state *provisioningState) error {
 	if err := os.MkdirAll(s.configPath, 0o700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)

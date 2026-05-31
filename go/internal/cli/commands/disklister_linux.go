@@ -124,9 +124,6 @@ func listDrivesLinux() ([]drive, error) {
 	return drives, nil
 }
 
-// buildLsblkArgs returns the full argument list (including the command name)
-// used by lsblkCmd.  Extracting it into its own variable gives tests a seam
-// to assert that the -l flag is present without running a real process.
 var buildLsblkArgs = func(devPath string) []string {
 	return []string{"lsblk", "--json", "-l", "-o", "NAME,MOUNTPOINT", devPath}
 }
@@ -146,10 +143,6 @@ var umountCmd = func(mountpoint string) ([]byte, error) {
 	return exec.Command("sudo", "umount", mountpoint).CombinedOutput()
 }
 
-// maxMountpointDepth returns the maximum mountpoint depth (number of '/'
-// characters) across a device node and all of its descendants.  This is used
-// to sort devices so that the deepest subtree is always unmounted first, even
-// when a node has no mountpoint of its own but has deeply-mounted children.
 func maxMountpointDepth(dev lsblkDevice) int {
 	d := strings.Count(dev.Mountpoint, "/")
 	for _, child := range dev.Children {

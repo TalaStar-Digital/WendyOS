@@ -35,7 +35,6 @@ type ProgressModel struct {
 	showErr  bool
 }
 
-// NewProgress creates a new ProgressModel with the given title.
 func NewProgress(title string) ProgressModel {
 	p := progress.New(progress.WithGradient(string(Emerald400), string(Emerald700)))
 	p.PercentFormat = " %5.2f%%"
@@ -124,7 +123,6 @@ func (m ProgressModel) View() string {
 	return fmt.Sprintf("%s\n%s%s\n", m.title, m.progress.ViewAs(m.percent), byteInfo)
 }
 
-// formatBytes returns a human-readable byte string using binary (1024-based) units.
 func formatBytes(b int64) string {
 	const (
 		kib = 1024

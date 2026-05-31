@@ -60,10 +60,6 @@ func runXcodebuild(ctx context.Context, dir string, args ...string) error {
 	return nil
 }
 
-// findXcodeProj returns the name of the single .xcodeproj directory found in
-// dir (current directory only, not recursive). It returns ("", nil) when none
-// are found, and an error when multiple are found so the user gets a clear
-// actionable message.
 func findXcodeProj(dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

@@ -181,8 +181,6 @@ func lanAgentAddresses(dev models.LANDevice) []string {
 	return addresses
 }
 
-// preferredLANAddress returns the best available address for display and
-// follow-up connection attempts. It prefers IPs over mDNS hostnames.
 func preferredLANAddress(dev models.LANDevice) string {
 	addresses := lanAgentAddresses(dev)
 	if len(addresses) == 0 {
@@ -278,10 +276,6 @@ func (s *SelectedDevice) Close() {
 	}
 }
 
-// resolveDeviceAddress returns the gRPC address for the target device.
-// It checks the --device flag first, then the default device from config.
-// The returned isDefault flag is true when the address came from the saved
-// default device (not the --device flag).
 func resolveDeviceAddress() (addr string, isDefault bool, err error) {
 	hostname := deviceFlag
 	if hostname == "" {
@@ -795,7 +789,6 @@ func waitForAgentRestart(ctx context.Context, addr string) (*grpcclient.AgentCon
 	return nil, fmt.Errorf("timed out waiting for agent to restart")
 }
 
-// loadCLICert returns the first available certificate from the CLI config, or nil.
 func loadCLICert() *config.CertificateInfo {
 	auth := loadCLIAuth()
 	if auth == nil {
@@ -805,8 +798,6 @@ func loadCLICert() *config.CertificateInfo {
 	return &cert
 }
 
-// loadAllCLICerts returns the first certificate from each auth entry that has
-// one. Used by connectWithAutoTLS to try all available certs in order.
 func loadAllCLICerts() []config.CertificateInfo {
 	cfg, err := config.Load()
 	if err != nil || len(cfg.Auth) == 0 {
@@ -821,7 +812,6 @@ func loadAllCLICerts() []config.CertificateInfo {
 	return out
 }
 
-// loadCLIAuth returns the first auth entry that has certificates, or nil.
 func loadCLIAuth() *config.AuthConfig {
 	cfg, err := config.Load()
 	if err != nil || len(cfg.Auth) == 0 {
@@ -1492,9 +1482,6 @@ func resolveAgentPlatform(cfgPlatform, agentOS, agentArch string) string {
 	return cfgPlatform + "/" + agentArch
 }
 
-// registryPort returns the OCI registry port for the given agent OS.
-// macOS uses 5555 to avoid conflicts with AirPlay Receiver which binds *:5000.
-// All other platforms use the standard 5000.
 func registryPort(agentOS string) int {
 	if agentOS == "darwin" {
 		return 5555

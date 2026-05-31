@@ -122,7 +122,6 @@ type videoStream interface {
 	Recv() (*agentpb.VideoFrame, error)
 }
 
-// pipeVideoToStdout writes VideoFrame data chunks to w until the stream ends.
 func pipeVideoToStdout(stream videoStream, w io.Writer) error {
 	for {
 		frame, err := stream.Recv()
@@ -184,12 +183,6 @@ func playVideoWithGStreamer(ctx context.Context, stream videoStream) error {
 	}
 }
 
-// feedGStreamer writes the codec byte stream to GStreamer's stdin until the
-// video stream ends. For H.264 it continuously drops the backlog ahead of the
-// most recent keyframe whenever the writer falls behind — chiefly while
-// gst-launch is still starting and its stdin pipe back-pressures — so the
-// preview plays near real time instead of replaying stale video. A VP8/WebM
-// stream cannot be joined mid-container, so its frames are written verbatim.
 func feedGStreamer(ctx context.Context, stream videoStream, first *agentpb.VideoFrame, codec agentpb.VideoCodec, stdin io.Writer) error {
 	if codec == agentpb.VideoCodec_VIDEO_CODEC_VP8 {
 		if _, err := stdin.Write(first.GetData()); err != nil {
@@ -246,13 +239,6 @@ func feedGStreamer(ctx context.Context, stream videoStream, first *agentpb.Video
 	}
 }
 
-// h264FeedBuffer holds H.264 Annex-B bytes received from the stream but not yet
-// written to the decoder. Whenever bytes go unconsumed — chiefly while
-// gst-launch is still starting and its stdin pipe back-pressures — the buffer
-// is trimmed to the most recent keyframe so stale video is dropped instead of
-// being committed to the decoder and replayed as latency. Bytes that the
-// consumer takes promptly are passed through untrimmed, so steady-state
-// playback is a contiguous stream.
 type h264FeedBuffer struct {
 	mu     sync.Mutex
 	buf    []byte
@@ -327,10 +313,6 @@ const (
 	h264NalTypeSPS = 7 // sequence parameter set
 )
 
-// nextStartCode returns the index of the next Annex-B start code (00 00 01,
-// with an immediately preceding 00 absorbed so a 4-byte code is reported whole)
-// at or after from, together with the index of the NAL header byte that
-// follows it. found is false when no start code remains.
 func nextStartCode(data []byte, from int) (codeStart, headerIdx int, found bool) {
 	for i := from; i+2 < len(data); i++ {
 		if data[i] == 0x00 && data[i+1] == 0x00 && data[i+2] == 0x01 {
@@ -386,8 +368,6 @@ func lastKeyframeOffset(data []byte) (offset int, found bool) {
 	return offset, found
 }
 
-// playbackPipelineArgs returns the gst-launch-1.0 element arguments for decoding
-// and displaying the incoming stream of the given codec, read from stdin (fd 0).
 func playbackPipelineArgs(codec agentpb.VideoCodec) []string {
 	switch codec {
 	case agentpb.VideoCodec_VIDEO_CODEC_VP8:

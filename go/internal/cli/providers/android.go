@@ -125,7 +125,6 @@ func (p *AndroidProvider) Build(ctx context.Context, device models.ExternalDevic
 }
 
 // parseAndroidManifest reads AndroidManifest.xml from the project directory
-// and returns the package ID and the name of the launcher activity.
 func parseAndroidManifest(projectPath string) (packageID, activityName string, err error) {
 	data, err := os.ReadFile(filepath.Join(projectPath, "AndroidManifest.xml"))
 	if err != nil {

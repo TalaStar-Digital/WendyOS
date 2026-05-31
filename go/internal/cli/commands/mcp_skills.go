@@ -52,8 +52,6 @@ func wendySkillNames() []string {
 
 // ---- Claude Code ----------------------------------------------------------------
 
-// installClaudeCodeSkills writes embedded skills into the Claude Code plugin cache
-// and updates installed_plugins.json so Claude Code picks them up immediately.
 func installClaudeCodeSkills() *mcpSetupResult {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -170,7 +168,6 @@ func sanitizeVersion(v string) string {
 
 // ---- Codex ----------------------------------------------------------------------
 
-// installCodexSkills writes the wendy skill content to ~/.codex/instructions.md.
 func installCodexSkills() *mcpSetupResult {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -195,7 +192,6 @@ func installCodexSkills() *mcpSetupResult {
 
 // ---- Opencode -------------------------------------------------------------------
 
-// installOpencodeSkills writes the wendy skill content to the opencode config dir.
 func installOpencodeSkills() *mcpSetupResult {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -220,7 +216,6 @@ func installOpencodeSkills() *mcpSetupResult {
 	return &mcpSetupResult{tool: "Opencode skills", path: target}
 }
 
-// writeSkillsMarkdown writes the embedded wendy-specific skills to path as concatenated Markdown.
 func writeSkillsMarkdown(path string) error {
 	var sb strings.Builder
 	sb.WriteString("# Wendy Skills\n\n")

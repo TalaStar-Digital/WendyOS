@@ -515,10 +515,6 @@ func metaTemplateNames(meta *repoMeta) string {
 	return strings.Join(names, ", ")
 }
 
-// fetchRepoMetaWithUI wraps fetchRepoMeta with a bubbletea spinner when
-// stdout is a TTY. In non-interactive contexts it falls back to a plain
-// printf so logs stay readable. If the user cancels (q / ctrl+c) the
-// in-flight HTTP request is aborted and ErrUserCancelled is returned.
 func fetchRepoMetaWithUI(branch string) (*repoMeta, error) {
 	if !isInteractiveTerminal() {
 		cliLogln("Fetching template registry...")
@@ -560,10 +556,6 @@ func fetchRepoMetaWithUI(branch string) (*repoMeta, error) {
 	return meta, fetchErr
 }
 
-// downloadTemplateArchiveWithUI wraps downloadTemplateArchive with a
-// bubbletea progress bar when stdout is a TTY. In non-interactive contexts
-// it falls back to plain text. If the user cancels (q / ctrl+c) the
-// in-flight HTTP request is aborted and ErrUserCancelled is returned.
 func downloadTemplateArchiveWithUI(language, tmpl, branch string) (map[string][]byte, *templateManifest, error) {
 	title := fmt.Sprintf("Downloading template %q for %s (branch: %s)", tmpl, language, resolveTemplateBranch(branch))
 
@@ -1344,7 +1336,6 @@ func pickInitLanguage(target string) (string, error) {
 	}
 }
 
-// askEntitlementQuestions is a variable so tests can replace it.
 var askEntitlementQuestions = func(target, language string) ([]appconfig.Entitlement, error) {
 	// Always include network.
 	entitlements := []appconfig.Entitlement{
@@ -1547,7 +1538,6 @@ func pythonPackageName(appID string) string {
 	return r.Replace(appID)
 }
 
-// initPythonUVProject creates a uv-based Python project.
 func initPythonUVProject(dir, appID string) error {
 	pkgName := pythonPackageName(appID)
 

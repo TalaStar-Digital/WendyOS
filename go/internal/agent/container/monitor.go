@@ -27,7 +27,6 @@ const (
 	RestartAlways
 )
 
-// String returns the human-readable name of the restart policy.
 func (p RestartPolicy) String() string {
 	switch p {
 	case RestartNo:
@@ -79,7 +78,6 @@ type ContainerMonitor struct {
 	stopCh     chan struct{}
 }
 
-// NewContainerMonitor creates a new ContainerMonitor.
 func NewContainerMonitor(logger *zap.Logger, client services.ContainerdClient, logManager *services.ContainerLogManager, interval time.Duration) *ContainerMonitor {
 	if interval == 0 {
 		interval = 5 * time.Second

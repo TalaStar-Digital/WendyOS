@@ -619,8 +619,6 @@ func (m discoverModel) tableViewportWidth() int {
 	return tui.PickerTableWidth(m.table.Columns())
 }
 
-// lanDeviceAddr returns the gRPC address for the first LAN device whose
-// DisplayName matches (case-insensitive). Returns "" if not found.
 func lanDeviceAddr(collection *models.DevicesCollection, displayName string) string {
 	for i := range collection.LANDevices {
 		d := &collection.LANDevices[i]
@@ -631,9 +629,6 @@ func lanDeviceAddr(collection *models.DevicesCollection, displayName string) str
 	return ""
 }
 
-// startDeviceUpdateCmd returns a Bubble Tea command that connects to addr,
-// downloads and uploads the latest agent binary, and waits for the device to
-// restart. It sends a discoverUpdateDoneMsg when finished.
 func (m discoverModel) startDeviceUpdateCmd(addr, name string) tea.Cmd {
 	ctx := m.ctx
 	return func() tea.Msg {
@@ -1021,7 +1016,6 @@ func firstNonEmpty(values ...string) string {
 }
 
 // copyDeviceJSON marshals v as indented JSON, copies it to the clipboard,
-// and returns a user-facing message and whether it's an error.
 func copyDeviceJSON(v interface{}) (message string, isError bool) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -1033,7 +1027,6 @@ func copyDeviceJSON(v interface{}) (message string, isError bool) {
 	return "Copied device info as JSON to clipboard.", false
 }
 
-// clearFlashAfter returns a tea.Cmd that sends flashClearMsg after the given duration.
 func clearFlashAfter(d time.Duration) tea.Cmd {
 	return func() tea.Msg {
 		time.Sleep(d)
@@ -1105,7 +1098,6 @@ func runClipboardCommand(cmd *exec.Cmd, timeout time.Duration) error {
 // interactive discover TUI.
 var clipboardCommandTimeout = 2 * time.Second
 
-// copyToClipboard writes text to the system clipboard using platform tools.
 func copyToClipboard(text string) error {
 	var candidates []clipboardCandidate
 	switch runtime.GOOS {

@@ -121,8 +121,6 @@ func claudeCodeConfigPath() string {
 	return ""
 }
 
-// claudeDesktopConfigPath returns the Claude Desktop config path if the app
-// directory exists, or "" if Claude Desktop is not installed.
 func claudeDesktopConfigPath() string {
 	var dir string
 	switch runtime.GOOS {
@@ -153,8 +151,6 @@ func claudeDesktopConfigPath() string {
 	return filepath.Join(dir, "claude_desktop_config.json")
 }
 
-// wendyBinaryPath returns the absolute path to the currently running wendy
-// binary, falling back to PATH lookup.
 func wendyBinaryPath() string {
 	if p, err := os.Executable(); err == nil {
 		return p
@@ -197,8 +193,6 @@ func windsurfConfigPath() string {
 	return ""
 }
 
-// addMCPToJSONConfig reads a JSON config file, sets cfg[topKey][name] = entry,
-// and writes it back. Creates the file if it does not exist.
 func addMCPToJSONConfig(path, topKey, name string, entry any) error {
 	var cfg map[string]any
 	data, err := os.ReadFile(path)
@@ -230,8 +224,6 @@ func addMCPToJSONConfig(path, topKey, name string, entry any) error {
 	return os.WriteFile(path, out, 0o644)
 }
 
-// addMCPToTOMLConfig reads a TOML config file, sets cfg[topKey][name] = entry,
-// and writes it back. Creates the file if it does not exist.
 func addMCPToTOMLConfig(path, topKey, name string, entry any) error {
 	var cfg map[string]any
 	data, err := os.ReadFile(path)

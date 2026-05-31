@@ -95,8 +95,6 @@ type cloudDiscoverModel struct {
 	hasResults     bool
 }
 
-// newCloudDiscoverModel creates a cloud discover model.
-// initialAssets pre-populates the list; when nil the model fetches on init.
 func newCloudDiscoverModel(ctx context.Context, auth *config.AuthConfig, brokerURL string, all, pickerMode bool, initialAssets []*cloudpb.Asset) cloudDiscoverModel {
 	m := cloudDiscoverModel{
 		ctx:            ctx,

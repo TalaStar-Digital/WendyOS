@@ -46,9 +46,6 @@ type Dispatcher struct {
 	bluetooth bluetoothOps
 }
 
-// NewDispatcher creates a Dispatcher wired to the provided service
-// implementations. Any argument may be nil; commands that require a nil
-// service will return an error response.
 func NewDispatcher(net networkOps, ctr containerOps, hw hardwareOps, bt bluetoothOps) *Dispatcher {
 	return &Dispatcher{
 		network:   net,

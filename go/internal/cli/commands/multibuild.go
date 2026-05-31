@@ -25,9 +25,6 @@ import (
 
 const maxConcurrentBuilds = 4
 
-// resolveServiceSubset returns the services to build when --service is
-// specified. The named service and all transitive dependsOn entries are
-// included; if the name is empty all services are returned unchanged.
 func resolveServiceSubset(services map[string]*appconfig.ServiceConfig, only string) (map[string]*appconfig.ServiceConfig, error) {
 	if only == "" {
 		return services, nil

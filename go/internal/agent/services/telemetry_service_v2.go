@@ -15,7 +15,6 @@ type TelemetryServiceV2 struct {
 	broadcaster *TelemetryBroadcaster
 }
 
-// NewTelemetryServiceV2 creates a new TelemetryServiceV2.
 func NewTelemetryServiceV2(logger *zap.Logger, broadcaster *TelemetryBroadcaster) *TelemetryServiceV2 {
 	return &TelemetryServiceV2{logger: logger, broadcaster: broadcaster}
 }

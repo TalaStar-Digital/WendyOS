@@ -48,8 +48,6 @@ var (
 	trackHook func(event string, properties map[string]string)
 )
 
-// SetTrackHookForTesting installs a hook that receives every Track call.
-// Pass nil to clear. Intended for tests only.
 func SetTrackHookForTesting(fn func(event string, properties map[string]string)) {
 	trackHook = fn
 }

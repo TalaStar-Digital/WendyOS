@@ -18,7 +18,6 @@ var (
 	deviceFlag string
 )
 
-// NewRootCmd creates the root Cobra command with all subcommands.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "wendy",

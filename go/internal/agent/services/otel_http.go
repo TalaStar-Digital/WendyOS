@@ -38,7 +38,6 @@ type OTELHTTPReceiver struct {
 	server      *http.Server
 }
 
-// NewOTELHTTPReceiver creates a new OTELHTTPReceiver.
 func NewOTELHTTPReceiver(logger *zap.Logger, broadcaster *TelemetryBroadcaster) *OTELHTTPReceiver {
 	r := &OTELHTTPReceiver{
 		logger:      logger,
@@ -57,12 +56,10 @@ func NewOTELHTTPReceiver(logger *zap.Logger, broadcaster *TelemetryBroadcaster) 
 	return r
 }
 
-// Serve starts serving HTTP requests on the given listener.
 func (r *OTELHTTPReceiver) Serve(listener net.Listener) error {
 	return r.server.Serve(listener)
 }
 
-// Shutdown gracefully shuts down the HTTP server.
 func (r *OTELHTTPReceiver) Shutdown(ctx context.Context) error {
 	return r.server.Shutdown(ctx)
 }

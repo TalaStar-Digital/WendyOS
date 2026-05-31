@@ -14,7 +14,6 @@ type ProvisioningServiceV2 struct {
 	v1 *ProvisioningService
 }
 
-// NewProvisioningServiceV2 creates a new ProvisioningServiceV2 wrapping the given v1 service.
 func NewProvisioningServiceV2(v1 *ProvisioningService) *ProvisioningServiceV2 {
 	return &ProvisioningServiceV2{v1: v1}
 }

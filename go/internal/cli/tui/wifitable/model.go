@@ -785,7 +785,4 @@ func (m Model) renderUnlistedModal() string {
 		footerStyle.Render("tab switch fields · ←/→ change security · enter submit · esc cancel")
 }
 
-// Result returns the user's decision after Run returns. Only meaningful when
-// the Model was driven without a Handler (e.g. tests); in interactive mode the
-// TUI stays open and actions are dispatched via the Handler.
 func (m Model) Result() Result { return m.result }

@@ -120,8 +120,6 @@ func verifyMLDSASignature(issuer, cert *x509.Certificate) error {
 	return nil
 }
 
-// buildVerifyPeerCertificate returns a VerifyPeerCertificate callback that
-// handles both standard (RSA/ECDSA) and ML-DSA-signed certificate chains.
 func buildVerifyPeerCertificate(caPool *x509.CertPool, caCerts []*x509.Certificate) func([][]byte, [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		if len(rawCerts) == 0 {

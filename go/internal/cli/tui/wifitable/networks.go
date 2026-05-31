@@ -65,7 +65,6 @@ func Sort(networks []Network) {
 	})
 }
 
-// SecurityLabel returns a short, human-readable label for a WiFiSecurityType.
 func SecurityLabel(t agentpb.WiFiSecurityType) string {
 	switch t {
 	case agentpb.WiFiSecurityType_WIFI_SECURITY_TYPE_OPEN:
@@ -95,9 +94,6 @@ func IsSecured(t agentpb.WiFiSecurityType) bool {
 	return true
 }
 
-// KnownSSIDsInOrder returns the SSIDs of known networks in the slice's current
-// order. Useful for building a ReorderKnownWiFiNetworksRequest after a rank
-// commit.
 func KnownSSIDsInOrder(networks []Network) []string {
 	var out []string
 	for _, n := range networks {

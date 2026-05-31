@@ -66,7 +66,6 @@ func (c *LiteClient) Close() {
 	c.conn.Close()
 }
 
-// DeviceName reads the device name characteristic.
 func (c *LiteClient) DeviceName() (string, error) {
 	data, err := c.conn.ReadCharacteristic(liteServiceUUID, liteDevNameUUID)
 	if err != nil {
@@ -75,7 +74,6 @@ func (c *LiteClient) DeviceName() (string, error) {
 	return string(data), nil
 }
 
-// WifiProvisionResult holds the result of a WiFi provisioning attempt.
 type WifiProvisionResult struct {
 	Connected bool
 	IPAddress string // set when Connected is true
@@ -147,7 +145,6 @@ func (c *LiteClient) WifiConnect(ssid, password string) (*WifiProvisionResult, e
 	return nil, fmt.Errorf("timed out waiting for WiFi connection status")
 }
 
-// WifiStatus reads the current WiFi status from the device.
 func (c *LiteClient) WifiStatus() (*WifiProvisionResult, error) {
 	data, err := c.conn.ReadCharacteristic(liteServiceUUID, liteStatusUUID)
 	if err != nil {

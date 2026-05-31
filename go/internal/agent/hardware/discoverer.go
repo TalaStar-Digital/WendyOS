@@ -19,7 +19,6 @@ type SystemHardwareDiscoverer struct {
 	logger *zap.Logger
 }
 
-// NewSystemHardwareDiscoverer creates a new SystemHardwareDiscoverer.
 func NewSystemHardwareDiscoverer(logger *zap.Logger) *SystemHardwareDiscoverer {
 	return &SystemHardwareDiscoverer{logger: logger}
 }
@@ -347,7 +346,6 @@ func (d *SystemHardwareDiscoverer) discoverStorage() []*agentpb.ListHardwareCapa
 	return caps
 }
 
-// readSysfsFile reads a sysfs file and returns its trimmed content.
 func readSysfsFile(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {

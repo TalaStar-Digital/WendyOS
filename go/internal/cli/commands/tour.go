@@ -1768,8 +1768,6 @@ func (m *tourWizardModel) createProjectFromTemplate() error {
 
 // ─── platform helpers ─────────────────────────────────────────────────────────
 
-// detectCurrentWiFiSSID returns the SSID the host machine is currently
-// connected to, or "" if unavailable or not connected.
 func detectCurrentWiFiSSID() string {
 	switch runtime.GOOS {
 	case "darwin":

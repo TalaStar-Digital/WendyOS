@@ -102,13 +102,6 @@ func detectProjectType(dir string) (string, error) {
 // "Dockerfile" followed by a dot or hyphen and one or more safe characters.
 var validDockerfileNameRe = regexp.MustCompile(`^Dockerfile([.\-][a-zA-Z0-9][a-zA-Z0-9._-]*)?$`)
 
-// validateDockerfileName returns an error when name does not follow the
-// Dockerfile naming convention. This prevents filenames that start with "-"
-// from being misinterpreted as Docker CLI flags, rejects names with control
-// characters or other unsafe content, and rejects values containing path
-// separators. The path-separator check keeps --dockerfile a plain filename so
-// it lines up with the root-level Dockerfile entries produced by
-// detectBuildOptions; a leading "./" is allowed since filepath.Clean strips it.
 func validateDockerfileName(name string) error {
 	cleaned := filepath.Clean(name)
 	if cleaned != filepath.Base(cleaned) {
@@ -200,13 +193,6 @@ func confinedDockerfilePath(base, dockerfile string) (string, error) {
 	return resolved, nil
 }
 
-// resolveDockerfile returns the Dockerfile filename to pass to docker build for
-// a docker-type project. If requested is non-empty it is validated (name format,
-// directory confinement, symlink resolution, existence) and returned unchanged.
-// Otherwise all Dockerfiles in cwd are detected: a single match is returned
-// immediately; multiple matches trigger an interactive picker or, in
-// non-interactive mode, prefer the base "Dockerfile" and fall back to the first
-// variant found.
 func resolveDockerfile(cwd, requested string, interactive bool) (string, error) {
 	if requested != "" {
 		if err := validateDockerfileName(requested); err != nil {
@@ -360,9 +346,6 @@ func injectDebugpy(ctx context.Context, registryAddr, registryImage, platform st
 	return buildAndPushImage(ctx, tmpDir, registryAddr, registryImage, platform, "", buildArgs, streamOutput, useMTLS)
 }
 
-// generatePythonDockerfile creates a Dockerfile for Python projects that do not already have one.
-// It returns the path to the generated Dockerfile. When debug is true, debugpy is installed so
-// the agent can wrap the entrypoint with "-m debugpy" for remote debugging.
 func generatePythonDockerfile(dir string, debug bool) (string, error) {
 	dockerfilePath := filepath.Join(dir, "Dockerfile")
 
@@ -401,10 +384,6 @@ func generatePythonDockerfile(dir string, debug bool) (string, error) {
 	return dockerfilePath, nil
 }
 
-// buildSwiftContainerImage builds a Swift package and pushes the container image
-// directly to the device's registry using swift-container-plugin.
-// registryAddr is a pre-resolved host:port (e.g. "192.168.1.5:5000" or
-// "host.docker.internal:12345" when proxying).
 func buildSwiftContainerImage(ctx context.Context, dir, product, registryAddr, architecture string, swiftUseMTLS bool, toolchainStdout, toolchainStderr io.Writer) error {
 	if err := ensureContainerPlugin(dir); err != nil {
 		return err
@@ -707,8 +686,6 @@ func pathHasDir(pathEnv, dir string) bool {
 	return false
 }
 
-// detectDockerRuntime returns the name and .app path of the first installed
-// Docker-compatible runtime found on macOS, or empty strings if none is found.
 func detectDockerRuntime() (name, appPath string) {
 	if rt, ok := detectDockerRuntimeInfoForHostOS(dockerHostOSDarwin); ok {
 		return rt.name, rt.app
@@ -1064,11 +1041,6 @@ func updateBuilderConfig(ctx context.Context, builderName, config string) error 
 	return nil
 }
 
-// buildAndPushImage builds a Docker image for the specified platform and pushes
-// it directly to the given registry using docker buildx. The registry transport
-// is conditional: plain HTTP for plaintext devices, and TLS/mTLS for provisioned
-// devices when useMTLS is enabled. buildArgs is passed as --build-arg KEY=VALUE flags.
-// dockerfile is passed as -f to docker buildx; an empty string uses the default Dockerfile.
 func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, platform, dockerfile string, buildArgs map[string]string, streamOutput io.Writer, useMTLS bool) error {
 	builder, effectiveAddr, err := ensureBuildxBuilder(ctx, registryAddr, useMTLS)
 	if err != nil {
@@ -1399,10 +1371,6 @@ func (p *mtlsRegistryHTTPProxy) Close() {
 	_ = p.server.Close()
 }
 
-// startMTLSRegistryHTTPProxy creates a local HTTP reverse proxy on 127.0.0.1
-// that forwards OCI registry requests to target via HTTPS with mTLS. certPEM
-// and keyPEM are the client certificate and key; caPEM is the CA chain used to
-// verify the server certificate (the Wendy Cloud Root CA chain).
 func startMTLSRegistryHTTPProxy(target, certPEM, keyPEM, caPEM string) (*mtlsRegistryHTTPProxy, error) {
 	leafPEM, err := certs.LeafCertificatePEM(certPEM)
 	if err != nil {
@@ -1513,12 +1481,6 @@ type registryProxy struct {
 	done     chan struct{}
 }
 
-// startRegistryProxy creates a TCP proxy that listens on listenAddr and
-// forwards connections to the target address. Pass "0.0.0.0:0" when Docker
-// Desktop's VM must reach the proxy via host.docker.internal; pass
-// "127.0.0.1:0" everywhere else so the listener is not exposed on all
-// interfaces. The target should use the device's mDNS hostname (not a bare
-// link-local IP) so the host's resolver provides the zone ID.
 func startRegistryProxy(ctx context.Context, listenAddr string, target string) (*registryProxy, error) {
 	return startRegistryProxyWithDialer(ctx, listenAddr, func(ctx context.Context) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", target)
@@ -1546,7 +1508,6 @@ func startRegistryProxyWithDialer(ctx context.Context, listenAddr string, dial f
 	return p, nil
 }
 
-// Port returns the ephemeral port the proxy is listening on.
 func (p *registryProxy) Port() int {
 	return p.listener.Addr().(*net.TCPAddr).Port
 }

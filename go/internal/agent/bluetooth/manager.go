@@ -19,9 +19,6 @@ type Manager interface {
 	Forget(ctx context.Context, address string) error
 }
 
-// NewManager creates a platform-appropriate Bluetooth manager.
-// On Linux, it attempts to connect to BlueZ via D-Bus.
-// On other platforms, it returns a stub that reports bluetooth as unsupported.
 func NewManager(logger *zap.Logger) Manager {
 	return newPlatformManager(logger)
 }

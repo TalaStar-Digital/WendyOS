@@ -16,7 +16,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// dashboardRow holds merged data for one app displayed in the dashboard table.
 type dashboardRow struct {
 	name         string
 	version      string

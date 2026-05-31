@@ -54,7 +54,6 @@ func RenderTable(headers []string, rows [][]string) string {
 	return t.Render() + "\n"
 }
 
-// BubbleTableStyles returns the shared emerald styling for Bubble Tea tables.
 func BubbleTableStyles(interactive bool) bubbleTable.Styles {
 	styles := bubbleTable.DefaultStyles()
 	styles.Header = lipgloss.NewStyle().
@@ -74,16 +73,12 @@ func BubbleTableStyles(interactive bool) bubbleTable.Styles {
 	return styles
 }
 
-// BubbleTable wraps bubbles/table with shared styling and responsive viewport
-// behavior. Its View is ANSI-safe cropped to the configured viewport width so
-// terminals do not wrap wide tables during resizes.
 type BubbleTable struct {
 	model         bubbleTable.Model
 	viewportWidth int
 	x             int
 }
 
-// NewBubbleTable creates a Bubble Tea table using the shared emerald styling.
 func NewBubbleTable(interactive bool, columns []bubbleTable.Column) BubbleTable {
 	opts := []bubbleTable.Option{bubbleTable.WithFocused(interactive)}
 	if len(columns) > 0 {

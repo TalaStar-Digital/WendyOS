@@ -174,7 +174,6 @@ type POSIXRlimit struct {
 	Soft uint64 `json:"soft"`
 }
 
-// DefaultSpec returns a minimal OCI runtime spec with sensible defaults.
 func DefaultSpec(rootfsPath string, args []string) *Spec {
 	return &Spec{
 		OCIVersion: "1.0.2",
@@ -231,7 +230,6 @@ func DefaultSpec(rootfsPath string, args []string) *Spec {
 	}
 }
 
-// defaultCapabilities returns the default Linux capabilities for containers.
 func defaultCapabilities() *LinuxCapabilities {
 	caps := []string{
 		"CAP_CHOWN",
@@ -257,10 +255,6 @@ func defaultCapabilities() *LinuxCapabilities {
 	}
 }
 
-// defaultSeccomp returns a seccomp profile that denies known escape vectors while
-// allowing all other syscalls. It blocks ptrace and unshare unconditionally, and
-// blocks clone/clone3 when CLONE_NEWUSER is requested to prevent unprivileged
-// user-namespace creation inside the container.
 func defaultSeccomp() *LinuxSeccomp {
 	eperm := uint(1)
 	cloneNewuser := uint64(0x10000000) // CLONE_NEWUSER
@@ -289,7 +283,6 @@ func defaultSeccomp() *LinuxSeccomp {
 	}
 }
 
-// defaultMounts returns the standard OCI mounts.
 func defaultMounts() []Mount {
 	return []Mount{
 		{

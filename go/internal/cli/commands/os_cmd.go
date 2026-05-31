@@ -457,10 +457,6 @@ func waitForDeviceOnline(ctx context.Context, host string) error {
 	return spinErr
 }
 
-// localIPForHost returns the local IP address used to reach the given host.
-// The returned string is suitable for net.Listen: for IPv6 link-local addresses
-// it includes the zone identifier (e.g. "fe80::1%en0"). Use ipForURL to convert
-// it to a safe form for embedding in HTTP URLs.
 func localIPForHost(host string) (string, error) {
 	// Strip port if present.
 	if h, _, err := net.SplitHostPort(host); err == nil {

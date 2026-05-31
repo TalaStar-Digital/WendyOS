@@ -19,25 +19,20 @@ import (
 	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
-// AudioService implements agentpb.WendyAudioServiceServer.
 type AudioService struct {
 	agentpb.UnimplementedWendyAudioServiceServer
 	logger *zap.Logger
 }
 
-// NewAudioService creates a new AudioService.
 func NewAudioService(logger *zap.Logger) *AudioService {
 	return &AudioService{logger: logger}
 }
 
-// ListAudioDevices enumerates audio devices via ALSA (arecord/aplay).
-// Devices are selected with ALSA card/device arguments in plughw:<card>,<device>
-// form. Returned device IDs encode both the ALSA card and device numbers as
-// ((card << 8) | device) + 1; alsaDeviceArg decodes them back into the correct
-// plughw:<card>,<device> streaming argument. We use plughw rather than hw so
-// ALSA's plug layer can handle format conversion when needed. PipeWire/PulseAudio
-// node IDs are a different numbering system and would not map correctly to these
-// streaming device arguments.
+// Device IDs encode the ALSA card and device numbers as ((card << 8) | device) + 1;
+// alsaDeviceArg decodes them back into the correct plughw:<card>,<device> argument.
+// plughw is used instead of hw so ALSA's plug layer can handle format conversion.
+// PipeWire/PulseAudio node IDs are a different numbering system and would not map
+// correctly to these streaming device arguments.
 func (s *AudioService) ListAudioDevices(ctx context.Context, _ *agentpb.ListAudioDevicesRequest) (*agentpb.ListAudioDevicesResponse, error) {
 	devices, err := s.listALSADevices(ctx)
 	if err != nil {
@@ -46,7 +41,6 @@ func (s *AudioService) ListAudioDevices(ctx context.Context, _ *agentpb.ListAudi
 	return &agentpb.ListAudioDevicesResponse{Devices: devices}, nil
 }
 
-// listPipeWireDevices uses pw-cli to list audio nodes.
 func (s *AudioService) listPipeWireDevices(ctx context.Context) ([]*agentpb.AudioDevice, error) {
 	cmd := exec.CommandContext(ctx, "pw-cli", "list-objects", "Node")
 	output, err := cmd.Output()
@@ -98,7 +92,6 @@ func (s *AudioService) listPipeWireDevices(ctx context.Context) ([]*agentpb.Audi
 	return devices, nil
 }
 
-// listALSADevices falls back to ALSA for audio device enumeration.
 func (s *AudioService) listALSADevices(ctx context.Context) ([]*agentpb.AudioDevice, error) {
 	var devices []*agentpb.AudioDevice
 	var firstErr error
@@ -175,7 +168,6 @@ func parseALSAOutput(output string, devType agentpb.AudioDeviceType) []*agentpb.
 	return devices
 }
 
-// SetDefaultAudioDevice sets the default audio device using PipeWire or PulseAudio.
 func (s *AudioService) SetDefaultAudioDevice(ctx context.Context, req *agentpb.SetDefaultAudioDeviceRequest) (*agentpb.SetDefaultAudioDeviceResponse, error) {
 	// Try PipeWire first.
 	nodeID := fmt.Sprintf("%d", req.GetDeviceId())
@@ -194,7 +186,6 @@ func (s *AudioService) SetDefaultAudioDevice(ctx context.Context, req *agentpb.S
 	return &agentpb.SetDefaultAudioDeviceResponse{Success: true}, nil
 }
 
-// listPulseAudioDevices uses pactl to enumerate sinks and sources.
 func (s *AudioService) listPulseAudioDevices(ctx context.Context) ([]*agentpb.AudioDevice, error) {
 	var devices []*agentpb.AudioDevice
 
@@ -215,7 +206,6 @@ func (s *AudioService) listPulseAudioDevices(ctx context.Context) ([]*agentpb.Au
 	return devices, nil
 }
 
-// parsePulseAudioDevices parses "pactl list sinks short" and "pactl list sinks" for a device category.
 func (s *AudioService) parsePulseAudioDevices(ctx context.Context, category string, devType agentpb.AudioDeviceType) ([]*agentpb.AudioDevice, error) {
 	plural := category + "s"
 
@@ -286,7 +276,6 @@ func (s *AudioService) parsePulseAudioDevices(ctx context.Context, category stri
 	return devices, nil
 }
 
-// setPulseAudioDefaultDevice resolves a device ID to a PulseAudio name and sets it as default.
 func (s *AudioService) setPulseAudioDefaultDevice(ctx context.Context, req *agentpb.SetDefaultAudioDeviceRequest) (*agentpb.SetDefaultAudioDeviceResponse, error) {
 	targetID := req.GetDeviceId()
 
@@ -327,9 +316,6 @@ func (s *AudioService) setPulseAudioDefaultDevice(ctx context.Context, req *agen
 	return nil, fmt.Errorf("device ID %d not found in PulseAudio sinks or sources", targetID)
 }
 
-// firstALSACaptureDeviceID returns the encoded device ID of the first ALSA capture
-// device from arecord -l. The ID is the encoded form ((card << 8) | device) + 1,
-// matching the IDs returned by ListAudioDevices. Returns 0 if no device is found.
 func firstALSACaptureDeviceID(ctx context.Context) uint32 {
 	cmd := exec.CommandContext(ctx, "arecord", "-l")
 	out, err := cmd.Output()
@@ -343,10 +329,6 @@ func firstALSACaptureDeviceID(ctx context.Context) uint32 {
 	return 0
 }
 
-// alsaDeviceArg returns the arecord -D argument for the given device ID.
-// IDs from ListAudioDevices are encoded as ((card << 8) | device) + 1; 0 means
-// "unspecified" and triggers auto-selection of the first capture card.
-// plughw is used instead of hw so ALSA's plug layer handles format/rate conversion.
 func alsaDeviceArg(ctx context.Context, id uint32) string {
 	if id == 0 {
 		id = firstALSACaptureDeviceID(ctx)
@@ -360,7 +342,6 @@ func alsaDeviceArg(ctx context.Context, id uint32) string {
 	return fmt.Sprintf("plughw:%d,%d", card, device)
 }
 
-// StreamAudioLevels streams peak/RMS dB levels for a device.
 func (s *AudioService) StreamAudioLevels(req *agentpb.StreamAudioLevelsRequest, stream grpc.ServerStreamingServer[agentpb.AudioLevelUpdate]) error {
 	ctx := stream.Context()
 
@@ -427,7 +408,6 @@ func (s *AudioService) StreamAudioLevels(req *agentpb.StreamAudioLevelsRequest, 
 	}
 }
 
-// StreamAudio streams raw PCM audio data from a microphone.
 func (s *AudioService) StreamAudio(req *agentpb.StreamAudioRequest, stream grpc.ServerStreamingServer[agentpb.AudioChunk]) error {
 	ctx := stream.Context()
 

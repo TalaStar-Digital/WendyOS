@@ -92,8 +92,6 @@ func isLocalRegistryImage(imageName string) bool {
 		strings.HasPrefix(imageName, "[::1]:5555/")
 }
 
-// gcTimestamp returns an RFC3339 timestamp string suitable for use as a GC root
-// label value, anchoring content so it is not garbage collected.
 func gcTimestamp() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }

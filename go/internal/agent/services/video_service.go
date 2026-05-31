@@ -107,7 +107,6 @@ type nativeH264NotSupported struct{ msg string }
 
 func (e nativeH264NotSupported) Error() string { return e.msg }
 
-// VideoService implements agentpb.WendyVideoServiceServer.
 type VideoService struct {
 	agentpb.UnimplementedWendyVideoServiceServer
 	logger         *zap.Logger
@@ -115,7 +114,6 @@ type VideoService struct {
 	readDeviceName func(base string) (string, error)
 }
 
-// NewVideoService creates a new VideoService.
 func NewVideoService(logger *zap.Logger) *VideoService {
 	return &VideoService{
 		logger: logger,
@@ -129,7 +127,6 @@ func NewVideoService(logger *zap.Logger) *VideoService {
 	}
 }
 
-// listV4L2Devices enumerates /dev/video* and reads human-readable names from sysfs.
 func (s *VideoService) listV4L2Devices() ([]*agentpb.VideoDevice, error) {
 	paths, err := s.globDevices()
 	if err != nil {
@@ -156,7 +153,6 @@ func (s *VideoService) listV4L2Devices() ([]*agentpb.VideoDevice, error) {
 	return devices, nil
 }
 
-// ListVideoDevices enumerates V4L2 video capture devices.
 func (s *VideoService) ListVideoDevices(ctx context.Context, _ *agentpb.ListVideoDevicesRequest) (*agentpb.ListVideoDevicesResponse, error) {
 	devices, err := s.listV4L2Devices()
 	if err != nil {
@@ -165,9 +161,8 @@ func (s *VideoService) ListVideoDevices(ctx context.Context, _ *agentpb.ListVide
 	return &agentpb.ListVideoDevicesResponse{Devices: devices}, nil
 }
 
-// StreamVideo streams H.264 frames from a V4L2 camera.
-// Tries native H.264 capture via V4L2 mmap first; falls back to GStreamer x264enc if
-// the device does not expose H.264 output.
+// Tries native H.264 capture via V4L2 mmap first; falls back to GStreamer if the device
+// does not expose H.264 output.
 func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.ServerStreamingServer[agentpb.VideoFrame]) error {
 	ctx := stream.Context()
 	path := fmt.Sprintf("/dev/video%d", req.GetDeviceId())
@@ -184,8 +179,6 @@ func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.
 	return err
 }
 
-// streamV4L2Native opens the V4L2 device, configures H.264 output via VIDIOC_S_FMT,
-// allocates mmap buffers, and streams frames until ctx is cancelled or an error occurs.
 // Returns nativeH264NotSupported if the device rejects the H.264 pixel format.
 func (s *VideoService) streamV4L2Native(ctx context.Context, stream grpc.ServerStreamingServer[agentpb.VideoFrame], path string, req *agentpb.StreamVideoRequest) error {
 	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC, 0)
@@ -640,11 +633,6 @@ func listGSTElements(inspectPath string) (map[string]bool, error) {
 	return elements, nil
 }
 
-// keyframeIntervalFrames returns the GOP size (keyframe interval, in frames)
-// for the given framerate: a keyframe roughly every 0.5s. A short GOP bounds
-// how long the preview stays corrupted after a dropped frame and how long a
-// client waits to resync when joining or skipping mid-stream. A framerate of 0
-// (device default) is treated as 30fps.
 func keyframeIntervalFrames(fps uint32) int {
 	if fps == 0 {
 		fps = 30
@@ -706,10 +694,6 @@ func buildGStreamerArgs(gstPath, devicePath string, req *agentpb.StreamVideoRequ
 // repeated SPS/PPS also lets the client sync mid-stream.
 const h264ByteStream = " ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au"
 
-// keyframeArg returns the encoder-specific property string (with a leading
-// space) that caps the keyframe interval to gop frames, or "" for encoders
-// whose keyframe-interval property name is not known — those keep their
-// firmware/library default rather than risk a pipeline that will not launch.
 func keyframeArg(encoder string, gop int) string {
 	switch encoder {
 	case "x264enc":
@@ -731,16 +715,6 @@ func keyframeArg(encoder string, gop int) string {
 	}
 }
 
-// encoderSegment returns the GStreamer pipeline segment for the given encoder element.
-// Most H.264 encoders force I420 (4:2:0) input to avoid 4:4:4 output paths that
-// can make encoders such as x264enc select profile 244 (High 4:4:4 Predictive),
-// which VideoToolbox and most hardware decoders reject. This input cap does not by
-// itself enforce a specific H.264 output profile; explicit profile caps are added
-// only where needed. When h264parse is available, every H.264 segment is suffixed
-// with h264ByteStream to normalize to Annex B byte-stream. When h264parse is absent
-// (gst-plugins-bad not installed), hardware encoders such as nvv4l2h264enc and
-// v4l2h264enc output byte-stream natively; x264enc may output AVC in that case.
-// gop is the keyframe interval in frames (see keyframeIntervalFrames).
 func encoderSegment(encoder string, hasH264Parse bool, gop int) string {
 	if encoder == "vp8enc" {
 		// webmmux streamable=true writes headers that matroskademux can parse from a pipe.

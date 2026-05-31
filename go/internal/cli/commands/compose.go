@@ -76,8 +76,6 @@ func parseComposeFile(dir string) (*composeConfig, string, error) {
 	return nil, "", fmt.Errorf("no docker-compose file found in %s", dir)
 }
 
-// composeBuildContext returns the build context dir and Dockerfile for a service.
-// Returns ("", "", nil) when the service uses a pre-built image.
 func composeBuildContext(svc composeService, projectDir string) (ctxDir, dockerfile string, buildArgs map[string]string, err error) {
 	if svc.Build.IsZero() {
 		return "", "", nil, nil
@@ -114,9 +112,6 @@ func composeBuildContext(svc composeService, projectDir string) (ctxDir, dockerf
 	return "", "", nil, fmt.Errorf("unsupported build directive (yaml kind %d); expected a path string or a mapping", svc.Build.Kind)
 }
 
-// composeCommand returns the command for a service as a slice. Sequence form
-// preserves each argv element verbatim. Scalar form is shell-split into argv
-// tokens, matching docker-compose's documented behaviour.
 func composeCommand(svc composeService) []string {
 	if svc.Command.IsZero() {
 		return nil

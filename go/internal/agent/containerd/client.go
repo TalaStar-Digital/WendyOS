@@ -47,7 +47,6 @@ var _ services.ContainerdClient = (*Client)(nil)
 // DefaultAddress is the default containerd socket path on Linux.
 const DefaultAddress = "/run/containerd/containerd.sock"
 
-// Client wraps the containerd SDK client and implements services.ContainerdClient.
 type Client struct {
 	client       *containerd.Client
 	logger       *zap.Logger
@@ -56,9 +55,6 @@ type Client struct {
 	proxyManager *dbusproxy.Manager // nil if xdg-dbus-proxy is not available
 }
 
-// NewClient creates a new containerd SDK client connected to the given Unix
-// socket address. If address is empty, DefaultAddress is used.
-// proxyMgr may be nil if xdg-dbus-proxy is not available.
 func NewClient(logger *zap.Logger, address string, proxyMgr *dbusproxy.Manager) (*Client, error) {
 	if address == "" {
 		address = DefaultAddress
@@ -86,7 +82,6 @@ func (c *Client) Close() error {
 	return c.client.Close()
 }
 
-// withNamespace returns a context annotated with the client's containerd namespace.
 func (c *Client) withNamespace(ctx context.Context) context.Context {
 	return namespaces.WithNamespace(ctx, c.namespace)
 }
@@ -130,11 +125,6 @@ func isLayerDigest(info content.Info) bool {
 	return false
 }
 
-// WriteLayer writes a layer blob to the containerd content store. The digest
-// parameter should be the expected content digest (e.g. "sha256:abc123...").
-// Data is read from the provided io.Reader, which allows streaming without
-// buffering the entire layer in memory. If size is 0, the descriptor size is
-// left unset and determined by the content store from the reader.
 func (c *Client) WriteLayer(ctx context.Context, dgst string, reader io.Reader, size int64) error {
 	ctx = c.withNamespace(ctx)
 	cs := c.client.ContentStore()
@@ -171,9 +161,6 @@ func (c *Client) WriteLayer(ctx context.Context, dgst string, reader io.Reader, 
 	return nil
 }
 
-// layerMediaType returns the OCI media type for a layer given its compression.
-// The compression field takes precedence; when it is COMPRESSION_GZIP (the zero
-// default), the legacy gzip bool determines the type for backward compatibility.
 func layerMediaType(compression agentpb.RunContainerLayerHeader_CompressionType, gzip bool) string {
 	switch compression {
 	case agentpb.RunContainerLayerHeader_COMPRESSION_ZSTD:
@@ -188,9 +175,6 @@ func layerMediaType(compression agentpb.RunContainerLayerHeader_CompressionType,
 	}
 }
 
-// AssembleImage creates a containerd image from layers already present in the
-// content store. It builds an OCI manifest and config, writes them to the content
-// store, and registers the image. If the image already exists it is updated.
 func (c *Client) AssembleImage(ctx context.Context, imageName string, layers []*agentpb.RunContainerLayerHeader) error {
 	ctx = c.withNamespace(ctx)
 	cs := c.client.ContentStore()
@@ -591,9 +575,6 @@ func (c *Client) applyCDIGPU(spec *localoci.Spec) {
 	c.logger.Warn("CDI spec found but no devices could be applied")
 }
 
-// StartContainer starts the task for a named container and returns a channel
-// that streams stdout/stderr output. When the container exits, a final
-// ContainerOutput with Done=true is sent and the channel is closed.
 func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentCommand string, restartPolicy *agentpb.RestartPolicy) (<-chan services.ContainerOutput, error) {
 	ctx = c.withNamespace(ctx)
 
@@ -752,9 +733,6 @@ func shellCommand() (string, string) {
 	return "sh", "-c"
 }
 
-// deviceHostnameWithSuffix returns the device's mDNS hostname with the ".local"
-// suffix (e.g. "wendyos-mighty-kayak.local"), or "" if the OS hostname is
-// unavailable. Indirected through a var so tests can override it.
 var deviceHostnameWithSuffix = func() string {
 	h, err := os.Hostname()
 	if err != nil || h == "" {
@@ -763,11 +741,6 @@ var deviceHostnameWithSuffix = func() string {
 	return h + ".local"
 }
 
-// buildContainerBaseEnv builds the wendy-injected env vars layered on top of
-// the image's own env. WENDY_HOSTNAME is the device's mDNS hostname
-// (omitted when unresolvable) and WENDY_APP_ID is the app's wendy.json appId
-// (omitted when empty). OTEL_EXPORTER_OTLP_ENDPOINT points at the
-// agent's OTLP gRPC receiver so containers auto-configure their exporters.
 func buildContainerBaseEnv(appID string) []string {
 	env := []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -1126,8 +1099,6 @@ func (c *Client) StopContainer(ctx context.Context, appName string) error {
 	return nil
 }
 
-// DeleteContainer stops the container task if running, deletes the container,
-// cleans up the snapshot, and optionally deletes the image.
 func (c *Client) DeleteContainer(ctx context.Context, appName string, deleteImage bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1243,8 +1214,6 @@ func (c *Client) ListContainers(ctx context.Context) ([]*agentpb.AppContainer, e
 	return result, nil
 }
 
-// GetContainerMCPPort returns the MCP server port for the named container,
-// or 0 if the container has no mcp entitlement.
 func (c *Client) GetContainerMCPPort(ctx context.Context, appName string) (uint32, error) {
 	ctx = c.withNamespace(ctx)
 	ctr, err := c.client.LoadContainer(ctx, appName)
@@ -1266,9 +1235,6 @@ func (c *Client) GetContainerMCPPort(ctx context.Context, appName string) (uint3
 	return uint32(p), nil
 }
 
-// GetContainerRestartPolicyLabel returns the raw restart policy label stored on
-// the container (e.g. "unless-stopped", "on-failure:5", "no"). An empty string
-// is returned when the container exists but has no restart policy label.
 func (c *Client) GetContainerRestartPolicyLabel(ctx context.Context, appName string) (string, error) {
 	ctx = c.withNamespace(ctx)
 	ctr, err := c.client.LoadContainer(ctx, appName)
@@ -1317,8 +1283,6 @@ func (c *Client) GetContainerStats(ctx context.Context) ([]*agentpb.ContainerSta
 	return result, nil
 }
 
-// GetContainerMetrics returns a point-in-time CPU and memory snapshot for a named container.
-// Returns an error if the container or its task cannot be found.
 func (c *Client) GetContainerMetrics(ctx context.Context, appName string) (services.ContainerMetrics, error) {
 	ctx = c.withNamespace(ctx)
 	container, err := c.client.LoadContainer(ctx, appName)
@@ -1376,8 +1340,6 @@ func extractMemoryBytes(metric *types.Metric) int64 {
 	return extractContainerMetrics(metric).MemBytes
 }
 
-// streamReader is a helper that continuously reads from a reader and sends
-// chunks to the output channel with the specified builder function.
 func streamReader(r io.Reader, ch chan<- services.ContainerOutput, buildOutput func([]byte) services.ContainerOutput) {
 	buf := make([]byte, 32*1024)
 	for {

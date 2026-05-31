@@ -499,9 +499,6 @@ func formatTransferRate(bytesSent int64, elapsed time.Duration) string {
 	return humanize.Bytes(uint64(rate)) + "/s"
 }
 
-// effectiveRemotePath returns the effective destination path on the device for
-// a FileSyncEntry from AppConfig. When To is empty it defaults to Path with any
-// leading "./" stripped.
 func effectiveRemotePath(path, to string) string {
 	if to != "" {
 		return to

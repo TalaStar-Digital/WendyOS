@@ -17,7 +17,6 @@ type AudioServiceV2 struct {
 	v1 *AudioService
 }
 
-// NewAudioServiceV2 creates a new AudioServiceV2 wrapping the given v1 service.
 func NewAudioServiceV2(v1 *AudioService) *AudioServiceV2 {
 	return &AudioServiceV2{v1: v1}
 }

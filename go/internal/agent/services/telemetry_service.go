@@ -25,7 +25,6 @@ const (
 	maxCachedResourcesPerService = 100
 )
 
-// TelemetryBroadcaster fans out received OTEL telemetry to multiple connected clients.
 type TelemetryBroadcaster struct {
 	mu            sync.RWMutex
 	logSubs       map[string]chan *otelpb.ExportLogsServiceRequest
@@ -38,7 +37,6 @@ type TelemetryBroadcaster struct {
 	latestMetrics map[string]*otelpb.ExportMetricsServiceRequest // keyed by "service"
 }
 
-// NewTelemetryBroadcaster creates a new TelemetryBroadcaster.
 func NewTelemetryBroadcaster() *TelemetryBroadcaster {
 	return &TelemetryBroadcaster{
 		logSubs:       make(map[string]chan *otelpb.ExportLogsServiceRequest),
@@ -53,7 +51,6 @@ func (b *TelemetryBroadcaster) nextSubID() string {
 	return fmt.Sprintf("sub-%d", b.nextID)
 }
 
-// SubscribeLogs adds a log subscriber and returns the channel and subscription ID.
 // Cached recent logs are pre-filled into the channel asynchronously.
 func (b *TelemetryBroadcaster) SubscribeLogs() (string, <-chan *otelpb.ExportLogsServiceRequest) {
 	b.mu.Lock()
@@ -86,7 +83,6 @@ func (b *TelemetryBroadcaster) SubscribeLogs() (string, <-chan *otelpb.ExportLog
 	return id, ch
 }
 
-// UnsubscribeLogs removes a log subscriber.
 func (b *TelemetryBroadcaster) UnsubscribeLogs(id string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -96,7 +92,6 @@ func (b *TelemetryBroadcaster) UnsubscribeLogs(id string) {
 	}
 }
 
-// PublishLogs sends a log export request to all log subscribers and caches the log.
 func (b *TelemetryBroadcaster) PublishLogs(req *otelpb.ExportLogsServiceRequest) {
 	b.mu.Lock()
 	b.recentLogs[b.logHead] = req
@@ -114,7 +109,6 @@ func (b *TelemetryBroadcaster) PublishLogs(req *otelpb.ExportLogsServiceRequest)
 	b.mu.Unlock()
 }
 
-// SubscribeMetrics adds a metrics subscriber.
 // Cached latest metrics are pre-filled into the channel asynchronously.
 func (b *TelemetryBroadcaster) SubscribeMetrics() (string, <-chan *otelpb.ExportMetricsServiceRequest) {
 	b.mu.Lock()
@@ -151,7 +145,6 @@ func (b *TelemetryBroadcaster) SubscribeMetrics() (string, <-chan *otelpb.Export
 	return id, ch
 }
 
-// UnsubscribeMetrics removes a metrics subscriber.
 func (b *TelemetryBroadcaster) UnsubscribeMetrics(id string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -161,12 +154,6 @@ func (b *TelemetryBroadcaster) UnsubscribeMetrics(id string) {
 	}
 }
 
-// PublishMetrics sends a metrics export request to all metrics subscribers and updates the cache.
-// latestMetrics holds one merged ExportMetricsServiceRequest per service. New batches are
-// merged into the cached state by scope name + metric name rather than replacing it wholesale,
-// so a later partial batch (e.g. metric a only) does not drop a previously reported metric
-// (e.g. metric b) for subscribers that join late. The live broadcast still forwards the
-// original request unchanged.
 func (b *TelemetryBroadcaster) PublishMetrics(req *otelpb.ExportMetricsServiceRequest) {
 	b.mu.Lock()
 	for _, rm := range req.GetResourceMetrics() {
@@ -256,9 +243,6 @@ func mergeServiceMetrics(cached *otelpb.ExportMetricsServiceRequest, rm *otelpb.
 	return cached
 }
 
-// resourceKey returns a deterministic key for a Resource based on its sorted
-// attribute set, distinguishing resource instances that share service.name but
-// differ in other attributes (e.g. service.instance.id for different pods).
 func resourceKey(r *otelpb.Resource) string {
 	attrs := r.GetAttributes()
 	if len(attrs) == 0 {
@@ -272,14 +256,10 @@ func resourceKey(r *otelpb.Resource) string {
 	return strings.Join(parts, "\x00")
 }
 
-// scopeKey returns a deterministic key for a ScopeMetrics entry using scope
-// name, version, and schema_url — all three fields together identify a unique
-// instrumentation scope per the OTLP specification.
 func scopeKey(sm *otelpb.ScopeMetrics) string {
 	return sm.GetScope().GetName() + "\x00" + sm.GetScope().GetVersion() + "\x00" + sm.GetSchemaUrl()
 }
 
-// SubscribeTraces adds a traces subscriber.
 func (b *TelemetryBroadcaster) SubscribeTraces() (string, <-chan *otelpb.ExportTraceServiceRequest) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -289,7 +269,6 @@ func (b *TelemetryBroadcaster) SubscribeTraces() (string, <-chan *otelpb.ExportT
 	return id, ch
 }
 
-// UnsubscribeTraces removes a traces subscriber.
 func (b *TelemetryBroadcaster) UnsubscribeTraces(id string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -299,7 +278,6 @@ func (b *TelemetryBroadcaster) UnsubscribeTraces(id string) {
 	}
 }
 
-// PublishTraces sends a trace export request to all trace subscribers.
 func (b *TelemetryBroadcaster) PublishTraces(req *otelpb.ExportTraceServiceRequest) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -311,14 +289,12 @@ func (b *TelemetryBroadcaster) PublishTraces(req *otelpb.ExportTraceServiceReque
 	}
 }
 
-// TelemetryService implements agentpb.WendyTelemetryServiceServer.
 type TelemetryService struct {
 	agentpb.UnimplementedWendyTelemetryServiceServer
 	logger      *zap.Logger
 	broadcaster *TelemetryBroadcaster
 }
 
-// NewTelemetryService creates a new TelemetryService.
 func NewTelemetryService(logger *zap.Logger, broadcaster *TelemetryBroadcaster) *TelemetryService {
 	return &TelemetryService{
 		logger:      logger,
@@ -326,12 +302,10 @@ func NewTelemetryService(logger *zap.Logger, broadcaster *TelemetryBroadcaster) 
 	}
 }
 
-// Broadcaster returns the underlying broadcaster for publishing telemetry data.
 func (s *TelemetryService) Broadcaster() *TelemetryBroadcaster {
 	return s.broadcaster
 }
 
-// StreamLogs streams filtered log records to the client.
 func (s *TelemetryService) StreamLogs(req *agentpb.StreamLogsRequest, stream grpc.ServerStreamingServer[agentpb.StreamLogsResponse]) error {
 	ctx := stream.Context()
 
@@ -366,7 +340,6 @@ func (s *TelemetryService) StreamLogs(req *agentpb.StreamLogsRequest, stream grp
 	}
 }
 
-// StreamMetrics streams filtered metrics to the client.
 func (s *TelemetryService) StreamMetrics(req *agentpb.StreamMetricsRequest, stream grpc.ServerStreamingServer[agentpb.StreamMetricsResponse]) error {
 	ctx := stream.Context()
 
@@ -402,7 +375,6 @@ func (s *TelemetryService) StreamMetrics(req *agentpb.StreamMetricsRequest, stre
 	}
 }
 
-// StreamTraces streams filtered traces to the client.
 func (s *TelemetryService) StreamTraces(req *agentpb.StreamTracesRequest, stream grpc.ServerStreamingServer[agentpb.StreamTracesResponse]) error {
 	ctx := stream.Context()
 
@@ -438,60 +410,48 @@ func (s *TelemetryService) StreamTraces(req *agentpb.StreamTracesRequest, stream
 	}
 }
 
-// OTELLogsReceiver implements otelpb.LogsServiceServer so the agent can receive
-// OTEL logs from containers and broadcast them to CLI clients.
 type OTELLogsReceiver struct {
 	otelpb.UnimplementedLogsServiceServer
 	broadcaster *TelemetryBroadcaster
 }
 
-// NewOTELLogsReceiver creates a new OTELLogsReceiver.
 func NewOTELLogsReceiver(b *TelemetryBroadcaster) *OTELLogsReceiver {
 	return &OTELLogsReceiver{broadcaster: b}
 }
 
-// Export receives OTEL logs and fans them out to subscribers.
 func (r *OTELLogsReceiver) Export(_ context.Context, req *otelpb.ExportLogsServiceRequest) (*otelpb.ExportLogsServiceResponse, error) {
 	r.broadcaster.PublishLogs(req)
 	return &otelpb.ExportLogsServiceResponse{}, nil
 }
 
-// OTELMetricsReceiver implements otelpb.MetricsServiceServer.
 type OTELMetricsReceiver struct {
 	otelpb.UnimplementedMetricsServiceServer
 	broadcaster *TelemetryBroadcaster
 }
 
-// NewOTELMetricsReceiver creates a new OTELMetricsReceiver.
 func NewOTELMetricsReceiver(b *TelemetryBroadcaster) *OTELMetricsReceiver {
 	return &OTELMetricsReceiver{broadcaster: b}
 }
 
-// Export receives OTEL metrics and fans them out to subscribers.
 func (r *OTELMetricsReceiver) Export(_ context.Context, req *otelpb.ExportMetricsServiceRequest) (*otelpb.ExportMetricsServiceResponse, error) {
 	r.broadcaster.PublishMetrics(req)
 	return &otelpb.ExportMetricsServiceResponse{}, nil
 }
 
-// OTELTraceReceiver implements otelpb.TraceServiceServer.
 type OTELTraceReceiver struct {
 	otelpb.UnimplementedTraceServiceServer
 	broadcaster *TelemetryBroadcaster
 }
 
-// NewOTELTraceReceiver creates a new OTELTraceReceiver.
 func NewOTELTraceReceiver(b *TelemetryBroadcaster) *OTELTraceReceiver {
 	return &OTELTraceReceiver{broadcaster: b}
 }
 
-// Export receives OTEL traces and fans them out to subscribers.
 func (r *OTELTraceReceiver) Export(_ context.Context, req *otelpb.ExportTraceServiceRequest) (*otelpb.ExportTraceServiceResponse, error) {
 	r.broadcaster.PublishTraces(req)
 	return &otelpb.ExportTraceServiceResponse{}, nil
 }
 
-// matchResourceAttributes checks whether a resource's attributes match the given
-// service name filter. Returns true if all specified filters match.
 func matchResourceAttributes(resource *otelpb.Resource, serviceName *string, appName *string) bool {
 	if serviceName == nil && appName == nil {
 		return true
@@ -511,7 +471,6 @@ func matchResourceAttributes(resource *otelpb.Resource, serviceName *string, app
 	return false
 }
 
-// resourceServiceName extracts the service.name attribute from a resource, if present.
 func resourceServiceName(resource *otelpb.Resource) string {
 	for _, attr := range resource.GetAttributes() {
 		if attr.GetKey() == "service.name" {

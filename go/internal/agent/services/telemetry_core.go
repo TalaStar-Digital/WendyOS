@@ -13,7 +13,6 @@ import (
 	otelpb "github.com/wendylabsinc/wendy/go/proto/gen/otelpb"
 )
 
-// resolveHostname returns the machine hostname, resolved once at startup.
 var resolveHostname = sync.OnceValue(func() string {
 	h, _ := os.Hostname()
 	return h
@@ -43,7 +42,6 @@ type TelemetryCore struct {
 	resource    *otelpb.Resource
 }
 
-// NewTelemetryCore creates a new TelemetryCore that publishes to the given broadcaster.
 func NewTelemetryCore(broadcaster *TelemetryBroadcaster, level zapcore.Level) *TelemetryCore {
 	return &TelemetryCore{
 		broadcaster: broadcaster,

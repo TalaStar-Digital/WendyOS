@@ -48,9 +48,7 @@ func WithLogManager(lm *ContainerLogManager) ContainerServiceOption {
 	}
 }
 
-// WithMonitor sets the ContainerMonitorRegistrar on the ContainerService so
-// that containers started with a restart policy are registered for automatic
-// restart monitoring.
+// Containers started with a restart policy are registered for automatic restart monitoring.
 func WithMonitor(m ContainerMonitorRegistrar) ContainerServiceOption {
 	return func(s *ContainerService) {
 		s.monitor = m

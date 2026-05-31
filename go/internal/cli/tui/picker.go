@@ -92,7 +92,6 @@ type PickerModel struct {
 	height       int
 }
 
-// NewPicker creates a new picker model with the default "Select a device" title.
 func NewPicker() PickerModel {
 	m := PickerModel{
 		Title:        "Select a device",
@@ -106,7 +105,6 @@ func NewPicker() PickerModel {
 	return m
 }
 
-// NewPickerWithTitle creates a new picker model with a custom title.
 func NewPickerWithTitle(title string) PickerModel {
 	m := PickerModel{
 		Title:    title,
@@ -282,7 +280,6 @@ func (m PickerModel) Cancelled() bool {
 	return m.quitting
 }
 
-// Selected returns the item the user chose, or nil if they quit without selecting.
 func (m PickerModel) Selected() *PickerItem {
 	return m.selected
 }
@@ -415,7 +412,6 @@ func (m *PickerModel) refreshTableWithCursorKey(cursorKey string) {
 	m.table.SetHeight(PickerTableHeight(len(rows), m.height))
 }
 
-// pickerItemKey returns the dedup key for an item (DedupKey, or Name if empty).
 func pickerItemKey(item PickerItem) string {
 	if item.DedupKey != "" {
 		return item.DedupKey
@@ -527,7 +523,6 @@ func pickerColumns(rows []bubbleTable.Row, defs []pickerColumnDef, hasDefaultCol
 	return cols
 }
 
-// PickerTableWidth returns the rendered width for picker table columns.
 func PickerTableWidth(cols []bubbleTable.Column) int {
 	total := 0
 	for _, col := range cols {
@@ -536,7 +531,6 @@ func PickerTableWidth(cols []bubbleTable.Column) int {
 	return total
 }
 
-// PickerTableHeight returns the picker table height for the row count/window.
 func PickerTableHeight(rowCount, windowHeight int) int {
 	height := max(rowCount+1, 4)
 	if windowHeight > 0 {

@@ -27,7 +27,6 @@ type dockerComposeBuildContext struct {
 	ComposeFile string
 }
 
-// composeFile returns the first docker-compose filename found in dir, or "".
 func composeFile(dir string) string {
 	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
@@ -199,9 +198,6 @@ func (p *DockerProvider) BuildWithDockerfile(ctx context.Context, device models.
 	}, nil
 }
 
-// BuildFromImage creates a BuiltApp handle for a pre-built Docker image.
-// This is used when the image was built outside of the provider's Build method
-// (e.g. Swift cross-compilation followed by docker build).
 func (p *DockerProvider) BuildFromImage(device models.ExternalDevice, product, imageName string) *BuiltApp {
 	return &BuiltApp{
 		ProviderKey: p.Key(),
