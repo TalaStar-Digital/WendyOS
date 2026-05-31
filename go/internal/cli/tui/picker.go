@@ -19,6 +19,7 @@ type PickerItem struct {
 	Address      string
 	AgentVersion string
 	OSVersion    string
+	Hint         string // optional footer text shown when this item is highlighted
 
 	// DedupKey is used for deduplication. If empty, Name is used.
 	// Items with the same DedupKey (case-insensitive) are merged via MergeItem.
@@ -261,7 +262,22 @@ func (m PickerModel) View() string {
 		sb.WriteString("\n" + m.viewLine(pickerScanning.Render("  Scanning for more results...")) + "\n")
 	}
 
+	if hint := m.selectedHint(); hint != "" {
+		if !m.scanning {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(m.viewLine(pickerHint.Render("  "+hint)) + "\n")
+	}
+
 	return sb.String()
+}
+
+func (m PickerModel) selectedHint() string {
+	cursor := m.table.Cursor()
+	if cursor < 0 || cursor >= len(m.items) {
+		return ""
+	}
+	return strings.TrimSpace(m.items[cursor].Hint)
 }
 
 func (m PickerModel) viewLine(line string) string {

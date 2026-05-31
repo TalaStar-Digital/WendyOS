@@ -1322,6 +1322,7 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 								OSVersion:    devices[i].OSVersion,
 								DedupKey:     devices[i].DisplayName,
 								SortKey:      externalProviderSortKey(prov.Key(), devices[i].DisplayName),
+								Hint:         externalProviderPickerHint(prov.Key()),
 								Value:        &pickerEntry{externalDevice: &devices[i], provider: prov},
 							})
 						}

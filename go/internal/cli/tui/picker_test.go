@@ -279,6 +279,37 @@ func TestPickerModel_ShowsUSBInTypeColumn(t *testing.T) {
 	}
 }
 
+func TestPickerModel_ShowsSelectedHintAtBottom(t *testing.T) {
+	dockerHint := "Hint: Use Docker Desktop for local container or Compose runs when you do not need WendyOS hardware."
+	localHint := "Hint: Use Local Machine for native Swift, Go, or Python apps that should run directly on this computer."
+	m := NewPicker()
+
+	updated, _ := m.Update(PickerAddMsg{Items: []PickerItem{
+		{Name: "Docker Desktop", Type: "Docker Desktop", Hint: dockerHint, Value: "docker"},
+		{Name: "Local Machine", Type: "This Device", Hint: localHint, Value: "local"},
+	}})
+	pm := updated.(PickerModel)
+
+	plain := ansi.Strip(pm.View())
+	if got := lastNonEmptyLine(plain); got != dockerHint {
+		t.Fatalf("footer hint = %q, want %q", got, dockerHint)
+	}
+	if strings.Contains(plain, localHint) {
+		t.Fatalf("unexpected non-selected hint %q in view %q", localHint, plain)
+	}
+
+	updated, _ = pm.Update(tea.KeyMsg{Type: tea.KeyDown})
+	pm = updated.(PickerModel)
+
+	plain = ansi.Strip(pm.View())
+	if got := lastNonEmptyLine(plain); got != localHint {
+		t.Fatalf("footer hint after moving cursor = %q, want %q", got, localHint)
+	}
+	if strings.Contains(plain, dockerHint) {
+		t.Fatalf("unexpected previous hint %q in view %q", dockerHint, plain)
+	}
+}
+
 func TestPickerModel_DefaultKeyShowsStar(t *testing.T) {
 	m := NewPickerWithTitle("Select a device")
 	m.DefaultKey = "alpha"
@@ -477,4 +508,12 @@ func columnWidth(cols []bubbleTable.Column, title string) int {
 		}
 	}
 	return 0
+}
+
+func lastNonEmptyLine(view string) string {
+	lines := strings.Split(strings.TrimSpace(view), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(lines[len(lines)-1])
 }
