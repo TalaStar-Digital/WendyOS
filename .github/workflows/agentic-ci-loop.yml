@@ -82,18 +82,35 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           PR_NUMBER: ${{ steps.find-pr.outputs.pr_number }}
         run: |
-          FAILING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
-            --jq '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(",")' \
-            2>/dev/null || true)
+          CHECK_RUNS=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
+            2>/dev/null || echo '{"check_runs":[]}')
 
-          BOT_COMMENTS=$(gh api "repos/$REPO/pulls/$PR_NUMBER/comments" \
-            --jq '[.[] | select(.user.login == "github-actions[bot]")] | length' \
+          FAILING=$(printf '%s' "$CHECK_RUNS" \
+            | jq -r '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(",")')
+
+          PENDING=$(printf '%s' "$CHECK_RUNS" \
+            | jq -r '[.check_runs[] | select(.status == "in_progress" or .status == "queued") | .name] | join(",")')
+
+          # Count active (non-outdated) inline bot comments; position is null when the diff moves on.
+          BOT_INLINE=$(gh api "repos/$REPO/pulls/$PR_NUMBER/comments" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.position != null)] | length' \
             2>/dev/null || echo "0")
+
+          # Count bot reviews with CHANGES_REQUESTED or a non-empty COMMENTED body.
+          BOT_REVIEWS=$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]") |
+                   select(.state == "CHANGES_REQUESTED" or (.state == "COMMENTED" and (.body // "") != ""))] | length' \
+            2>/dev/null || echo "0")
+
+          BOT_COMMENTS=$(( BOT_INLINE + BOT_REVIEWS ))
 
           echo "failing_checks=$FAILING" >> "$GITHUB_OUTPUT"
           echo "bot_comments=$BOT_COMMENTS" >> "$GITHUB_OUTPUT"
 
-          if [ -z "$FAILING" ] && [ "$BOT_COMMENTS" = "0" ]; then
+          if [ -n "$PENDING" ]; then
+            echo "needs_work=false" >> "$GITHUB_OUTPUT"
+            echo "Checks still in progress ($PENDING) — deferring until they complete"
+          elif [ -z "$FAILING" ] && [ "$BOT_COMMENTS" = "0" ]; then
             echo "needs_work=false" >> "$GITHUB_OUTPUT"
             echo "All checks pass and no bot comments — nothing to do"
           else
