@@ -90,6 +90,12 @@ on:
 # the most recent arrival, keeping the loop count bounded to one per PR.
 # For interactive triggers (review comments), the latest run always sees the full
 # accumulated feedback anyway, so cancelling a stale in-flight run is safe.
+# RISK ACCEPTANCE (adversarial cancellation): only OWNER/MEMBER actors can trigger
+# this workflow (enforced by the gate job's if: conditions and live API re-check).
+# An adversary outside the org cannot land a new event in this concurrency group,
+# so the cancellation surface is limited to trusted org members. The circuit
+# breaker (BOT_STREAK >= 3) and SHA re-verification in respond provide additional
+# protection if a member were to act maliciously.
 # DoS bound: each run is capped at timeout-minutes: 30 (respond job) and the
 # circuit breaker (BOT_STREAK >= 3) prevents unbounded AI commit chains.
 concurrency:
@@ -120,6 +126,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      administration: read  # required for rulesets API (gh api .../rulesets) in guard step
     outputs:
       pr_number:   ${{ steps.resolve.outputs.pr_number }}
       head_sha:    ${{ steps.guard.outputs.head_sha }}
@@ -320,6 +327,19 @@ jobs:
             exit 0
           fi
 
+          # Verify a server-side ruleset covers ai/** before provisioning write tokens.
+          # Checked here (gate, no AI, no write tokens) rather than in respond to limit
+          # the blast radius of the administration:read permission to this minimal job.
+          MATCHING_RULESETS=$(gh api "repos/$REPO/rulesets" \
+            --jq '[.[] | select(.enforcement == "active") | select(any((.conditions.ref_name.include // [])[]?; . == "~ALL" or startswith("refs/heads/ai/") or . == "refs/heads/**" or . == "refs/heads/*"))] | length' \
+            2>/dev/null || echo '0')
+          if [ "$MATCHING_RULESETS" = "0" ]; then
+            echo "::error::No active ruleset covers ai/** branches — server-side push restrictions not configured"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Matching active rulesets for ai/**: $MATCHING_RULESETS found"
+
           echo "proceed=true" >> "$GITHUB_OUTPUT"
 
       - name: Fail if not authorized
@@ -341,7 +361,6 @@ jobs:
       checks: read
       actions: read
       issues: write
-      administration: read
     # SECURITY NOTE — step-level secrets:
     #   ANTHROPIC_API_KEY is injected only in the "Run Claude Code" step env.
     #   WENDY_TEMPLATE_SYNC_TOKEN (PAT for git push) is scoped to the "Push changes" step.
@@ -424,7 +443,7 @@ jobs:
           # gh api --jq runs per-page and would emit multiple timestamps with --paginate.
           CONTINUE_TS=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
             | jq --slurp '
-              add |
+              (add // []) |
               [ .[]
                 | select(.body | test("(?m)^\\r?/continue(\\s|$)"))
                 | select(.author_association as $a |
@@ -441,7 +460,7 @@ jobs:
           # Reversing the array ensures we count unbroken bot commits at HEAD.
           BOT_STREAK=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits?per_page=100" \
             | jq --arg ts "$CONTINUE_TS" --slurp '
-              add |
+              (add // []) |
               [
                 reverse[] |
                 if ((.author?.login // "") == "github-actions[bot]" and
@@ -1261,19 +1280,8 @@ jobs:
             exit 1
           fi
           echo "Branch protection confirmed: main is protected"
-          # Secondary check: verify an active ruleset covers the ai/** branch pattern.
-          # Fail closed: any error or no matching ruleset aborts the push.
-          # Checks for rulesets whose include patterns contain ~ALL (all branches),
-          # refs/heads/ai/ prefix, refs/heads/**, or refs/heads/* to ensure server-side
-          # push restrictions are actually in scope for the branch we will push to.
-          MATCHING_RULESETS=$(gh api "repos/${GITHUB_REPOSITORY}/rulesets" \
-            --jq '[.[] | select(.enforcement == "active") | select(any((.conditions.ref_name.include // [])[]?; . == "~ALL" or startswith("refs/heads/ai/") or . == "refs/heads/**" or . == "refs/heads/*"))] | length' \
-            2>/dev/null || echo '0')
-          if [ "$MATCHING_RULESETS" = "0" ]; then
-            echo "::error::No active ruleset covers ai/** branches — server-side push restrictions not configured"
-            exit 1
-          fi
-          echo "Matching active rulesets for ai/**: $MATCHING_RULESETS found"
+          # Ruleset check was moved to the gate job's guard step (runs under administration:read
+          # in a job with no AI and no write tokens) to minimise the scope of that permission.
           # Move token out of named env var immediately so it is absent from the
           # shell's /proc/self/environ for the rest of this step's child processes.
           PUSH_TOKEN="$TOKEN"
