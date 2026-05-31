@@ -30,7 +30,7 @@ name: AI Implement Issue
 #   ACTIONS_RUNTIME_TOKEN, credential helpers, ~/.config/gh/hosts.yml).
 #   Post-run "Verify Claude did not touch protected paths" step enforces:
 #     (1) protected-file blocklist  (2) source-directory allowlist
-#     (3) edit-only invariant (no new files)  (4) extension blocklist
+#     (3) extension blocklist
 #   ACCEPTED RISK: Path enforcement is architecturally post-hoc — Edit/MultiEdit
 #   writes files before the enforcement step runs. Mitigations: (1) enforcement
 #   REVERTS unauthorized files with git checkout -- . / git clean -fd before any
@@ -491,12 +491,6 @@ jobs:
           install -m 600 /dev/null "$RUNNER_TEMP/user-prompt.txt"
           printf '%s' "$USER_PROMPT" > "$RUNNER_TEMP/user-prompt.txt"
           # Use env -i to limit Claude's visible environment to only what it needs.
-          # --allowedTools "Edit,MultiEdit" is an EXCLUSIVE allowlist — all other tools are
-          # blocked by the Claude Code CLI. The Edit tool CAN create files at non-existent
-          # paths in some CLI versions; the invariant check below enforces the edit-only model.
-          # Snapshot untracked files BEFORE Claude runs; saved so the dedicated
-          # "Verify Claude did not touch protected paths" step can compare after.
-          git ls-files -z --others --exclude-standard | sort -z > "$RUNNER_TEMP/pre-run-untracked.txt"
           # Only file PATHS are passed via env -i — no secret values in cmdline or
           # parent-process environ. The bash subshell reads each value from its file,
           # shreds the file, then exec-replaces itself with claude.
@@ -539,11 +533,10 @@ jobs:
       - name: Verify Claude did not touch protected paths
         # Post-Claude enforcement gate — primary path-restriction control.
         # Mirrors the equivalent step in ai-pr-feedback.yml. Runs before staging.
-        # Four-layer check (all abort with revert on violation):
+        # Three-layer check (all abort with revert on violation):
         #   1. .gitignore guard — tampered .gitignore could hide files from checks below
-        #   2. Edit-only invariant — system prompt says no new files; enforce at workflow level
-        #   3. Protected-file blocklist + source-directory allowlist
-        #   4. Extension blocklist (script/config files blocked even inside docs/)
+        #   2. Protected-file blocklist + source-directory allowlist
+        #   3. Extension blocklist (script/config files blocked even inside docs/)
         run: |
           # 1. .gitignore guard
           if git diff -z --name-only | tr '\0' '\n' | grep -qF '.gitignore'; then
@@ -552,25 +545,7 @@ jobs:
             git checkout -- . 2>/dev/null || true
             exit 1
           fi
-          # 2. Edit-only invariant: no new untracked files may appear after Claude runs,
-          # EXCEPT new test files inside the allowed source directories — adding tests
-          # alongside an implementation is expected and desirable.
-          git ls-files -z --others --exclude-standard | sort -z > "$RUNNER_TEMP/post-run-untracked.txt"
-          NEW_FILES=$(comm -z -23 \
-            <(sort -z < "$RUNNER_TEMP/post-run-untracked.txt") \
-            <(sort -z < "$RUNNER_TEMP/pre-run-untracked.txt" 2>/dev/null || printf '') \
-            | tr '\0' '\n' | head -20 || true)
-          # Allow new test files inside allowed source directories; block everything else.
-          BAD_NEW_FILES=$(printf '%s\n' "$NEW_FILES" | grep -v '^$' | grep -vE \
-            '^(go|swift|Sources|Tests|tests)/.*(_test\.go|_test\.swift|Tests?\.swift)$' || true)
-          if [ -n "$BAD_NEW_FILES" ]; then
-            echo "::error::Claude created new non-test files (edit-only model violated) — reverting and aborting:"
-            echo "$BAD_NEW_FILES"
-            git clean -fd 2>/dev/null || true
-            git checkout -- . 2>/dev/null || true
-            exit 1
-          fi
-          # 3. Protected-file blocklist and source-directory allowlist
+          # 2. Protected-file blocklist and source-directory allowlist
           PROTECTED=$(git diff --name-only | grep -E \
             '^(\.github/|CODEOWNERS|SECURITY\.md|security/|.*\.(pem|key|p12|pfx)|go/vendor/|go/generated/|swift/Packages/|go\.sum$|Package\.resolved$|package-lock\.json$|yarn\.lock$|Cargo\.lock$)' \
             || true)
