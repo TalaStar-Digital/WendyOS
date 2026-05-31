@@ -188,7 +188,9 @@ func logCertRejection(logger *zap.Logger, leaf *x509.Certificate, err error) {
 		zap.Error(err),
 	}
 	msg := "mTLS client certificate rejected"
-	if strings.Contains(err.Error(), "not yet valid") || strings.Contains(err.Error(), "certificate has expired or is not yet valid") {
+	if strings.Contains(err.Error(), "not yet valid") ||
+		strings.Contains(err.Error(), "certificate has expired or is not yet valid") ||
+		(strings.Contains(err.Error(), "not valid at current time") && time.Now().Before(leaf.NotBefore)) {
 		msg += ": certificate not yet valid — device clock may be skewed; check NTP sync with: timedatectl status"
 	}
 	logger.Warn(msg, fields...)
