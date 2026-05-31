@@ -330,9 +330,10 @@ jobs:
           # Verify a server-side ruleset covers ai/** before provisioning write tokens.
           # Checked here (gate, no AI, no write tokens) rather than in respond to limit
           # the blast radius of the administration:read permission to this minimal job.
-          MATCHING_RULESETS=$(gh api "repos/$REPO/rulesets" \
-            --jq '[.[] | select(.enforcement == "active") | select(any((.conditions.ref_name.include // [])[]?; . == "~ALL" or startswith("refs/heads/ai/") or . == "refs/heads/**" or . == "refs/heads/*"))] | length' \
-            2>/dev/null || echo '0')
+          MATCHING_RULESETS=$(gh api --paginate "repos/$REPO/rulesets" \
+            2>/dev/null \
+            | jq --slurp '(add // []) | [.[] | select(.enforcement == "active") | select(any((.conditions.ref_name.include // [])[]?; . == "~ALL" or startswith("refs/heads/ai/") or . == "refs/heads/**" or . == "refs/heads/*"))] | length' \
+            || echo '0')
           if [ "$MATCHING_RULESETS" = "0" ]; then
             echo "::error::No active ruleset covers ai/** branches — server-side push restrictions not configured"
             echo "proceed=false" >> "$GITHUB_OUTPUT"
@@ -436,6 +437,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
         run: |
+          set -o pipefail
           # Fail-safe: if either gh api call fails, abort rather than defaulting to
           # epoch (which could incorrectly reset the circuit breaker to zero streak).
           # Timestamp of the most recent /continue comment by a maintainer (or epoch).

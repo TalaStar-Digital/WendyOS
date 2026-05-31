@@ -82,8 +82,12 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           PR_NUMBER: ${{ steps.find-pr.outputs.pr_number }}
         run: |
-          CHECK_RUNS=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
-            2>/dev/null || echo '{"check_runs":[]}')
+          # --paginate merges all pages; each page wraps check_runs in an object so
+          # jq --slurp collects those objects and we flatten the inner arrays.
+          CHECK_RUNS=$(gh api --paginate "repos/$REPO/commits/$HEAD_SHA/check-runs" \
+            2>/dev/null \
+            | jq --slurp '{check_runs: [(.[].check_runs // [])[]]}' \
+            || echo '{"check_runs":[]}')
 
           FAILING=$(printf '%s' "$CHECK_RUNS" \
             | jq -r '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(",")')
