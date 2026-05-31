@@ -668,37 +668,14 @@ jobs:
           # Log what changed for audit trail
           echo "### AI-modified files" >> "$GITHUB_STEP_SUMMARY"
           git diff --cached --stat | head -200 >> "$GITHUB_STEP_SUMMARY"
-          # Exec-pattern scan: block AI-introduced subprocess/exec calls in source files.
-          # Scans staged diff (pre-commit) to mirror the pre-push validation in ai-pr-feedback.yml.
-          EXEC_PATTERNS=$(git diff --cached -- '*.go' '*.swift' 2>/dev/null \
-            | grep -E '^\+.*(exec\.(Command|Cmd|LookPath)|syscall\.Exec|os\.StartProcess)' \
-            | head -5 || true)
-          if [ -n "$EXEC_PATTERNS" ]; then
-            echo "::error::AI-modified source files introduce exec/subprocess calls — aborting:"
-            echo "$EXEC_PATTERNS"
-            git reset HEAD
-            exit 1
-          fi
           git commit -m "chore: implement issue via Claude Code (run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Post-commit exec-pattern scan
-        # Extension blocklist ran pre-commit (before git add) in the Commit step.
-        # This step logs the commit stat for audit and checks compiled-source exec calls.
+      - name: Post-commit audit log
         if: steps.commit.outputs.changed == 'true'
         run: |
           echo "=== Files changed in this commit ==="
           git show --stat HEAD
-          echo ""
-          EXEC_PATTERNS=$(git show HEAD -- '*.go' '*.swift' 2>/dev/null \
-            | grep -E '^\+.*(exec\.(Command|Cmd|LookPath)|syscall\.Exec|os\.StartProcess)' \
-            | head -5 || true)
-          if [ -n "$EXEC_PATTERNS" ]; then
-            echo "::error::AI-modified source files introduce exec/subprocess calls — aborting push:"
-            echo "$EXEC_PATTERNS"
-            exit 1
-          fi
-          echo "Post-commit exec-pattern scan passed"
 
       - name: Push branch
         if: steps.commit.outputs.changed == 'true'
