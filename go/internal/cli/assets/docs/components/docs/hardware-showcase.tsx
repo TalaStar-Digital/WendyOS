@@ -1,3 +1,5 @@
+import { basePath } from '@/lib/shared';
+
 type Board = {
   name: string;
   tagline: string;
@@ -42,14 +44,14 @@ export function HardwareShowcase() {
           className="flex flex-col overflow-hidden border bg-fd-card transition-colors hover:border-fd-primary/50"
         >
           <img
-            src={board.animation}
+            src={`${basePath}${board.animation}`}
             alt={`${board.name} board animation`}
             className="aspect-video w-full bg-fd-muted object-cover object-center"
             loading="lazy"
           />
           <div className="flex flex-1 flex-col gap-4 p-5">
             <div className="flex items-center gap-3">
-              <img src={board.logo} alt={board.name} className="h-9 w-9 object-contain" />
+              <img src={`${basePath}${board.logo}`} alt={board.name} className="h-9 w-9 object-contain" />
               <div>
                 <h3 className="font-semibold text-fd-card-foreground">{board.name}</h3>
                 <p className="text-sm text-fd-muted-foreground">{board.tagline}</p>

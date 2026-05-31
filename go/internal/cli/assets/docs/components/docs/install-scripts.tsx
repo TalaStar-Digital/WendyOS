@@ -1,8 +1,7 @@
 'use client';
 
 import { Check, Copy, Terminal, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useRef, useState } from 'react';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -44,94 +43,74 @@ function Command({ label, command }: { label?: string; command: string }) {
 }
 
 export function InstallScripts() {
-  const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const dialogRef = useRef<HTMLDialogElement>(null);
 
-  useEffect(() => setMounted(true), []);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
-    };
-  }, [open]);
-
+  // Native <dialog> rendered with showModal() lives in the browser top layer,
+  // so it covers the whole viewport regardless of any transformed/overflow
+  // ancestor (e.g. the sidebar this trigger sits in).
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => dialogRef.current?.showModal()}
         className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-sm font-medium text-fd-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"
       >
         <Terminal className="size-4" />
         Install Scripts
       </button>
 
-      {open && mounted
-        ? createPortal(
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setOpen(false)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Install Wendy"
-            className="relative w-full max-w-lg border bg-fd-popover text-fd-popover-foreground shadow-lg sm:max-w-xl"
-            onClick={(e) => e.stopPropagation()}
+      <dialog
+        ref={dialogRef}
+        aria-label="Install Wendy"
+        onClick={(e) => {
+          if (e.target === dialogRef.current) dialogRef.current?.close();
+        }}
+        className="m-auto w-full max-w-lg border bg-fd-popover p-0 text-fd-popover-foreground shadow-lg backdrop:bg-black/50 sm:max-w-xl"
+      >
+        <div className="relative">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => dialogRef.current?.close()}
+            className="absolute right-3 top-3 p-1 text-fd-muted-foreground transition-colors hover:text-fd-foreground"
           >
-            <button
-              type="button"
-              aria-label="Close"
-              onClick={() => setOpen(false)}
-              className="absolute right-3 top-3 p-1 text-fd-muted-foreground transition-colors hover:text-fd-foreground"
-            >
-              <X className="size-4" />
-            </button>
+            <X className="size-4" />
+          </button>
 
-            <div className="max-h-[85vh] overflow-y-auto p-6">
-              <h2 className="text-lg font-semibold">Install Wendy</h2>
+          <div className="max-h-[85vh] overflow-y-auto p-6">
+            <h2 className="text-lg font-semibold">Install Wendy</h2>
 
-              <section className="mt-5">
-                <h3 className="font-medium">Install Wendy CLI</h3>
-                <p className="mt-1 text-sm text-fd-muted-foreground">
-                  Install this on your developer machine or continuous integration machine.
-                </p>
-                <Command
-                  label="macOS / Linux"
-                  command="curl -fsSL https://install.wendy.sh/cli.sh | bash"
-                />
-                <Command
-                  label="Windows"
-                  command="winget install WendyLabs.Wendy --source winget"
-                />
-              </section>
+            <section className="mt-5">
+              <h3 className="font-medium">Install Wendy CLI</h3>
+              <p className="mt-1 text-sm text-fd-muted-foreground">
+                Install this on your developer machine or continuous integration machine.
+              </p>
+              <Command
+                label="macOS / Linux"
+                command="curl -fsSL https://install.wendy.sh/cli.sh | bash"
+              />
+              <Command
+                label="Windows"
+                command="winget install WendyLabs.Wendy --source winget"
+              />
+            </section>
 
-              <section className="mt-6">
-                <h3 className="font-medium">
-                  Install <code className="font-mono text-[0.95em]">wendy-agent</code>
-                </h3>
-                <p className="mt-1 text-sm text-fd-muted-foreground">
-                  Install this on your Linux machine. You do <strong>not</strong>{' '}
-                  need to do this for WendyOS — it&apos;s already there!
-                </p>
-                <Command
-                  label="Linux"
-                  command="curl -fsSL https://install.wendy.sh/agent.sh | bash"
-                />
-              </section>
-            </div>
+            <section className="mt-6">
+              <h3 className="font-medium">
+                Install <code className="font-mono text-[0.95em]">wendy-agent</code>
+              </h3>
+              <p className="mt-1 text-sm text-fd-muted-foreground">
+                Install this on your Linux machine. You do <strong>not</strong> need to do this for
+                WendyOS — it&apos;s already there!
+              </p>
+              <Command
+                label="Linux"
+                command="curl -fsSL https://install.wendy.sh/agent.sh | bash"
+              />
+            </section>
           </div>
-        </div>,
-          document.body,
-        )
-        : null}
+        </div>
+      </dialog>
     </>
   );
 }
