@@ -88,12 +88,16 @@ func newBuildCmd() *cobra.Command {
 					}
 				}
 
+				projectType, ptErr := resolveRunProjectType(cwd, opts.buildType)
+				if ptErr != nil {
+					return ptErr
+				}
+				if err := ensureProviderSupportsProjectType(target.Provider, projectType, cwd); err != nil {
+					return err
+				}
+
 				// Swift projects without a Dockerfile: cross-compile on the host and
 				// build a Docker image, bypassing the provider's normal Build method.
-				projectType, ptErr := detectProjectType(cwd)
-				if ptErr != nil {
-					cliLogln("Warning: could not detect project type: %v", ptErr)
-				}
 				if projectType == "swift" {
 					if _, ok := target.Provider.(providers.ImageBuilder); ok {
 						if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
@@ -403,6 +407,40 @@ func filterBuildOptions(options []BuildOption, provider providers.DeviceProvider
 		}
 	}
 	return filtered
+}
+
+func ensureProviderSupportsProjectType(provider providers.DeviceProvider, projectType, projectPath string) error {
+	if projectType == "unknown" && provider.CanBuild(projectPath) {
+		return nil
+	}
+	if providerSupportsProjectType(provider, projectType) {
+		return nil
+	}
+
+	providerName := provider.DisplayName()
+	if provider.Key() == providers.ProviderKeyLocal {
+		providerName = "Local Machine"
+	}
+
+	if provider.Key() == providers.ProviderKeyLocal && (projectType == "docker" || projectType == "compose") {
+		return fmt.Errorf("%s runs host-native apps and does not support %s projects; choose Docker Desktop with --device docker for local container runs", providerName, projectType)
+	}
+
+	return fmt.Errorf("%s provider does not support %s projects; supported build types: %s", providerName, projectType, strings.Join(provider.SupportedBuildTypes(), ", "))
+}
+
+func providerSupportsProjectType(provider providers.DeviceProvider, projectType string) bool {
+	if projectType == "swift" {
+		if _, ok := provider.(providers.ImageBuilder); ok {
+			return true
+		}
+	}
+	for _, supported := range provider.SupportedBuildTypes() {
+		if supported == projectType {
+			return true
+		}
+	}
+	return false
 }
 
 // detectProjectTypeWithLanguage determines the project type using the wendy.json

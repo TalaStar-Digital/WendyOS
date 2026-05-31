@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
+	"github.com/wendylabsinc/wendy/go/internal/cli/providers"
 )
 
 func mustDetectProjectType(t *testing.T, dir string) string {
@@ -487,6 +488,59 @@ func TestResolveDetectedBuildOption_DockerfileFlagNotFound(t *testing.T) {
 	_, err := resolveDetectedBuildOption(options, "", "Dockerfile.missing")
 	if err == nil {
 		t.Fatal("expected error for missing dockerfile")
+	}
+}
+
+func TestFilterBuildOptions_LocalProviderKeepsNativeOnly(t *testing.T) {
+	options := []BuildOption{
+		{Label: "compose.yml (Compose)", Type: "compose", File: "compose.yml"},
+		{Label: "Dockerfile", Type: "docker", File: "Dockerfile"},
+		{Label: "Package.swift (Swift)", Type: "swift", File: "Package.swift"},
+		{Label: "requirements.txt (Python)", Type: "python", File: "requirements.txt"},
+	}
+
+	got := filterBuildOptions(options, &providers.LocalProvider{})
+	if len(got) != 2 {
+		t.Fatalf("filtered options = %+v, want swift and python only", got)
+	}
+	for _, option := range got {
+		if option.Type != "swift" && option.Type != "python" {
+			t.Fatalf("filtered options include %q, want only swift/python: %+v", option.Type, got)
+		}
+	}
+}
+
+func TestEnsureProviderSupportsProjectType_LocalRejectsContainerProjects(t *testing.T) {
+	for _, projectType := range []string{"docker", "compose"} {
+		t.Run(projectType, func(t *testing.T) {
+			err := ensureProviderSupportsProjectType(&providers.LocalProvider{}, projectType, t.TempDir())
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			msg := err.Error()
+			for _, want := range []string{"Local Machine", "host-native", "Docker Desktop", "--device docker"} {
+				if !strings.Contains(msg, want) {
+					t.Fatalf("error = %q, want substring %q", msg, want)
+				}
+			}
+		})
+	}
+}
+
+func TestEnsureProviderSupportsProjectType_DockerProviderAllowsSwiftImageBuilder(t *testing.T) {
+	if err := ensureProviderSupportsProjectType(&providers.DockerProvider{}, "swift", t.TempDir()); err != nil {
+		t.Fatalf("DockerProvider should support swift via ImageBuilder: %v", err)
+	}
+}
+
+func TestEnsureProviderSupportsProjectType_LocalAllowsUnknownGoProject(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureProviderSupportsProjectType(&providers.LocalProvider{}, "unknown", dir); err != nil {
+		t.Fatalf("LocalProvider should allow unknown project types it can build directly: %v", err)
 	}
 }
 

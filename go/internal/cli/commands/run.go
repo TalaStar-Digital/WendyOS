@@ -979,6 +979,9 @@ func runWithProvider(ctx context.Context, p providers.DeviceProvider, device mod
 	if err != nil {
 		return err
 	}
+	if err := ensureProviderSupportsProjectType(p, projectType, projectPath); err != nil {
+		return err
+	}
 
 	// Resolve Swift product name from Package.swift.
 	if projectType == "swift" {
