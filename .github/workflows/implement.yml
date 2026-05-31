@@ -7,8 +7,9 @@ name: AI Implement Issue
 #   notify-existing job includes live re-authorization before any write action.
 #
 # PAT (WENDY_AI_IMPLEMENT_TOKEN, fallback WENDY_TEMPLATE_SYNC_TOKEN): fine-grained
-#   PAT scoped to ONLY 'contents:write' on this single repository. No other scopes
-#   or repos. Rotation: 90 days (automated reminder via pat-rotation-reminder.yml).
+#   PAT scoped to 'contents:write' and 'pull-requests:write' on this repository.
+#   Org policy blocks GITHUB_TOKEN from creating PRs, so the PAT handles both push
+#   and PR creation. Rotation: 90 days (automated reminder via pat-rotation-reminder.yml).
 #   MITIGATION: Server-side branch ruleset restricts PAT to refs/heads/ai/**
 #   branches only — PAT cannot push to main, develop, or any other branch.
 #   Runtime check verifies this ruleset is active before every push attempt.
@@ -832,11 +833,25 @@ jobs:
         if: steps.commit.outputs.changed == 'true'
         id: create-pr
         env:
-          GH_TOKEN: ${{ github.token }}
+          # GITHUB_TOKEN cannot create PRs (org policy). Use the same PAT as push.
+          # PAT requires 'pull-requests:write' in addition to 'contents:write'.
+          _DEDICATED_PAT: ${{ secrets.WENDY_AI_IMPLEMENT_TOKEN }}
+          _FALLBACK_PAT: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ steps.push.outputs.branch }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
+          if [ -n "$_DEDICATED_PAT" ]; then
+            GH_TOKEN="$_DEDICATED_PAT"
+          elif [ -n "$_FALLBACK_PAT" ]; then
+            GH_TOKEN="$_FALLBACK_PAT"
+          else
+            echo "::error::Neither WENDY_AI_IMPLEMENT_TOKEN nor WENDY_TEMPLATE_SYNC_TOKEN is configured — cannot create PR"
+            exit 1
+          fi
+          echo "::add-mask::$GH_TOKEN"
+          unset _DEDICATED_PAT _FALLBACK_PAT
+          export GH_TOKEN
           # Read title into a shell variable (simple assignment avoids nested-quote injection).
           # Use --body-file to pass the body path directly to gh — eliminates shell expansion
           # of LLM-generated content into command arguments entirely.
