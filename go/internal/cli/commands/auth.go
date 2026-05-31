@@ -470,8 +470,15 @@ func newAuthRefreshCertsCmd() *cobra.Command {
 }
 
 // certCommonName extracts the Subject CN from a PEM-encoded certificate.
+// It normalizes the input with certs.LeafCertificatePEM first because
+// pki-core certificates can contain trailing ASN.1 bytes that cause
+// x509.ParseCertificate to fail on the raw stored PEM.
 func certCommonName(pemCertificate string) (string, error) {
-	block, _ := pem.Decode([]byte(pemCertificate))
+	leafPEM, err := certs.LeafCertificatePEM(pemCertificate)
+	if err != nil {
+		return "", fmt.Errorf("normalizing certificate PEM: %w", err)
+	}
+	block, _ := pem.Decode([]byte(leafPEM))
 	if block == nil {
 		return "", fmt.Errorf("decoding certificate PEM")
 	}
