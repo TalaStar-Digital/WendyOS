@@ -41,7 +41,7 @@ journalctl -u wendy-agent -n 200
 
 ### Internal telemetry log stream
 
-The agent tees its own `zap` logger into the telemetry broadcaster, which means internal agent logs are forwarded through the OTEL telemetry stream alongside container logs. You can observe them via `wendy telemetry logs` from the CLI (requires the device to be provisioned).
+The agent tees its own `zap` logger into the telemetry broadcaster, which means internal agent logs are forwarded through the OTEL telemetry stream alongside container logs. You can observe them via `wendy device telemetry-stream` from the CLI (requires the device to be provisioned).
 
 ## Environment Variables
 
@@ -215,7 +215,7 @@ wendy device info
 The agent collects CPU and memory metrics for itself (via `services.CollectAgentMetrics`) and for each running container (via `services.CollectContainerMetrics`). These are streamed through the OTEL broadcaster and available via:
 
 ```sh
-wendy telemetry metrics
+wendy device telemetry-stream
 ```
 
 ### Running the agent under a debugger
