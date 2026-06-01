@@ -232,7 +232,7 @@ jobs:
       - e2e-windows-mac-mini
       - e2e-macos-mac-mini
       - e2e-ubuntu-mac-mini
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted, AI]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
