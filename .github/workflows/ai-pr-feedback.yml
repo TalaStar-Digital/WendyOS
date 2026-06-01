@@ -21,7 +21,7 @@ name: AI PR Feedback Loop
 #     can inspect file content before making edits (required to fix CI failures).
 #     Shell execution (Bash), web access (WebFetch, WebSearch), directory
 #     enumeration (LS, Glob), and MCP tools are ALL blocked by this allowlist.
-#     Claude cannot execute shell commands or exfiltrate data.
+#     Claude cannot execute shell commands or access the web; any data it reads can still be echoed into logs/PR output, so secret handling relies on the scrubbing and file-deletion steps below.
 #   --disallowedTools "Bash,Write,WebFetch,WebSearch,computer_use,
 #     LS,Glob,ListFiles,SearchFiles,TodoWrite,TodoRead,Agent,
 #     AskFollowupQuestion,mcp__*"  Belt-and-suspenders: explicit denial in
