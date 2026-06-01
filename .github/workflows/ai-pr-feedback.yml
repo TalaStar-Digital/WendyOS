@@ -16,16 +16,16 @@ name: AI PR Feedback Loop
 #   in GitHub token usage logs without disrupting implement.yml operations.
 #
 # CLAUDE CODE INVOCATION:
-#   --allowedTools "Edit,MultiEdit,Read"  EXCLUSIVE allowlist: Claude Code CLI
-#     blocks ALL tools not explicitly listed here. Read is included so claude
-#     can inspect file content before making edits (required to fix CI failures).
-#     Shell execution (Bash), web access (WebFetch, WebSearch), directory
-#     enumeration (LS, Glob), and MCP tools are ALL blocked by this allowlist.
-#     Claude cannot execute shell commands or access the web; any data it reads can still be echoed into logs/PR output, so secret handling relies on the scrubbing and file-deletion steps below.
+#   --allowedTools "Edit,MultiEdit,Read,LS,Glob,ListFiles,SearchFiles"
+#     EXCLUSIVE allowlist: Claude Code CLI blocks ALL tools not listed here.
+#     Read/LS/Glob/ListFiles/SearchFiles are read-only and cannot make network
+#     requests. Bash is intentionally excluded: even with env -i isolation and
+#     no credentials present, Bash grants arbitrary code execution and network
+#     egress on the runner; any data read can still be echoed into logs/PR
+#     output, so secret handling relies on scrubbing and file-deletion below.
 #   --disallowedTools "Bash,Write,WebFetch,WebSearch,computer_use,
-#     LS,Glob,ListFiles,SearchFiles,TodoWrite,TodoRead,Agent,
-#     AskFollowupQuestion,mcp__*"  Belt-and-suspenders: explicit denial in
-#     addition to the allowlist, for defense-in-depth.
+#     TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*"
+#     Belt-and-suspenders deny list in addition to the allowlist.
 #   env -i isolates environment (no GITHUB_TOKEN, no runner tokens)
 #   ANTHROPIC_API_KEY is delivered to claude via a 600-mode temp file (not as a
 #     cmdline argument). The key is read inside a bash subshell via $(< file) —
@@ -931,8 +931,8 @@ jobs:
               shred -u "$USER_PROMPT_FILE" 2>/dev/null || rm -f "$USER_PROMPT_FILE"
               unset USER_PROMPT_FILE
               printf "%s" "$_user_prompt" | claude --print \
-                --allowedTools "Edit,MultiEdit,Read" \
-                --disallowedTools "Bash,Write,WebFetch,WebSearch,computer_use,LS,Glob,ListFiles,SearchFiles,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*"
+                --allowedTools "Edit,MultiEdit,Read,LS,Glob,ListFiles,SearchFiles" \
+                --disallowedTools "Bash,Write,WebFetch,WebSearch,computer_use,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*"
             ' \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt" || CLAUDE_EXIT=$?
