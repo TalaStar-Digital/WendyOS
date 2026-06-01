@@ -394,11 +394,11 @@ private func makeReviewHarness() throws -> ShellReviewHarness {
     let hasOpenAIAPIKey = !environment["OPENAI_API_KEY", default: ""].isEmpty
     let hasAnthropicAPIKey = !environment["ANTHROPIC_API_KEY", default: ""].isEmpty
 
-    if hasCodex && codexSubscriptionConfigured() {
-        return codexHarness(authSummary: "Codex subscription")
-    }
     if hasClaude && claudeCodeSubscriptionConfigured() {
         return claudeHarness(authSummary: "Claude Code subscription", apiKeyOnly: false)
+    }
+    if hasCodex && codexSubscriptionConfigured() {
+        return codexHarness(authSummary: "Codex subscription")
     }
     if hasClaude && hasAnthropicAPIKey {
         return claudeHarness(authSummary: "ANTHROPIC_API_KEY", apiKeyOnly: true)
