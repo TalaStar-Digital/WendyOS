@@ -302,7 +302,7 @@ struct `'wendy device info'` {
 
                 #expect(!result.status.isSuccess)
                 #expect(result.stdout == "")
-                #expect(stderr.contains("getting agent version"))
+                #expect(stderr.contains("name resolver error"))
                 #expect(stderr.contains("produced zero addresses"))
                 #expect(!stderr.contains("Select a device"))
             }
