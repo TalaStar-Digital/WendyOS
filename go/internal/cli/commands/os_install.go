@@ -6,6 +6,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -21,11 +22,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
-	"github.com/wendylabsinc/wendy/internal/shared/config"
-	"github.com/wendylabsinc/wendy/internal/shared/discovery"
-	"github.com/wendylabsinc/wendy/internal/shared/version"
-	"github.com/wendylabsinc/wendy/internal/shared/wendyconf"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/shared/config"
+	"github.com/wendylabsinc/wendy/go/internal/shared/discovery"
+	"github.com/wendylabsinc/wendy/go/internal/shared/version"
+	"github.com/wendylabsinc/wendy/go/internal/shared/wendyconf"
 )
 
 type preEnrollMode int
@@ -125,7 +126,6 @@ Flags can be provided progressively — omitted values trigger interactive picke
 	return cmd
 }
 
-// runOSInstallDirect writes a local image file to the specified drive without interactive prompts.
 func runOSInstallDirect(imagePath string, driveID string, force bool, yesOverwriteInternal bool) error {
 	// Verify the image file exists.
 	if _, err := os.Stat(imagePath); err != nil {
@@ -502,7 +502,7 @@ func installLinuxImage(ctx context.Context, deviceKey string, device pickerDevic
 		// agent download — paying 5–30s of network for a guaranteed-skipped
 		// step is the bug from WDY-1118.
 		if hasProvisioningData {
-			ejectDisk(targetDrive.DevicePath)
+			ejectDisk(targetDrive)
 			return fmt.Errorf("the OS image was written to %s, but --wifi, --device-name, and --pre-enroll cannot be applied on this platform: writing to the device's config partition is not supported here. Re-run on a platform that supports config-partition provisioning to apply provisioning, or omit those flags to image without provisioning", targetDrive.Name)
 		}
 		fmt.Println("\nNote: config-partition provisioning is not yet supported on this platform; skipping. The device will run the agent baked into the image and fetch updates after first boot.")
@@ -514,7 +514,7 @@ func installLinuxImage(ctx context.Context, deviceKey string, device pickerDevic
 				// dropping their input and printing "Successfully installed"
 				// would be a lie — this is the user-visible failure mode the
 				// ticket calls out. Fail loudly so the user knows to retry.
-				ejectDisk(targetDrive.DevicePath)
+				ejectDisk(targetDrive)
 				return fmt.Errorf("could not write provisioning data to config partition (--wifi / --device-name / --pre-enroll were requested but not applied): %w", err)
 			}
 			fmt.Printf("Warning: could not write config partition: %v\n", err)
@@ -522,7 +522,7 @@ func installLinuxImage(ctx context.Context, deviceKey string, device pickerDevic
 		}
 	}
 
-	ejectDisk(targetDrive.DevicePath)
+	ejectDisk(targetDrive)
 
 	fmt.Printf("\nSuccessfully installed %s %s on %s.\n", device.Name, imgInfo.Version, targetDrive.Name)
 	fmt.Println("You can now insert the drive into your device and power it on.")
@@ -603,12 +603,6 @@ func externalDrivePickerItems(drives []drive) []tui.PickerItem {
 	return items
 }
 
-// throttledProgress returns a sender that forwards ProgressUpdateMsg to p at
-// most once per minInterval. Bubble Tea ingests every Send into a buffered
-// channel and SetPercent kicks off a cascade of animation FrameMsgs, so a
-// busy I/O loop posting updates per chunk can pile up enough work to slow
-// the I/O loop itself. The terminal can't usefully render faster than the
-// throttle rate anyway, and a trailing ProgressDoneMsg always renders 100%.
 func throttledProgress(p *tea.Program, minInterval time.Duration) func(written, total int64) {
 	var lastNanos atomic.Int64
 	return func(written, total int64) {
@@ -827,8 +821,6 @@ func downloadImage(img *imageInfo) (string, error) {
 	return tmpFile.Name(), nil
 }
 
-// osCacheDir returns the OS image cache directory, e.g.
-// ~/Library/Caches/wendy/os-images (macOS) or ~/.cache/wendy/os-images (Linux).
 func osCacheDir() (string, error) {
 	base, err := config.CacheDir()
 	if err != nil {
@@ -841,8 +833,6 @@ func osCacheDir() (string, error) {
 	return dir, nil
 }
 
-// osCachedImagePath returns the expected cache path for a device+version image.
-// Format: <cache>/os-images/<device>-<version>.img
 func osCachedImagePath(deviceKey, version string) (string, error) {
 	// Sanitize to prevent path traversal from user-supplied --version flag.
 	safeDevice := filepath.Base(deviceKey)
@@ -859,8 +849,6 @@ func osCachedImagePath(deviceKey, version string) (string, error) {
 	return filepath.Join(dir, fmt.Sprintf("%s-%s.img", safeDevice, safeVersion)), nil
 }
 
-// osCachedZipPath returns the expected cache path for a device+version zip.
-// Format: <cache>/os-images/<device>-<version>.zip
 func osCachedZipPath(deviceKey, version string) (string, error) {
 	safeDevice := filepath.Base(deviceKey)
 	safeVersion := filepath.Base(version)
@@ -876,8 +864,6 @@ func osCachedZipPath(deviceKey, version string) (string, error) {
 	return filepath.Join(dir, fmt.Sprintf("%s-%s.zip", safeDevice, safeVersion)), nil
 }
 
-// zipReadCloser wraps a zip.ReadCloser and its entry's ReadCloser so both
-// are released with a single Close call.
 type zipReadCloser struct {
 	archive *zip.ReadCloser
 	entry   io.ReadCloser
@@ -934,9 +920,6 @@ func streamZipImageEntry(zipPath string) (io.ReadCloser, int64, error) {
 	return nil, 0, fmt.Errorf("no .img, .raw, or .wic file found in zip archive")
 }
 
-// resolveOSImage returns the path to a cached file ready for streaming.
-// For zip URLs: checks legacy .img cache, then .zip cache, then downloads.
-// For non-zip URLs: checks legacy .img cache, then downloads the img directly.
 func resolveOSImage(deviceKey string, img *imageInfo) (string, error) {
 	isZip := strings.HasSuffix(strings.ToLower(img.DownloadURL), ".zip")
 
@@ -1248,30 +1231,38 @@ func nonEmptyValidator(v string) error {
 	return nil
 }
 
-// resolveDeviceName returns the device name to pre-configure on first boot.
-// If flagName is set it is validated and returned directly. In interactive mode
-// the user is prompted; an empty response skips naming (auto-generated on device).
-func resolveDeviceName(flagName string) (string, error) {
-	validate := func(name string) error {
-		if len(name) < 3 || len(name) > 64 {
-			return fmt.Errorf("device name must be 3–64 characters")
-		}
-		for i, c := range name {
-			switch {
-			case c >= 'a' && c <= 'z':
-			case (c >= '0' && c <= '9') || c == '-':
-				if i == 0 {
-					return fmt.Errorf("device name must start with a lowercase letter")
-				}
-			default:
-				return fmt.Errorf("device name may only contain lowercase letters, digits, and hyphens")
+func validateDeviceName(name string) error {
+	if len(name) < 3 || len(name) > 64 {
+		return fmt.Errorf("device name must be 3–64 characters")
+	}
+	for i, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z':
+		case (c >= '0' && c <= '9') || c == '-':
+			if i == 0 {
+				return fmt.Errorf("device name must start with a lowercase letter")
 			}
+		default:
+			return fmt.Errorf("device name may only contain lowercase letters, digits, and hyphens")
 		}
+	}
+	return nil
+}
+
+func optionalDeviceNameValidator(name string) error {
+	if strings.TrimSpace(name) == "" {
 		return nil
 	}
+	return validateDeviceName(name)
+}
 
+var promptDeviceName = func(prompt, hint string, validate tui.ValidateFunc) (string, error) {
+	return tui.PromptText(prompt, hint, validate)
+}
+
+func resolveDeviceName(flagName string) (string, error) {
 	if flagName != "" {
-		if err := validate(flagName); err != nil {
+		if err := validateDeviceName(flagName); err != nil {
 			return "", fmt.Errorf("--device-name: %w", err)
 		}
 		return flagName, nil
@@ -1281,17 +1272,15 @@ func resolveDeviceName(flagName string) (string, error) {
 		return "", nil
 	}
 
-	fmt.Print("\nDevice name (leave empty to auto-generate): ")
-	reader := bufio.NewReader(os.Stdin)
-	line, _ := reader.ReadString('\n')
-	name := strings.TrimSpace(line)
-	if name == "" {
-		return "", nil
+	fmt.Println()
+	name, err := promptDeviceName("Device name", "(leave empty to auto-generate)", optionalDeviceNameValidator)
+	if err != nil {
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", ErrUserCancelled
+		}
+		return "", fmt.Errorf("device-name prompt: %w", err)
 	}
-	if err := validate(name); err != nil {
-		return "", fmt.Errorf("invalid device name: %w", err)
-	}
-	return name, nil
+	return strings.TrimSpace(name), nil
 }
 
 // confirmOverwriteInternalDrive guards against accidentally wiping internal
@@ -1323,8 +1312,6 @@ func confirmOverwriteInternalDrive(d drive, force bool, yesOverwriteInternal boo
 }
 
 // provisionConfigPartition downloads the latest stable arm64 wendy-agent binary
-// and writes it (along with zero or more WiFi credentials and an optional
-// device name) to the config partition on d.
 func provisionConfigPartition(d drive, creds []wendyconf.WifiCredential, deviceName string, provisioningJSON []byte) error {
 	release, err := fetchAgentRelease(false)
 	if err != nil {

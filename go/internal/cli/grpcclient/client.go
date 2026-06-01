@@ -13,8 +13,8 @@ import (
 
 	"time"
 
-	"github.com/wendylabsinc/wendy/internal/shared/config"
-	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/shared/config"
+	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -30,7 +30,6 @@ const (
 	grpcKeepaliveTimeout    = 10 * time.Second
 )
 
-// AgentConnection holds a gRPC connection and typed service clients.
 type AgentConnection struct {
 	Conn                *grpc.ClientConn
 	Host                string // hostname or IP of the connected agent
@@ -46,7 +45,6 @@ type AgentConnection struct {
 	FileSyncService     agentpb.WendyFileSyncServiceClient
 }
 
-// Connect creates an insecure gRPC connection to the agent at the given address.
 func Connect(ctx context.Context, address string) (*AgentConnection, error) {
 	conn, err := grpc.NewClient(
 		grpcTarget(address),
@@ -70,7 +68,6 @@ func Connect(ctx context.Context, address string) (*AgentConnection, error) {
 	return ac, nil
 }
 
-// ConnectWithTLS creates an mTLS connection using certificates from config.
 func ConnectWithTLS(ctx context.Context, address string, certInfo *config.CertificateInfo) (*AgentConnection, error) {
 	// Only load the leaf cert — not the chain. Go's TLS library calls
 	// x509.ParseCertificate on every cert sent in the handshake, and ML-DSA
@@ -182,8 +179,6 @@ func newAgentConnection(conn *grpc.ClientConn) *AgentConnection {
 	}
 }
 
-// NewFromConn wraps an existing gRPC connection as an AgentConnection.
-// Use this when the caller manages its own dialing (e.g. a cloud tunnel).
 func NewFromConn(conn *grpc.ClientConn) *AgentConnection {
 	return newAgentConnection(conn)
 }

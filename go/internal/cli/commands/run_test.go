@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
+	"github.com/wendylabsinc/wendy/go/internal/shared/appconfig"
 )
 
 func TestWendyPlatform(t *testing.T) {

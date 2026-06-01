@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wendylabsinc/wendy/internal/cli/analytics"
-	"github.com/wendylabsinc/wendy/internal/cli/commands"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
-	"github.com/wendylabsinc/wendy/internal/shared/version"
+	"github.com/wendylabsinc/wendy/go/internal/cli/analytics"
+	"github.com/wendylabsinc/wendy/go/internal/cli/commands"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/shared/version"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -63,9 +63,6 @@ func trackCommand(executed *cobra.Command, err error, dur time.Duration) {
 	analytics.Track("command_executed", props)
 }
 
-// commandRoot returns the top-level subcommand token under the root, e.g.
-// "device" for `wendy device wifi connect`. Returns the root's own name
-// (typically "wendy") when invoked without a subcommand.
 func commandRoot(c *cobra.Command) string {
 	if c == nil {
 		return ""
@@ -124,7 +121,6 @@ func errorClass(err error) string {
 	return "other"
 }
 
-// formatError converts raw gRPC errors into human-readable messages.
 func formatError(err error) error {
 	msg := err.Error()
 	if !strings.Contains(msg, "rpc error: code = ") {

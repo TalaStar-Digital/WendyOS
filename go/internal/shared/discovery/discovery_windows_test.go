@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/mdns"
-	"github.com/wendylabsinc/wendy/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 )
 
 func TestLANDeviceFromMDNSEntryPrefersIPv4AndParsesTXT(t *testing.T) {
@@ -20,7 +20,7 @@ func TestLANDeviceFromMDNSEntryPrefersIPv4AndParsesTXT(t *testing.T) {
 		InfoFields: []string{"id=agent-id", "displayname=Prudent Lark", "tls=true"},
 	}
 
-	dev, ok := lanDeviceFromMDNSEntry(entry, nil)
+	dev, ok := lanDeviceFromMDNSEntry(entry, nil, windowsNetworkAdapterLookup{})
 	if !ok {
 		t.Fatal("lanDeviceFromMDNSEntry returned false")
 	}
@@ -59,7 +59,7 @@ func TestLANDeviceFromMDNSEntryUsesWendyOSDeviceID(t *testing.T) {
 		InfoFields: []string{"id=display-id", "wendyosdevice=device-id"},
 	}
 
-	dev, ok := lanDeviceFromMDNSEntry(entry, nil)
+	dev, ok := lanDeviceFromMDNSEntry(entry, nil, windowsNetworkAdapterLookup{})
 	if !ok {
 		t.Fatal("lanDeviceFromMDNSEntry returned false")
 	}
@@ -77,7 +77,7 @@ func TestLANDeviceFromMDNSEntryAddsIPv6LinkLocalZone(t *testing.T) {
 		Port:   50051,
 	}
 
-	dev, ok := lanDeviceFromMDNSEntry(entry, iface)
+	dev, ok := lanDeviceFromMDNSEntry(entry, iface, windowsNetworkAdapterLookup{})
 	if !ok {
 		t.Fatal("lanDeviceFromMDNSEntry returned false")
 	}
@@ -96,7 +96,7 @@ func TestLANDeviceFromMDNSEntryDoesNotZoneGlobalIPv6(t *testing.T) {
 		Port:   50051,
 	}
 
-	dev, ok := lanDeviceFromMDNSEntry(entry, iface)
+	dev, ok := lanDeviceFromMDNSEntry(entry, iface, windowsNetworkAdapterLookup{})
 	if !ok {
 		t.Fatal("lanDeviceFromMDNSEntry returned false")
 	}
@@ -112,7 +112,7 @@ func TestLANDeviceFromMDNSEntryFiltersWrongService(t *testing.T) {
 		Port: 1234,
 	}
 
-	_, ok := lanDeviceFromMDNSEntry(entry, nil)
+	_, ok := lanDeviceFromMDNSEntry(entry, nil, windowsNetworkAdapterLookup{})
 	if ok {
 		t.Fatal("lanDeviceFromMDNSEntry returned true for wrong service")
 	}
@@ -142,6 +142,104 @@ func TestDeduplicateLANDevicesPrefersIPv4(t *testing.T) {
 	}
 	if got[0].IPAddress != "169.254.249.48" {
 		t.Fatalf("IPAddress = %q, want %q", got[0].IPAddress, "169.254.249.48")
+	}
+}
+
+func TestParseNetAdapterJSONFiltersWendyByName(t *testing.T) {
+	// Single entry: PowerShell emits an object, not an array, in this case.
+	in := `{"Name":"Wendy USB Ethernet","InterfaceDescription":"Realtek USB GbE","MacAddress":"00-11-22-33-44-55","LinkSpeed":"1 Gbps","IPAddress":"169.254.1.5"}`
+
+	got := parseNetAdapterJSON(in)
+	if len(got) != 1 {
+		t.Fatalf("got %d devices, want 1", len(got))
+	}
+	want := models.EthernetInterface{
+		Name:          "Wendy USB Ethernet",
+		DisplayName:   "Realtek USB GbE",
+		MACAddress:    "00-11-22-33-44-55",
+		IPAddress:     "169.254.1.5",
+		LinkSpeed:     "1 Gbps",
+		IsWendyDevice: true,
+	}
+	if got[0] != want {
+		t.Fatalf("got %#v, want %#v", got[0], want)
+	}
+}
+
+func TestLANDeviceFromMDNSEntryUsesWindowsAdapterMetadataForUSB(t *testing.T) {
+	iface := &net.Interface{Index: 12, Name: "Ethernet 3"}
+	entry := &mdns.ServiceEntry{
+		Name:       "wendyos-prudent-lark._wendyos._udp.local.",
+		Host:       "wendyos-prudent-lark.local.",
+		AddrV4:     net.ParseIP("169.254.249.48"),
+		Port:       50051,
+		InfoFields: []string{"id=agent-id", "displayname=Prudent Lark"},
+	}
+	adapterLookup := windowsNetworkAdapterLookupFromEntries([]netAdapterEntry{{
+		InterfaceIndex:       12,
+		Name:                 "Ethernet 3",
+		InterfaceDescription: "Remote NDIS Compatible Device",
+		LinkSpeed:            "425 Mbps",
+	}})
+
+	dev, ok := lanDeviceFromMDNSEntry(entry, iface, adapterLookup)
+	if !ok {
+		t.Fatal("lanDeviceFromMDNSEntry returned false")
+	}
+	if dev.NetworkInterface != "Ethernet 3" {
+		t.Fatalf("NetworkInterface = %q, want Ethernet 3", dev.NetworkInterface)
+	}
+	wantUSB := "Remote NDIS Compatible Device (Ethernet 3) 425 Mbps"
+	if dev.USB != wantUSB {
+		t.Fatalf("USB = %q, want %q", dev.USB, wantUSB)
+	}
+}
+
+func TestParseNetAdapterJSONFiltersWendyByDescription(t *testing.T) {
+	in := `[
+		{"Name":"Ethernet 3","InterfaceDescription":"Wendy Gadget Mode","MacAddress":"AA-BB-CC-DD-EE-FF","LinkSpeed":"100 Mbps","IPAddress":"169.254.2.7"},
+		{"Name":"Wi-Fi","InterfaceDescription":"Intel AX201","MacAddress":"11-22-33-44-55-66","LinkSpeed":"866 Mbps","IPAddress":"192.168.0.20"}
+	]`
+
+	got := parseNetAdapterJSON(in)
+	if len(got) != 1 {
+		t.Fatalf("got %d devices, want 1 (case-insensitive Wendy match on InterfaceDescription)", len(got))
+	}
+	if got[0].Name != "Ethernet 3" || got[0].DisplayName != "Wendy Gadget Mode" {
+		t.Fatalf("unexpected entry: %#v", got[0])
+	}
+}
+
+func TestParseNetAdapterJSONIsCaseInsensitive(t *testing.T) {
+	in := `{"Name":"WENDY ADAPTER","InterfaceDescription":"some vendor","MacAddress":"","LinkSpeed":"","IPAddress":""}`
+	got := parseNetAdapterJSON(in)
+	if len(got) != 1 {
+		t.Fatalf("got %d devices, want 1 (uppercase WENDY should match)", len(got))
+	}
+}
+
+func TestParseNetAdapterJSONEmpty(t *testing.T) {
+	if got := parseNetAdapterJSON(""); got != nil {
+		t.Fatalf("parseNetAdapterJSON(\"\") = %#v, want nil", got)
+	}
+	if got := parseNetAdapterJSON("   \n  "); got != nil {
+		t.Fatalf("parseNetAdapterJSON(whitespace) = %#v, want nil", got)
+	}
+}
+
+func TestParseNetAdapterJSONIgnoresNonWendy(t *testing.T) {
+	in := `[
+		{"Name":"Ethernet","InterfaceDescription":"Realtek PCIe","MacAddress":"00-00-00-00-00-00","LinkSpeed":"1 Gbps","IPAddress":"192.168.1.10"},
+		{"Name":"vEthernet (Default Switch)","InterfaceDescription":"Hyper-V Virtual Ethernet Adapter","MacAddress":"","LinkSpeed":"10 Gbps","IPAddress":"172.20.0.1"}
+	]`
+	if got := parseNetAdapterJSON(in); len(got) != 0 {
+		t.Fatalf("got %d devices, want 0 (no Wendy match)", len(got))
+	}
+}
+
+func TestParseNetAdapterJSONMalformedReturnsNil(t *testing.T) {
+	if got := parseNetAdapterJSON("{not json"); got != nil {
+		t.Fatalf("malformed JSON returned %#v, want nil", got)
 	}
 }
 

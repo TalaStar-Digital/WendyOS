@@ -19,10 +19,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
-	"github.com/wendylabsinc/wendy/internal/shared/version"
-	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/shared/version"
+	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
 func newOSCmd() *cobra.Command {
@@ -457,10 +457,6 @@ func waitForDeviceOnline(ctx context.Context, host string) error {
 	return spinErr
 }
 
-// localIPForHost returns the local IP address used to reach the given host.
-// The returned string is suitable for net.Listen: for IPv6 link-local addresses
-// it includes the zone identifier (e.g. "fe80::1%en0"). Use ipForURL to convert
-// it to a safe form for embedding in HTTP URLs.
 func localIPForHost(host string) (string, error) {
 	// Strip port if present.
 	if h, _, err := net.SplitHostPort(host); err == nil {

@@ -23,39 +23,37 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/wendylabsinc/wendy/internal/shared/version"
-	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/shared/version"
+	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
-// AgentService implements agentpb.WendyAgentServiceServer.
 type AgentService struct {
 	agentpb.UnimplementedWendyAgentServiceServer
 	logger             *zap.Logger
 	networkManager     NetworkManager
 	hardwareDiscoverer HardwareDiscoverer
 	bluetoothManager   BluetoothManager
-	updateMu           sync.Mutex
-	isUpdating         bool
+	installer          *AgentInstaller
 	isWendyOSHost      func() bool
 }
 
-// NewAgentService creates a new AgentService.
 func NewAgentService(
 	logger *zap.Logger,
 	nm NetworkManager,
 	hd HardwareDiscoverer,
 	bm BluetoothManager,
+	installer *AgentInstaller,
 ) *AgentService {
 	return &AgentService{
 		logger:             logger,
 		networkManager:     nm,
 		hardwareDiscoverer: hd,
 		bluetoothManager:   bm,
+		installer:          installer,
 		isWendyOSHost:      defaultIsWendyOSHost,
 	}
 }
 
-// GetAgentVersion returns the agent version, OS, architecture, and detected feature set.
 func (s *AgentService) GetAgentVersion(_ context.Context, _ *agentpb.GetAgentVersionRequest) (*agentpb.GetAgentVersionResponse, error) {
 	resp := &agentpb.GetAgentVersionResponse{
 		Version:         version.Version,
@@ -64,13 +62,10 @@ func (s *AgentService) GetAgentVersion(_ context.Context, _ *agentpb.GetAgentVer
 		Featureset:      detectFeatureset(),
 	}
 
-	// Read WendyOS version if available.
-	if data, err := os.ReadFile("/etc/wendy/version.txt"); err == nil {
-		v := strings.TrimSpace(string(data))
+	if v, ok := wendyOSVersion(); ok {
 		resp.OsVersion = &v
 	}
 
-	// Read hardware platform identifier if available.
 	if data, err := os.ReadFile("/etc/wendyos/device-type"); err == nil {
 		deviceType, storageMedium := parseDeviceType(string(data))
 		if deviceType != "" {
@@ -81,7 +76,6 @@ func (s *AgentService) GetAgentVersion(_ context.Context, _ *agentpb.GetAgentVer
 		}
 	}
 
-	// Detect GPU presence and details.
 	gpuInfo := detectGPUInfo()
 	resp.HasGpu = &gpuInfo.hasGPU
 	if gpuInfo.vendor != "" {
@@ -104,7 +98,6 @@ type gpuInfo struct {
 	cudaVersion    string
 }
 
-// detectGPUInfo probes the system for GPU presence and NVIDIA-specific details.
 func detectGPUInfo() gpuInfo {
 	info := gpuInfo{}
 
@@ -133,8 +126,6 @@ func detectGPUInfo() gpuInfo {
 
 var tegraReleaseRe = regexp.MustCompile(`R(\d+)\s+\([^)]+\),\s+REVISION:\s+([\d.]+)`)
 
-// detectJetPackVersion returns the JetPack version (e.g. "6.1") by parsing
-// /etc/nv_tegra_release and mapping the L4T version via a known table.
 // Falls back to "L4T {version}" when no mapping is found.
 func detectJetPackVersion() string {
 	data, err := os.ReadFile("/etc/nv_tegra_release")
@@ -180,16 +171,13 @@ func detectJetPackVersion() string {
 
 var cudaVersionFileRe = regexp.MustCompile(`(?i)CUDA[^0-9]*([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
 
-// detectCUDAVersion reads the CUDA version from well-known paths or nvcc.
 func detectCUDAVersion() string {
-	// Try /usr/local/cuda/version.txt: "CUDA Version 12.2.0"
 	if data, err := os.ReadFile("/usr/local/cuda/version.txt"); err == nil {
 		if m := cudaVersionFileRe.FindSubmatch(data); len(m) > 1 {
 			return string(m[1])
 		}
 	}
 
-	// Try /usr/local/cuda/version.json: {"cuda": {"version": "12.2.0"}}
 	if data, err := os.ReadFile("/usr/local/cuda/version.json"); err == nil {
 		if m := cudaVersionFileRe.FindSubmatch(data); len(m) > 1 {
 			return string(m[1])
@@ -211,32 +199,27 @@ func detectCUDAVersion() string {
 	return ""
 }
 
-// detectFeatureset probes the system for available hardware capabilities.
 func detectFeatureset() []string {
 	var features []string
 
-	// GPU: check for NVIDIA devices.
 	if _, err := os.Stat("/dev/nvidia0"); err == nil {
 		features = append(features, "gpu")
 	} else if matches, _ := os.ReadDir("/dev/dri"); len(matches) > 0 {
 		features = append(features, "gpu")
 	}
 
-	// Audio: check for ALSA, PipeWire, or PulseAudio.
 	if _, err := os.Stat("/proc/asound/cards"); err == nil {
 		features = append(features, "audio")
 	} else if _, err := exec.LookPath("pactl"); err == nil {
 		features = append(features, "audio")
 	}
 
-	// Bluetooth: check for hci devices.
 	if _, err := os.Stat("/sys/class/bluetooth"); err == nil {
 		if entries, _ := os.ReadDir("/sys/class/bluetooth"); len(entries) > 0 {
 			features = append(features, "bluetooth")
 		}
 	}
 
-	// Video: check for video devices.
 	if entries, _ := os.ReadDir("/dev"); len(entries) > 0 {
 		for _, e := range entries {
 			if strings.HasPrefix(e.Name(), "video") {
@@ -246,12 +229,10 @@ func detectFeatureset() []string {
 		}
 	}
 
-	// Camera: same as video for now but could be refined.
 	if _, err := os.Stat("/dev/video0"); err == nil {
 		features = append(features, "camera")
 	}
 
-	// Mender OTA: check for mender-update binary.
 	if _, found := resolveMenderBinary(); found {
 		features = append(features, "mender")
 	}
@@ -292,27 +273,40 @@ func (s *AgentService) RunContainer(stream grpc.BidiStreamingServer[agentpb.RunC
 		"RunContainer is deprecated. Use WendyContainerService.RunContainer or CreateContainer + StartContainer instead. Please update your CLI.")
 }
 
-// UpdateAgent handles streaming binary updates with SHA256 verification and atomic replacement.
 func (s *AgentService) UpdateAgent(stream grpc.BidiStreamingServer[agentpb.UpdateAgentRequest, agentpb.UpdateAgentResponse]) error {
-	s.updateMu.Lock()
-	if s.isUpdating {
-		s.updateMu.Unlock()
+	if !s.installer.TryLock() {
 		return status.Error(codes.FailedPrecondition, "an update is already in progress")
 	}
-	s.isUpdating = true
-	s.updateMu.Unlock()
-
+	// committed is declared before the defer so the closure captures it.
+	// On success the lock is intentionally NOT released: the process exits
+	// within 500 ms and holding the lock prevents a concurrent update from
+	// racing on the just-installed binary during that shutdown window.
+	committed := false
 	defer func() {
-		s.updateMu.Lock()
-		s.isUpdating = false
-		s.updateMu.Unlock()
+		if !committed {
+			s.installer.Unlock()
+		}
 	}()
 
 	s.logger.Info("UpdateAgent stream started")
 
-	// Receive binary chunks.
+	execPath, originalPerm, err := resolveExecPath()
+	if err != nil {
+		return err
+	}
+
+	tmpFile, tmpPath, cleanupTmp, err := createUpdateTempFile(execPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if !committed {
+			cleanupTmp()
+		}
+	}()
+
 	hasher := sha256.New()
-	var binaryData []byte
+	var written int64
 
 	for {
 		msg, err := stream.Recv()
@@ -324,14 +318,21 @@ func (s *AgentService) UpdateAgent(stream grpc.BidiStreamingServer[agentpb.Updat
 		}
 
 		if chunk := msg.GetChunk(); chunk != nil {
-			binaryData = append(binaryData, chunk.GetData()...)
-			hasher.Write(chunk.GetData())
+			data := chunk.GetData()
+			written += int64(len(data))
+			if written > maxAgentBinarySize {
+				return status.Errorf(codes.ResourceExhausted,
+					"update stream exceeds maximum agent binary size (%d MiB)", maxAgentBinarySize>>20)
+			}
+			if _, err := tmpFile.Write(data); err != nil {
+				return status.Errorf(codes.Internal, "failed to write update chunk: %v", err)
+			}
+			hasher.Write(data)
 			continue
 		}
 
 		if ctrl := msg.GetControl(); ctrl != nil {
 			if ctrl.GetUpdate() != nil {
-				// Verify SHA256.
 				computedHash := hex.EncodeToString(hasher.Sum(nil))
 				expectedHash := ctrl.GetUpdate().GetSha256()
 				if expectedHash != "" && computedHash != expectedHash {
@@ -339,53 +340,15 @@ func (s *AgentService) UpdateAgent(stream grpc.BidiStreamingServer[agentpb.Updat
 						"SHA256 mismatch: expected %s, got %s", expectedHash, computedHash)
 				}
 
-				// Resolve the current binary path (follow symlinks).
-				execPath, err := os.Executable()
-				if err != nil {
-					return status.Errorf(codes.Internal, "failed to get executable path: %v", err)
-				}
-				execPath, err = filepath.EvalSymlinks(execPath)
-				if err != nil {
-					return status.Errorf(codes.Internal, "failed to resolve executable symlinks: %v", err)
-				}
-
-				// Capture original file permissions.
-				info, err := os.Stat(execPath)
-				if err != nil {
-					return status.Errorf(codes.Internal, "failed to stat executable: %v", err)
-				}
-				originalPerm := info.Mode()
-
-				// Write the new binary to a temp file.
-				tmpPath := execPath + ".update"
-				if err := os.WriteFile(tmpPath, binaryData, originalPerm); err != nil {
-					return status.Errorf(codes.Internal, "failed to write update file: %v", err)
-				}
-
-				// Create a backup of the current binary.
-				backupPath := execPath + ".backup"
-				if err := os.Rename(execPath, backupPath); err != nil {
-					os.Remove(tmpPath)
-					return status.Errorf(codes.Internal, "failed to create backup: %v", err)
-				}
-
-				// Atomic rename of new binary to current path.
-				if err := os.Rename(tmpPath, execPath); err != nil {
-					// Rollback: restore from backup.
-					if rbErr := os.Rename(backupPath, execPath); rbErr != nil {
-						s.logger.Error("Failed to rollback from backup",
-							zap.Error(rbErr),
-							zap.String("backup_path", backupPath),
-						)
+				if _, err := commitBinaryUpdate(tmpFile, tmpPath, execPath, computedHash, originalPerm, s.logger); err != nil {
+					if errors.Is(err, ErrDirFsync) {
+						// Binary is installed; only directory-entry durability is at risk.
+						s.logger.Warn("Update dir fsync failed; binary installed but rename may not survive power loss", zap.Error(err))
+					} else {
+						return err
 					}
-					os.Remove(tmpPath)
-					return status.Errorf(codes.Internal, "failed to replace binary: %v", err)
 				}
-
-				s.logger.Info("Agent binary updated successfully",
-					zap.String("sha256", computedHash),
-					zap.Int("size", len(binaryData)),
-				)
+				committed = true
 
 				if err := stream.Send(&agentpb.UpdateAgentResponse{
 					ResponseType: &agentpb.UpdateAgentResponse_Updated_{
@@ -409,7 +372,6 @@ func (s *AgentService) UpdateAgent(stream grpc.BidiStreamingServer[agentpb.Updat
 	return status.Error(codes.InvalidArgument, "update stream ended without update control command")
 }
 
-// ListWiFiNetworks delegates to the NetworkManager.
 func (s *AgentService) ListWiFiNetworks(ctx context.Context, _ *agentpb.ListWiFiNetworksRequest) (*agentpb.ListWiFiNetworksResponse, error) {
 	if s.networkManager == nil {
 		return nil, status.Error(codes.Unavailable, "WiFi management is not available (nmcli not found)")
@@ -421,7 +383,6 @@ func (s *AgentService) ListWiFiNetworks(ctx context.Context, _ *agentpb.ListWiFi
 	return &agentpb.ListWiFiNetworksResponse{Networks: networks}, nil
 }
 
-// ConnectToWiFi delegates to the NetworkManager.
 func (s *AgentService) ConnectToWiFi(ctx context.Context, req *agentpb.ConnectToWiFiRequest) (*agentpb.ConnectToWiFiResponse, error) {
 	if s.networkManager == nil {
 		return nil, status.Error(codes.Unavailable, "WiFi management is not available (nmcli not found)")
@@ -433,7 +394,6 @@ func (s *AgentService) ConnectToWiFi(ctx context.Context, req *agentpb.ConnectTo
 	return &agentpb.ConnectToWiFiResponse{Success: true}, nil
 }
 
-// ListKnownWiFiNetworks delegates to the NetworkManager.
 func (s *AgentService) ListKnownWiFiNetworks(ctx context.Context, _ *agentpb.ListKnownWiFiNetworksRequest) (*agentpb.ListKnownWiFiNetworksResponse, error) {
 	if s.networkManager == nil {
 		return nil, status.Error(codes.Unavailable, "WiFi management is not available (nmcli not found)")
@@ -445,7 +405,6 @@ func (s *AgentService) ListKnownWiFiNetworks(ctx context.Context, _ *agentpb.Lis
 	return &agentpb.ListKnownWiFiNetworksResponse{Networks: known}, nil
 }
 
-// SetWiFiNetworkPriority delegates to the NetworkManager.
 func (s *AgentService) SetWiFiNetworkPriority(ctx context.Context, req *agentpb.SetWiFiNetworkPriorityRequest) (*agentpb.SetWiFiNetworkPriorityResponse, error) {
 	if s.networkManager == nil {
 		return nil, status.Error(codes.Unavailable, "WiFi management is not available (nmcli not found)")
@@ -457,7 +416,6 @@ func (s *AgentService) SetWiFiNetworkPriority(ctx context.Context, req *agentpb.
 	return &agentpb.SetWiFiNetworkPriorityResponse{Success: true}, nil
 }
 
-// ReorderKnownWiFiNetworks delegates to the NetworkManager.
 func (s *AgentService) ReorderKnownWiFiNetworks(ctx context.Context, req *agentpb.ReorderKnownWiFiNetworksRequest) (*agentpb.ReorderKnownWiFiNetworksResponse, error) {
 	if s.networkManager == nil {
 		return nil, status.Error(codes.Unavailable, "WiFi management is not available (nmcli not found)")
@@ -469,7 +427,6 @@ func (s *AgentService) ReorderKnownWiFiNetworks(ctx context.Context, req *agentp
 	return &agentpb.ReorderKnownWiFiNetworksResponse{Success: true}, nil
 }
 
-// ForgetWiFiNetwork delegates to the NetworkManager.
 func (s *AgentService) ForgetWiFiNetwork(ctx context.Context, req *agentpb.ForgetWiFiNetworkRequest) (*agentpb.ForgetWiFiNetworkResponse, error) {
 	if s.networkManager == nil {
 		return nil, status.Error(codes.Unavailable, "WiFi management is not available (nmcli not found)")
@@ -481,7 +438,6 @@ func (s *AgentService) ForgetWiFiNetwork(ctx context.Context, req *agentpb.Forge
 	return &agentpb.ForgetWiFiNetworkResponse{Success: true}, nil
 }
 
-// GetWiFiStatus delegates to the NetworkManager.
 func (s *AgentService) GetWiFiStatus(ctx context.Context, _ *agentpb.GetWiFiStatusRequest) (*agentpb.GetWiFiStatusResponse, error) {
 	if s.networkManager == nil {
 		return nil, status.Error(codes.Unavailable, "WiFi management is not available (nmcli not found)")
@@ -494,7 +450,6 @@ func (s *AgentService) GetWiFiStatus(ctx context.Context, _ *agentpb.GetWiFiStat
 	return &agentpb.GetWiFiStatusResponse{Connected: connected, Ssid: &ssid}, nil
 }
 
-// DisconnectWiFi delegates to the NetworkManager.
 func (s *AgentService) DisconnectWiFi(ctx context.Context, _ *agentpb.DisconnectWiFiRequest) (*agentpb.DisconnectWiFiResponse, error) {
 	if s.networkManager == nil {
 		return nil, status.Error(codes.Unavailable, "WiFi management is not available (nmcli not found)")
@@ -506,7 +461,6 @@ func (s *AgentService) DisconnectWiFi(ctx context.Context, _ *agentpb.Disconnect
 	return &agentpb.DisconnectWiFiResponse{Success: true}, nil
 }
 
-// ListHardwareCapabilities discovers hardware on the device.
 func (s *AgentService) ListHardwareCapabilities(ctx context.Context, req *agentpb.ListHardwareCapabilitiesRequest) (*agentpb.ListHardwareCapabilitiesResponse, error) {
 	caps, err := s.hardwareDiscoverer.Discover(ctx, req.GetCategoryFilter())
 	if err != nil {
@@ -515,11 +469,9 @@ func (s *AgentService) ListHardwareCapabilities(ctx context.Context, req *agentp
 	return &agentpb.ListHardwareCapabilitiesResponse{Capabilities: caps}, nil
 }
 
-// ScanBluetoothPeripherals streams discovered Bluetooth peripherals.
 func (s *AgentService) ScanBluetoothPeripherals(stream grpc.BidiStreamingServer[agentpb.ScanBluetoothPeripheralsRequest, agentpb.ScanBluetoothPeripheralsResponse]) error {
 	ctx := stream.Context()
 
-	// Start scanning.
 	ch, err := s.bluetoothManager.Scan(ctx)
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to start bluetooth scan: %v", err)
@@ -542,7 +494,6 @@ func (s *AgentService) ScanBluetoothPeripherals(stream grpc.BidiStreamingServer[
 	}
 }
 
-// ConnectBluetoothPeripheral connects to a Bluetooth peripheral.
 func (s *AgentService) ConnectBluetoothPeripheral(ctx context.Context, req *agentpb.ConnectBluetoothPeripheralRequest) (*agentpb.ConnectBluetoothPeripheralResponse, error) {
 	if err := s.bluetoothManager.Connect(ctx, req.GetAddress(), req.GetPair(), req.GetTrust()); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to connect bluetooth peripheral: %v", err)
@@ -550,7 +501,6 @@ func (s *AgentService) ConnectBluetoothPeripheral(ctx context.Context, req *agen
 	return &agentpb.ConnectBluetoothPeripheralResponse{}, nil
 }
 
-// DisconnectBluetoothPeripheral disconnects a Bluetooth peripheral.
 func (s *AgentService) DisconnectBluetoothPeripheral(ctx context.Context, req *agentpb.DisconnectBluetoothPeripheralRequest) (*agentpb.DisconnectBluetoothPeripheralResponse, error) {
 	if err := s.bluetoothManager.Disconnect(ctx, req.GetAddress()); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to disconnect bluetooth peripheral: %v", err)
@@ -558,7 +508,6 @@ func (s *AgentService) DisconnectBluetoothPeripheral(ctx context.Context, req *a
 	return &agentpb.DisconnectBluetoothPeripheralResponse{}, nil
 }
 
-// ForgetBluetoothPeripheral removes a paired Bluetooth peripheral.
 func (s *AgentService) ForgetBluetoothPeripheral(ctx context.Context, req *agentpb.ForgetBluetoothPeripheralRequest) (*agentpb.ForgetBluetoothPeripheralResponse, error) {
 	if err := s.bluetoothManager.Forget(ctx, req.GetAddress()); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to forget bluetooth peripheral: %v", err)
@@ -573,10 +522,10 @@ const osUpdateUnsupportedForHostMessage = "This setup cannot be updated with wen
 var menderProgressRe = regexp.MustCompile(`(\d{1,3})%`)
 
 func defaultIsWendyOSHost() bool {
-	// Older WendyOS builds did not write /etc/wendyos/device-type, so keep
-	// /etc/wendy/version.txt as the primary compatibility marker.
-	if data, err := os.ReadFile("/etc/wendy/version.txt"); err == nil {
-		return strings.HasPrefix(strings.TrimSpace(string(data)), "WendyOS-")
+	// Older WendyOS builds did not write /etc/wendyos/device-type, so keep the
+	// version file as a compatibility marker alongside the newer device type.
+	if v, ok := wendyOSVersion(); ok {
+		return strings.HasPrefix(v, "WendyOS-")
 	}
 	// Newer WendyOS images report a board/device type used for OTA artifact
 	// selection. This file is absent on generic Linux agent installs.
@@ -584,6 +533,23 @@ func defaultIsWendyOSHost() bool {
 		return true
 	}
 	return false
+}
+
+func wendyOSVersion() (string, bool) {
+	return readWendyOSVersionFrom("/etc/wendyos/version.txt", "/etc/wendy/version.txt")
+}
+
+func readWendyOSVersionFrom(paths ...string) (string, bool) {
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if v := strings.TrimSpace(string(data)); v != "" {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // enableJetsonRootfsAB ensures rootfs A/B redundancy is configured on NVIDIA
@@ -648,7 +614,6 @@ func enableJetsonRootfsAB(logger *zap.Logger) error {
 	return nil
 }
 
-// UpdateOS streams OS update progress using mender.
 func (s *AgentService) UpdateOS(req *agentpb.UpdateOSRequest, stream grpc.ServerStreamingServer[agentpb.UpdateOSResponse]) error {
 	s.logger.Info("UpdateOS started", zap.String("artifact_url", req.GetArtifactUrl()))
 
@@ -792,7 +757,6 @@ func (s *AgentService) UpdateOS(req *agentpb.UpdateOSRequest, stream grpc.Server
 	go func() { defer wg.Done(); scanLines(stderr) }()
 	go func() { defer wg.Done(); scanLines(stdout) }()
 
-	// Wait for output scanners to finish (pipes close when process exits).
 	wg.Wait()
 
 	if err := cmd.Wait(); err != nil {
@@ -896,8 +860,6 @@ func CommitMenderUpdate(logger *zap.Logger) {
 	logger.Info("Committed Mender update", zap.String("output", strings.TrimSpace(string(out))))
 }
 
-// CleanupOldBackups removes agent binary backups older than 48 hours.
-// This should be called on startup to clean up leftovers from previous updates.
 func CleanupOldBackups(logger *zap.Logger) {
 	execPath, err := os.Executable()
 	if err != nil {

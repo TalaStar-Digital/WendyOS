@@ -17,9 +17,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
-	"github.com/wendylabsinc/wendy/internal/shared/discovery"
-	"github.com/wendylabsinc/wendy/internal/shared/models"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/shared/discovery"
+	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 )
 
 // ─── phases ──────────────────────────────────────────────────────────────────
@@ -1768,8 +1768,6 @@ func (m *tourWizardModel) createProjectFromTemplate() error {
 
 // ─── platform helpers ─────────────────────────────────────────────────────────
 
-// detectCurrentWiFiSSID returns the SSID the host machine is currently
-// connected to, or "" if unavailable or not connected.
 func detectCurrentWiFiSSID() string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -1795,6 +1793,33 @@ func detectCurrentWiFiSSID() string {
 			if ssid := strings.TrimSpace(string(out)); ssid != "" {
 				return ssid
 			}
+		}
+	case "windows":
+		out, err := exec.Command("netsh", "wlan", "show", "interfaces").Output()
+		if err != nil {
+			return ""
+		}
+		return parseNetshSSID(string(out))
+	}
+	return ""
+}
+
+// parseNetshSSID extracts the SSID value from the output of
+// `netsh wlan show interfaces`. The output contains many "<label> : <value>"
+// lines; we want the first one whose label is exactly "SSID" (the "BSSID" line
+// must not match). Returns "" if no SSID line is present or the value is empty.
+func parseNetshSSID(out string) string {
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		if !strings.HasPrefix(line, "SSID") {
+			continue
+		}
+		rest := strings.TrimLeft(line[len("SSID"):], " \t")
+		if !strings.HasPrefix(rest, ":") {
+			continue
+		}
+		if ssid := strings.TrimSpace(rest[1:]); ssid != "" {
+			return ssid
 		}
 	}
 	return ""

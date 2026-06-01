@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
-	"github.com/wendylabsinc/wendy/internal/shared/config"
-	cloudpb "github.com/wendylabsinc/wendy/proto/gen/cloudpb"
+	"github.com/wendylabsinc/wendy/go/internal/shared/config"
+	cloudpb "github.com/wendylabsinc/wendy/go/proto/gen/cloudpb"
 	"google.golang.org/grpc"
 )
 
@@ -124,5 +124,16 @@ func TestCloudRun_RequiresProjectPath(t *testing.T) {
 	}
 	if !result.IsError {
 		t.Fatal("expected error result")
+	}
+}
+
+func TestRun_MissingProjectPath(t *testing.T) {
+	srv := New(&config.Config{}, nil)
+	result, err := srv.callTool(context.Background(), "run", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected IsError=true when project_path is missing")
 	}
 }

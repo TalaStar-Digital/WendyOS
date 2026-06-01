@@ -7,14 +7,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
-	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/shared/appconfig"
 )
 
 const (
@@ -258,11 +260,11 @@ func runInitWizard(args []string, opts initOptions) error {
 	}
 
 	if tmpl != "" {
-		destDir, appID, err := resolveInitDestAndID(cwd, args, opts)
+		destDir, appID, enterProjectDir, err := resolveInitDestAndID(cwd, args, opts)
 		if err != nil {
 			return err
 		}
-		return runTemplateFlow(cwd, destDir, appID, tmpl, target, meta, opts)
+		return runTemplateFlow(cwd, destDir, appID, tmpl, target, meta, opts, enterProjectDir)
 	}
 
 	// Standard wizard flow (no template) — check wendy.json doesn't already exist.
@@ -513,10 +515,6 @@ func metaTemplateNames(meta *repoMeta) string {
 	return strings.Join(names, ", ")
 }
 
-// fetchRepoMetaWithUI wraps fetchRepoMeta with a bubbletea spinner when
-// stdout is a TTY. In non-interactive contexts it falls back to a plain
-// printf so logs stay readable. If the user cancels (q / ctrl+c) the
-// in-flight HTTP request is aborted and ErrUserCancelled is returned.
 func fetchRepoMetaWithUI(branch string) (*repoMeta, error) {
 	if !isInteractiveTerminal() {
 		cliLogln("Fetching template registry...")
@@ -558,10 +556,6 @@ func fetchRepoMetaWithUI(branch string) (*repoMeta, error) {
 	return meta, fetchErr
 }
 
-// downloadTemplateArchiveWithUI wraps downloadTemplateArchive with a
-// bubbletea progress bar when stdout is a TTY. In non-interactive contexts
-// it falls back to plain text. If the user cancels (q / ctrl+c) the
-// in-flight HTTP request is aborted and ErrUserCancelled is returned.
 func downloadTemplateArchiveWithUI(language, tmpl, branch string) (map[string][]byte, *templateManifest, error) {
 	title := fmt.Sprintf("Downloading template %q for %s (branch: %s)", tmpl, language, resolveTemplateBranch(branch))
 
@@ -619,7 +613,7 @@ func downloadTemplateArchiveWithUI(language, tmpl, branch string) (map[string][]
 
 // runTemplateFlow handles init when a template is selected.
 // destDir is the resolved project directory (either cwd or a new subdir).
-func runTemplateFlow(cwd, destDir, appID, tmpl, target string, meta *repoMeta, opts initOptions) error {
+func runTemplateFlow(cwd, destDir, appID, tmpl, target string, meta *repoMeta, opts initOptions, enterProjectDir bool) error {
 	language, err := resolveTemplateLanguage(target, tmpl, meta, opts)
 	if err != nil {
 		return err
@@ -679,7 +673,34 @@ func runTemplateFlow(cwd, destDir, appID, tmpl, target string, meta *repoMeta, o
 		return err
 	}
 
+	return finishTemplateInit(cwd, destDir, appID, enterProjectDir)
+}
+
+func finishTemplateInit(cwd, destDir, appID string, enterProjectDir bool) error {
+	return finishTemplateInitWithLauncher(cwd, destDir, appID, enterProjectDir, defaultInteractiveShell, startProjectShell)
+}
+
+func finishTemplateInitWithLauncher(cwd, destDir, appID string, enterProjectDir bool, resolveShell func() (string, error), launch func(dir, shell string) error) error {
 	cliSuccess("\nYour project is ready!")
+
+	if enterProjectDir && filepath.Clean(destDir) != filepath.Clean(cwd) {
+		projectDir, err := projectShellDir(cwd, destDir)
+		if err != nil {
+			return err
+		}
+		shell, err := resolveShell()
+		if err != nil {
+			return err
+		}
+		cliLogln("Opening a shell in: %s", projectDir)
+		cliLogln("Run `wendy run` to build and deploy.")
+		if err := launch(projectDir, shell); err != nil {
+			cliLogln("Warning: failed to open project shell: %v", err)
+			return err
+		}
+		return nil
+	}
+
 	cliLogln("Next steps:")
 	for _, step := range templateNextSteps(cwd, destDir, appID) {
 		cliLogln("  %s", step)
@@ -689,6 +710,417 @@ func runTemplateFlow(cwd, destDir, appID, tmpl, target string, meta *repoMeta, o
 	}
 
 	return nil
+}
+
+func projectShellDir(cwd, destDir string) (string, error) {
+	cleanCwd, err := canonicalProjectPath(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolving working directory: %w", err)
+	}
+	cleanDest, err := canonicalProjectPath(destDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving project directory: %w", err)
+	}
+
+	if cleanDest == cleanCwd {
+		return "", fmt.Errorf("project directory %q is the working directory %q", destDir, cwd)
+	}
+	if !pathHasPrefix(cleanDest, cleanCwd) {
+		return "", fmt.Errorf("project directory %q is outside working directory %q", destDir, cwd)
+	}
+
+	return cleanDest, nil
+}
+
+func pathHasPrefix(path, prefix string) bool {
+	sep := string(filepath.Separator)
+	cleanPath := strings.TrimRight(filepath.Clean(path), sep) + sep
+	cleanPrefix := strings.TrimRight(filepath.Clean(prefix), sep) + sep
+	if runtime.GOOS == "windows" {
+		if len(cleanPath) < len(cleanPrefix) {
+			return false
+		}
+		return strings.EqualFold(cleanPath[:len(cleanPrefix)], cleanPrefix)
+	}
+	return strings.HasPrefix(cleanPath, cleanPrefix)
+}
+
+func canonicalProjectPath(path string) (string, error) {
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("%q does not resolve to an existing path: %w", path, err)
+	}
+	return resolved, nil
+}
+
+func startProjectShell(dir, shell string) error {
+	validated, ok := validateInteractiveShell(shell)
+	if !ok {
+		return fmt.Errorf("interactive shell %q is no longer valid", shell)
+	}
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("checking project directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("project directory %q is not a directory", dir)
+	}
+
+	env, err := projectShellEnv(validated)
+	if err != nil {
+		return err
+	}
+
+	return runProjectShell(validated, dir, env)
+}
+
+func defaultInteractiveShell() (string, error) {
+	if runtime.GOOS == "windows" {
+		for _, shell := range defaultWindowsShellCandidates() {
+			if valid, ok := validateInteractiveShell(shell); ok {
+				return valid, nil
+			}
+		}
+		return "", fmt.Errorf("finding interactive shell: cmd.exe not available")
+	}
+
+	for _, shell := range defaultUnixShellCandidates() {
+		if shell, ok := validateInteractiveShell(shell); ok {
+			return shell, nil
+		}
+	}
+	return "", fmt.Errorf("finding interactive shell: no supported shell found")
+}
+
+func defaultWindowsShellCandidates() []string {
+	return []string{filepath.Join(windowsRootDir(), "System32", "cmd.exe")}
+}
+
+func defaultUnixShellCandidates() []string {
+	if runtime.GOOS == "darwin" {
+		return []string{"/bin/zsh", "/bin/bash", "/bin/sh"}
+	}
+	return []string{"/bin/bash", "/usr/bin/bash", "/bin/sh", "/usr/bin/sh"}
+}
+
+func validateInteractiveShell(candidate string) (string, bool) {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" || !filepath.IsAbs(candidate) {
+		return "", false
+	}
+	candidate = filepath.Clean(candidate)
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", false
+	}
+	resolved = filepath.Clean(resolved)
+	if !isKnownShellName(filepath.Base(resolved)) || !isTrustedShellPath(candidate, resolved) {
+		return "", false
+	}
+	if runtime.GOOS != "windows" {
+		for _, dir := range shellValidationDirs(candidate, resolved) {
+			trusted, err := isRootOwnedNonWritableDir(dir)
+			if err != nil || !trusted {
+				return "", false
+			}
+		}
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	if runtime.GOOS != "windows" {
+		mode := info.Mode().Perm()
+		if mode&0o111 == 0 || mode&0o022 != 0 || !isRootOwned(resolved, info) {
+			return "", false
+		}
+	}
+	return resolved, true
+}
+
+func isTrustedShellPath(candidate, resolved string) bool {
+	if runtime.GOOS == "windows" {
+		return isTrustedShellDir(filepath.Dir(resolved))
+	}
+	if runtime.GOOS == "darwin" {
+		return isDarwinSystemShellPath(candidate) && isDarwinSystemShellPath(resolved)
+	}
+	return isTrustedShellDir(filepath.Dir(candidate)) && isTrustedShellDir(filepath.Dir(resolved))
+}
+
+func shellValidationDirs(candidate, resolved string) []string {
+	dirs := []string{filepath.Dir(candidate)}
+	resolvedDir := filepath.Dir(resolved)
+	if resolvedDir != dirs[0] {
+		dirs = append(dirs, resolvedDir)
+	}
+	return dirs
+}
+
+func isDarwinSystemShellPath(path string) bool {
+	// Keep Darwin shell handoff limited to immutable SIP-protected system shells.
+	switch filepath.Clean(path) {
+	case "/bin/zsh", "/bin/bash", "/bin/sh":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTrustedShellDir(dir string) bool {
+	dir = filepath.Clean(dir)
+	for _, trusted := range fallbackTrustedShellDirs() {
+		trusted = filepath.Clean(trusted)
+		if runtime.GOOS == "windows" {
+			if strings.EqualFold(dir, trusted) {
+				return true
+			}
+			continue
+		}
+		if dir == trusted {
+			return true
+		}
+	}
+	return false
+}
+
+func fallbackTrustedShellDirs() []string {
+	if runtime.GOOS == "windows" {
+		return []string{filepath.Join(windowsRootDir(), "System32")}
+	}
+	return []string{"/bin", "/usr/bin"}
+}
+
+func isKnownShellName(name string) bool {
+	switch strings.ToLower(name) {
+	case "sh", "bash", "zsh", "dash", "cmd.exe":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRootOwnedNonWritableDir(dir string) (bool, error) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return false, fmt.Errorf("checking shell directory %q: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("checking shell directory %q: not a directory", dir)
+	}
+	return info.Mode().Perm()&0o022 == 0 && isRootOwned(dir, info), nil
+}
+
+func projectShellEnv(shell string) ([]string, error) {
+	validated, ok := validateInteractiveShell(shell)
+	if !ok {
+		return nil, fmt.Errorf("interactive shell %q is no longer valid", shell)
+	}
+
+	home, username := projectShellUserIdentity()
+	env := make([]string, 0, 6)
+	env = appendAllowedProjectShellEnv(env, "HOME", home)
+	if runtime.GOOS != "windows" {
+		env = appendAllowedProjectShellEnv(env, "SHELL", validated)
+		env = appendAllowedProjectShellEnv(env, "LOGNAME", username)
+		env = appendAllowedProjectShellEnv(env, "USER", username)
+	} else {
+		env = appendAllowedProjectShellEnv(env, "USERNAME", username)
+	}
+	env = appendAllowedProjectShellEnv(env, "TERM", projectShellTerm(os.Getenv("TERM")))
+	env = appendAllowedProjectShellEnv(env, "PATH", projectShellPath())
+	return env, nil
+}
+
+func projectShellUserIdentity() (string, string) {
+	current, err := user.Current()
+	if err != nil {
+		return "", ""
+	}
+	var home string
+	if isSafeEnvPathValue(current.HomeDir) {
+		home = filepath.Clean(current.HomeDir)
+	}
+	username := safeCurrentUsername(current.Username)
+	return home, username
+}
+
+func safeCurrentUsername(username string) string {
+	username = strings.TrimSpace(username)
+	if i := strings.LastIndex(username, `\`); i >= 0 {
+		username = username[i+1:]
+	}
+	if !isSafeEnvIdentityValue(username) {
+		return ""
+	}
+	return username
+}
+
+func stringHasControlChars(value string) bool {
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func isSafeEnvPathValue(value string) bool {
+	if value == "" || stringHasControlChars(value) || !filepath.IsAbs(value) || pathContainsParentReference(value) {
+		return false
+	}
+	return filepath.IsAbs(filepath.Clean(value))
+}
+
+func pathContainsParentReference(path string) bool {
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool {
+		return r == '/' || r == '\\'
+	}) {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+func isSafeEnvIdentityValue(value string) bool {
+	if value == "" || len(value) > 64 || stringHasControlChars(value) {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func appendWithoutExistingEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !envKeyHasPrefix(kv, prefix) {
+			out = append(out, kv)
+		}
+	}
+	if value == "" {
+		return out
+	}
+	return append(out, prefix+value)
+}
+
+func appendAllowedProjectShellEnv(env []string, key, value string) []string {
+	if isForbiddenProjectShellEnvKey(key) {
+		return appendWithoutExistingEnv(env, key, "")
+	}
+	return appendWithoutExistingEnv(env, key, value)
+}
+
+func isForbiddenProjectShellEnvKey(key string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(key))
+	if strings.HasPrefix(upper, "LD_") || strings.HasPrefix(upper, "DYLD_") {
+		return true
+	}
+	switch upper {
+	case "GCONV_PATH",
+		"BASH_ENV", "ENV", "CDPATH", "IFS", "SHELLOPTS", "BASHOPTS", "PS4",
+		"ZDOTDIR", "PYTHONPATH", "RUBYLIB", "RUBYOPT", "NODE_PATH", "NODE_OPTIONS", "PERL5LIB", "PERL5OPT":
+		return true
+	default:
+		return false
+	}
+}
+
+func envKeyHasPrefix(kv, prefix string) bool {
+	if len(kv) < len(prefix) {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(kv[:len(prefix)], prefix)
+	}
+	return strings.HasPrefix(kv, prefix)
+}
+
+func projectShellTerm(term string) string {
+	switch strings.TrimSpace(term) {
+	case "xterm", "xterm-256color", "screen", "screen-256color", "tmux", "tmux-256color", "vt100", "dumb":
+		return strings.TrimSpace(term)
+	default:
+		return "dumb"
+	}
+}
+
+func projectShellPath() string {
+	parts := make([]string, 0)
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		parts = appendProjectShellPathDir(parts, dir)
+	}
+	if runtime.GOOS == "windows" {
+		for _, dir := range fallbackTrustedShellDirs() {
+			parts = appendProjectShellPathDir(parts, dir)
+		}
+		parts = appendProjectShellPathDir(parts, windowsRootDir())
+	} else {
+		parts = appendProjectShellPathDir(parts, "/usr/bin")
+		parts = appendProjectShellPathDir(parts, "/bin")
+	}
+	if exe, err := os.Executable(); err == nil {
+		parts = appendProjectShellPathDir(parts, filepath.Dir(exe))
+	}
+	return strings.Join(parts, string(os.PathListSeparator))
+}
+
+func appendProjectShellPathDir(parts []string, dir string) []string {
+	dir, ok := projectShellPathDir(dir)
+	if !ok {
+		return parts
+	}
+	if runtime.GOOS == "windows" {
+		if slices.ContainsFunc(parts, func(existing string) bool {
+			return strings.EqualFold(filepath.Clean(existing), dir)
+		}) {
+			return parts
+		}
+	} else if slices.Contains(parts, dir) {
+		return parts
+	}
+	return append(parts, dir)
+}
+
+func projectShellPathDir(dir string) (string, bool) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" || stringHasControlChars(dir) {
+		return "", false
+	}
+	dir = filepath.Clean(dir)
+	if !filepath.IsAbs(dir) {
+		return "", false
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return "", false
+	}
+	if runtime.GOOS != "windows" {
+		writable, err := isGroupOrWorldWritablePathDir(dir)
+		if err != nil || writable {
+			return "", false
+		}
+	}
+	return dir, true
+}
+
+func isGroupOrWorldWritablePathDir(dir string) (bool, error) {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return false, fmt.Errorf("checking PATH directory %q: %w", dir, err)
+	}
+	return info.Mode().Perm()&0o022 != 0, nil
 }
 
 func shellQuote(s string) string {
@@ -710,14 +1142,14 @@ func templateNextSteps(cwd, destDir, appID string) []string {
 // resolveInitDestAndID determines the destination directory and app ID for template flow.
 // In fully interactive mode it asks whether to initialize in the current directory
 // or create a new project subdirectory.
-func resolveInitDestAndID(cwd string, args []string, opts initOptions) (string, string, error) {
+func resolveInitDestAndID(cwd string, args []string, opts initOptions) (string, string, bool, error) {
 	// Explicit app ID provided: always create a new subdirectory.
 	if len(args) > 0 || opts.appIDSet {
 		appID, err := resolveInitAppID(cwd, args, opts)
 		if err != nil {
-			return "", "", err
+			return "", "", false, err
 		}
-		return filepath.Join(cwd, appID), appID, nil
+		return filepath.Join(cwd, appID), appID, false, nil
 	}
 
 	// Fully interactive (no directive flags): ask where to set up the project.
@@ -725,28 +1157,43 @@ func resolveInitDestAndID(cwd string, args []string, opts initOptions) (string, 
 		fmt.Println()
 		useCurrentDir, err := tui.ConfirmDefaultYes("Initialize in the current directory?")
 		if err != nil {
-			return "", "", err
+			return "", "", false, err
 		}
 		if useCurrentDir {
-			return cwd, strings.TrimSpace(filepath.Base(cwd)), nil
+			return cwd, strings.TrimSpace(filepath.Base(cwd)), false, nil
 		}
 
 		fmt.Println()
-		appID, err := tui.PromptText("Project name", "directory name and app identifier", func(v string) error {
-			if strings.TrimSpace(v) == "" {
-				return fmt.Errorf("project name cannot be empty")
-			}
-			return nil
-		})
+		appID, err := tui.PromptText("Project name", "directory name and app identifier", validateNewProjectName)
 		if err != nil {
-			return "", "", err
+			return "", "", false, err
 		}
 		appID = strings.TrimSpace(appID)
-		return filepath.Join(cwd, appID), appID, nil
+		return filepath.Join(cwd, appID), appID, true, nil
 	}
 
 	// Semi-interactive or non-interactive without explicit app ID: infer from cwd.
-	return cwd, strings.TrimSpace(filepath.Base(cwd)), nil
+	return cwd, strings.TrimSpace(filepath.Base(cwd)), false, nil
+}
+
+func validateNewProjectName(value string) error {
+	name := strings.TrimSpace(value)
+	if name == "" {
+		return fmt.Errorf("project name cannot be empty")
+	}
+	if filepath.IsAbs(name) || filepath.Clean(name) != name || name == "." || name == ".." || strings.ContainsAny(name, `/\:`) {
+		return fmt.Errorf("project name must be a single subdirectory name")
+	}
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, ".") {
+		return fmt.Errorf("project name must not start with '-' or '.'")
+	}
+	for _, r := range name {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-' {
+			continue
+		}
+		return fmt.Errorf("project name may only contain letters, numbers, '.', '_' or '-'")
+	}
+	return nil
 }
 
 // maybeGitInit optionally runs git init in the project directory.
@@ -889,7 +1336,6 @@ func pickInitLanguage(target string) (string, error) {
 	}
 }
 
-// askEntitlementQuestions is a variable so tests can replace it.
 var askEntitlementQuestions = func(target, language string) ([]appconfig.Entitlement, error) {
 	// Always include network.
 	entitlements := []appconfig.Entitlement{
@@ -1092,7 +1538,6 @@ func pythonPackageName(appID string) string {
 	return r.Replace(appID)
 }
 
-// initPythonUVProject creates a uv-based Python project.
 func initPythonUVProject(dir, appID string) error {
 	pkgName := pythonPackageName(appID)
 
@@ -1300,11 +1745,7 @@ func runAIAssistantChoice(choice, appID, target, language string, entitlements [
 
 	cliLogln("\nStarting %s with project context...", choice)
 
-	cmd := exec.Command(choice, prompt)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return launchAssistantWithPrompt(choice, prompt)
 }
 
 func buildAssistantPrompt(appID, target, language string, entitlements []appconfig.Entitlement) string {

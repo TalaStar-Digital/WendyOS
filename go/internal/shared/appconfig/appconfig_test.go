@@ -114,6 +114,35 @@ func TestValidate_MissingAppID(t *testing.T) {
 	}
 }
 
+func TestValidate_AppIDCharset(t *testing.T) {
+	valid := []string{
+		"my-app",
+		"com.example.app",
+		"sh.wendy.App",
+		"app_123",
+	}
+	for _, id := range valid {
+		cfg := &AppConfig{AppID: id}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() unexpected error for valid appId %q: %v", id, err)
+		}
+	}
+
+	invalid := []string{
+		"app,with,commas",  // would corrupt OTEL_RESOURCE_ATTRIBUTES
+		"app=value",        // would corrupt env-var parsing
+		"app with spaces",  // disallowed
+		"app\nnewline",     // would inject an env entry
+		"emoji-\U0001F600", // non-ASCII
+	}
+	for _, id := range invalid {
+		cfg := &AppConfig{AppID: id}
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("Validate() expected error for invalid appId %q, got nil", id)
+		}
+	}
+}
+
 func TestValidate_UnknownEntitlementType(t *testing.T) {
 	cfg := &AppConfig{
 		AppID: "com.example.app",
@@ -972,4 +1001,322 @@ func TestMCPEntitlementPortOutOfRange(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for out-of-range port")
 	}
+}
+
+func TestServiceConfigValidation(t *testing.T) {
+	t.Run("valid services", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"api":      {Context: "api", DependsOn: []string{"db"}},
+				"db":       {Context: "db"},
+				"frontend": {Context: "frontend", DependsOn: []string{"api"}},
+			},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("missing context", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"api": {Context: ""},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for missing context")
+		}
+		if !strings.Contains(err.Error(), "context is required") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("unknown dependsOn", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"api": {Context: "api", DependsOn: []string{"ghost"}},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for unknown dependsOn")
+		}
+		if !strings.Contains(err.Error(), "ghost") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("dotdot in context rejected", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"svc": {Context: "../escape"},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for dotdot context")
+		}
+	})
+
+	t.Run("services parsed from JSON", func(t *testing.T) {
+		data := `{
+			"appId": "com.example.app",
+			"services": {
+				"api":  {"context": "api",  "dependsOn": ["db"]},
+				"db":   {"context": "db"}
+			}
+		}`
+		cfg, err := LoadFromBytes([]byte(data))
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if len(cfg.Services) != 2 {
+			t.Fatalf("want 2 services, got %d", len(cfg.Services))
+		}
+		if cfg.Services["api"].Context != "api" {
+			t.Errorf("api context = %q, want %q", cfg.Services["api"].Context, "api")
+		}
+		if len(cfg.Services["api"].DependsOn) != 1 || cfg.Services["api"].DependsOn[0] != "db" {
+			t.Errorf("api dependsOn = %v, want [db]", cfg.Services["api"].DependsOn)
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("validate error: %v", err)
+		}
+	})
+
+	t.Run("valid service entitlements", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"api": {
+					Context: "api",
+					Entitlements: []Entitlement{
+						{Type: EntitlementNetwork, Mode: "host"},
+						{Type: EntitlementPersist, Name: "data", Path: "/app/data"},
+					},
+				},
+			},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected error for valid service entitlements: %v", err)
+		}
+	})
+
+	t.Run("unknown entitlement type in service", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"api": {
+					Context:      "api",
+					Entitlements: []Entitlement{{Type: "banana"}},
+				},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for unknown entitlement type in service")
+		}
+		if !strings.Contains(err.Error(), "banana") {
+			t.Fatalf("expected error to mention unknown type, got: %v", err)
+		}
+	})
+
+	t.Run("persist entitlement missing name in service", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"api": {
+					Context: "api",
+					Entitlements: []Entitlement{
+						{Type: EntitlementPersist, Path: "/data"},
+					},
+				},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for persist missing name in service")
+		}
+		if !strings.Contains(err.Error(), "name") {
+			t.Fatalf("expected error to mention name, got: %v", err)
+		}
+	})
+
+	t.Run("persist entitlement missing path in service", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"svc": {
+					Context: "svc",
+					Entitlements: []Entitlement{
+						{Type: EntitlementPersist, Name: "vol"},
+					},
+				},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for persist missing path in service")
+		}
+		if !strings.Contains(err.Error(), "path") {
+			t.Fatalf("expected error to mention path, got: %v", err)
+		}
+	})
+
+	t.Run("mcp entitlement invalid port in service", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"svc": {
+					Context: "svc",
+					Entitlements: []Entitlement{
+						{Type: EntitlementMCP, Port: 0},
+					},
+				},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for invalid mcp port in service")
+		}
+		if !strings.Contains(err.Error(), "port") {
+			t.Fatalf("expected error to mention port, got: %v", err)
+		}
+	})
+
+	t.Run("i2c entitlement invalid device in service", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"svc": {
+					Context: "svc",
+					Entitlements: []Entitlement{
+						{Type: EntitlementI2C, Device: "baddevice"},
+					},
+				},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for invalid i2c device in service")
+		}
+		if !strings.Contains(err.Error(), "i2c") {
+			t.Fatalf("expected error to mention i2c, got: %v", err)
+		}
+	})
+
+	t.Run("network entitlement invalid mode in service", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"svc": {
+					Context: "svc",
+					Entitlements: []Entitlement{
+						{Type: EntitlementNetwork, Mode: "bridge"},
+					},
+				},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for invalid network mode in service")
+		}
+		if !strings.Contains(err.Error(), "mode") {
+			t.Fatalf("expected error to mention mode, got: %v", err)
+		}
+	})
+
+	t.Run("duplicate mcp entitlement in service", func(t *testing.T) {
+		cfg := &AppConfig{
+			AppID: "com.example.app",
+			Services: map[string]*ServiceConfig{
+				"svc": {
+					Context: "svc",
+					Entitlements: []Entitlement{
+						{Type: EntitlementMCP, Port: 3000},
+						{Type: EntitlementMCP, Port: 4000},
+					},
+				},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for duplicate mcp entitlement in service")
+		}
+	})
+}
+
+func TestValidateJSON_ServiceEntitlements(t *testing.T) {
+	t.Run("unknown key in service entitlement warns", func(t *testing.T) {
+		data := []byte(`{
+			"appId": "com.example.app",
+			"services": {
+				"api": {
+					"context": "api",
+					"entitlements": [{"type": "gpu", "unknownKey": true}]
+				}
+			}
+		}`)
+		warnings := ValidateJSON(data)
+		if len(warnings) == 0 {
+			t.Fatal("ValidateJSON() expected warning for unknown key in service entitlement, got none")
+		}
+		found := false
+		for _, w := range warnings {
+			if strings.Contains(w, "unknownKey") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected warning mentioning 'unknownKey', got: %v", warnings)
+		}
+	})
+
+	t.Run("deprecated entitlement type in service warns", func(t *testing.T) {
+		data := []byte(`{
+			"appId": "com.example.app",
+			"services": {
+				"svc": {
+					"context": "svc",
+					"entitlements": [{"type": "video"}]
+				}
+			}
+		}`)
+		warnings := ValidateJSON(data)
+		if len(warnings) == 0 {
+			t.Fatal("ValidateJSON() expected deprecation warning for service entitlement, got none")
+		}
+		found := false
+		for _, w := range warnings {
+			if strings.Contains(w, "video") && strings.Contains(w, "deprecated") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected deprecation warning mentioning 'video', got: %v", warnings)
+		}
+	})
+
+	t.Run("valid service entitlements produce no warnings", func(t *testing.T) {
+		data := []byte(`{
+			"appId": "com.example.app",
+			"services": {
+				"api": {
+					"context": "api",
+					"entitlements": [{"type": "network", "mode": "host"}]
+				}
+			}
+		}`)
+		warnings := ValidateJSON(data)
+		if len(warnings) != 0 {
+			t.Fatalf("ValidateJSON() expected no warnings for valid service entitlement, got: %v", warnings)
+		}
+	})
 }

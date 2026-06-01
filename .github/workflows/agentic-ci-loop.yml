@@ -1,0 +1,375 @@
+name: Agentic CI Loop
+
+# Triggered whenever a CI workflow finishes, or when a maintainer comments on a PR.
+# Checks whether the PR has failing CI, unresolved bot review comments, or human instructions.
+# If so, runs Claude to apply fixes and commits them, which re-triggers CI.
+# Stops automatically once all checks pass and no bot comments remain open.
+
+on:
+  workflow_run:
+    workflows:
+      - Build
+      - Go Tests
+      - Swift Tests
+      - Static Analysis
+      - Docs Review
+      - Integration Test Review
+    types: [completed]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: agentic-ci-loop-${{ github.event.workflow_run.head_sha || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  iterate:
+    name: Fix failing CI and resolve bot review comments
+    if: >
+      (github.event_name == 'workflow_run' &&
+       github.repository_owner == 'wendylabsinc' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.name != 'Agentic CI Loop') ||
+      (github.event_name == 'issue_comment' &&
+       (github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    steps:
+      - name: Find associated PR
+        id: find-pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ASSOC: ${{ github.event.comment.author_association }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          if [ "$EVENT_NAME" = "issue_comment" ]; then
+            # Verify the comment is on a PR, not a plain issue.
+            IS_PR=$(gh api "repos/$REPO/issues/$ISSUE_NUMBER" \
+              --jq '.pull_request // empty' 2>/dev/null || true)
+            if [ -z "$IS_PR" ]; then
+              echo "Comment is on an issue, not a PR — skipping"
+              echo "pr_number=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # Belt-and-suspenders re-check of job-level if:.
+            case "$COMMENT_ASSOC" in
+              MEMBER|OWNER) ;;
+              *)
+                echo "Commenter is not a member — skipping"
+                echo "pr_number=" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+            # Only trigger on /implement, /iterate, or @claude mentions.
+            if ! printf '%s' "${COMMENT_BODY:0:500}" | grep -qE '(/implement|/iterate|@claude)'; then
+              echo "Comment does not contain a trigger keyword — skipping"
+              echo "pr_number=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            PR_NUMBER="$ISSUE_NUMBER"
+            PR_DATA=$(gh api "repos/$REPO/pulls/$PR_NUMBER" 2>/dev/null || echo '{}')
+            # Fork guard: refuse to check out or push code from a forked repository.
+            # A maintainer commenting on a fork PR must not trigger a privileged checkout.
+            HEAD_REPO=$(printf '%s' "$PR_DATA" | jq -r '.head.repo.full_name // ""')
+            if [ -z "$HEAD_REPO" ] || [ "$HEAD_REPO" != "$REPO" ]; then
+              echo "PR head is from a fork ($HEAD_REPO) — skipping"
+              echo "pr_number=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            PR_HEAD_BRANCH=$(printf '%s' "$PR_DATA" | jq -r '.head.ref // ""')
+            if printf '%s' "$PR_HEAD_BRANCH" | grep -qE '^ai/'; then
+              echo "PR head is ai/ branch — handled by ai-pr-feedback.yml, skipping"
+              echo "pr_number=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            HEAD_SHA=$(printf '%s' "$PR_DATA" | jq -r '.head.sha // ""')
+            echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          else
+            PR_NUMBER=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+              --jq '.[0].number // empty' 2>/dev/null || true)
+            if [ -z "$PR_NUMBER" ]; then
+              echo "No PR found — skipping"
+              echo "pr_number=" >> "$GITHUB_OUTPUT"
+            else
+              PR_DATA=$(gh api "repos/$REPO/pulls/$PR_NUMBER" 2>/dev/null || echo '{}')
+              AUTHOR_ASSOC=$(printf '%s' "$PR_DATA" | jq -r '.author_association // "NONE"')
+              # ai/* branch PRs are handled by ai-pr-feedback.yml — skip here to avoid two
+              # automation loops racing to commit to the same branch simultaneously.
+              # Use branch pattern (not ai-generated label) as the routing signal:
+              # labels are weak trust signals; branch names require push access.
+              PR_HEAD_BRANCH=$(printf '%s' "$PR_DATA" | jq -r '.head.ref // ""')
+              if printf '%s' "$PR_HEAD_BRANCH" | grep -qE '^ai/'; then
+                echo "PR head is ai/ branch — handled by ai-pr-feedback.yml, skipping"
+                echo "pr_number=" >> "$GITHUB_OUTPUT"
+              else
+                # COLLABORATOR excluded — same policy as ai-pr-feedback.yml to maintain
+                # a consistent authorization boundary across all AI automation workflows.
+                case "$AUTHOR_ASSOC" in
+                  MEMBER|OWNER)
+                    echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+                    echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+                    ;;
+                  *)
+                    echo "PR author is not a wendylabsinc member (association: $AUTHOR_ASSOC) — skipping"
+                    echo "pr_number=" >> "$GITHUB_OUTPUT"
+                    ;;
+                esac
+              fi
+            fi
+          fi
+
+      - name: Check CI status and bot comments
+        if: steps.find-pr.outputs.pr_number != ''
+        id: check-status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.find-pr.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.find-pr.outputs.pr_number }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # Circuit-breaker: count consecutive agentic commits regardless of trigger.
+          AGENTIC_STREAK=$(gh api "repos/$REPO/pulls/$PR_NUMBER/commits" \
+            --jq '[.[] | select(.commit.author.name == "github-actions[bot]")] | length' \
+            2>/dev/null || echo "0")
+          [[ "$AGENTIC_STREAK" =~ ^[0-9]+$ ]] || AGENTIC_STREAK=0
+          if [ "$AGENTIC_STREAK" -ge 5 ]; then
+            echo "needs_work=false" >> "$GITHUB_OUTPUT"
+            echo "Circuit-breaker: $AGENTIC_STREAK consecutive agentic commits — halting to avoid runaway loop"
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = "issue_comment" ]; then
+            # Human asked for iteration directly — proceed regardless of CI state.
+            echo "needs_work=true" >> "$GITHUB_OUTPUT"
+            echo "failing_checks=" >> "$GITHUB_OUTPUT"
+            echo "bot_comments=0" >> "$GITHUB_OUTPUT"
+            echo "Triggered by human comment — iterating (agentic streak: $AGENTIC_STREAK / 5)"
+            exit 0
+          fi
+
+          CHECK_RUNS=$(gh api --paginate "repos/$REPO/commits/$HEAD_SHA/check-runs" \
+            2>/dev/null \
+            | jq --slurp '{check_runs: [(.[].check_runs // [])[]]}' \
+            || echo '{"check_runs":[]}')
+
+          FAILING=$(printf '%s' "$CHECK_RUNS" \
+            | jq -r '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(",")')
+
+          PENDING=$(printf '%s' "$CHECK_RUNS" \
+            | jq -r '[.check_runs[] | select(.status == "in_progress" or .status == "queued") | .name] | join(",")')
+
+          # Count active (non-outdated) inline bot comments; position is null when the diff moves on.
+          # --paginate + jq --slurp ensures all pages are merged before counting.
+          BOT_INLINE=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/comments" \
+            2>/dev/null \
+            | jq --slurp '(add // []) | [.[] | select(.user.login == "github-actions[bot]") | select(.position != null)] | length' \
+            || echo "0")
+
+          # Count bot reviews with CHANGES_REQUESTED or a non-empty COMMENTED body.
+          BOT_REVIEWS=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+            2>/dev/null \
+            | jq --slurp '(add // []) | [.[] | select(.user.login == "github-actions[bot]") |
+                   select(.state == "CHANGES_REQUESTED" or (.state == "COMMENTED" and (.body // "") != ""))] | length' \
+            || echo "0")
+
+          # Validate integers before arithmetic to avoid word-splitting on unexpected output.
+          [[ "$BOT_INLINE"   =~ ^[0-9]+$ ]] || BOT_INLINE=0
+          [[ "$BOT_REVIEWS"  =~ ^[0-9]+$ ]] || BOT_REVIEWS=0
+          BOT_COMMENTS=$(( BOT_INLINE + BOT_REVIEWS ))
+
+          # Strip newlines from check names before writing to GITHUB_OUTPUT to prevent
+          # key=value injection via crafted check names containing newline characters.
+          FAILING=$(printf '%s' "$FAILING" | tr -d '\n\r')
+          PENDING=$(printf '%s' "$PENDING" | tr -d '\n\r')
+
+          echo "failing_checks=$FAILING" >> "$GITHUB_OUTPUT"
+          echo "bot_comments=$BOT_COMMENTS" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$PENDING" ]; then
+            echo "needs_work=false" >> "$GITHUB_OUTPUT"
+            echo "Checks still in progress ($PENDING) — deferring until they complete"
+          elif [ -z "$FAILING" ] && [ "$BOT_COMMENTS" = "0" ]; then
+            echo "needs_work=false" >> "$GITHUB_OUTPUT"
+            echo "All checks pass and no bot comments — nothing to do"
+          else
+            echo "needs_work=true" >> "$GITHUB_OUTPUT"
+            echo "Failing checks: ${FAILING:-none}"
+            echo "Open bot comments: $BOT_COMMENTS"
+            echo "Agentic commits so far: $AGENTIC_STREAK / 5"
+          fi
+
+      - name: Check out repository
+        if: steps.check-status.outputs.needs_work == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.find-pr.outputs.head_sha }}
+          token: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Collect context for Claude
+        if: steps.check-status.outputs.needs_work == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.find-pr.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.find-pr.outputs.head_sha }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          gh pr diff "$PR_NUMBER" --repo "$REPO" > "$RUNNER_TEMP/pr.diff" 2>/dev/null || touch "$RUNNER_TEMP/pr.diff"
+
+          gh run list --repo "$REPO" \
+            --commit "$HEAD_SHA" \
+            --status failure --limit 5 --json databaseId -q '.[].databaseId' 2>/dev/null \
+            | while read -r run_id; do
+                printf '=== Run %s ===\n' "$run_id" >> "$RUNNER_TEMP/ci-logs.txt"
+                gh run view "$run_id" --repo "$REPO" --log-failed 2>/dev/null \
+                  | head -300 >> "$RUNNER_TEMP/ci-logs.txt" || true
+              done
+          touch "$RUNNER_TEMP/ci-logs.txt"
+
+          gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]") | {id, body}]' \
+            > "$RUNNER_TEMP/bot-reviews.json" 2>/dev/null || echo "[]" > "$RUNNER_TEMP/bot-reviews.json"
+
+          gh api "repos/$REPO/pulls/$PR_NUMBER/comments" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]") | {id, path, body}]' \
+            > "$RUNNER_TEMP/bot-comments.json" 2>/dev/null || echo "[]" > "$RUNNER_TEMP/bot-comments.json"
+
+          # Write comment body to file (truncated; never interpolated into shell).
+          printf '%s' "${COMMENT_BODY:0:2000}" > "$RUNNER_TEMP/comment.txt"
+
+      - name: Set up Python
+        if: steps.check-status.outputs.needs_work == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Anthropic SDK
+        if: steps.check-status.outputs.needs_work == 'true'
+        run: pip install --quiet anthropic==0.97.0
+
+      - name: Run Claude to fix issues
+        if: steps.check-status.outputs.needs_work == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_NUMBER: ${{ steps.find-pr.outputs.pr_number }}
+          FAILING_CHECKS: ${{ steps.check-status.outputs.failing_checks }}
+        run: |
+          python3 << 'PYEOF'
+          import anthropic
+          import json
+          import os
+          import pathlib
+          import re
+
+          client = anthropic.Anthropic()
+
+          runner_temp = os.environ['RUNNER_TEMP']
+          diff = pathlib.Path(runner_temp + '/pr.diff').read_text()
+          ci_logs = pathlib.Path(runner_temp + '/ci-logs.txt').read_text()
+          bot_reviews = json.loads(pathlib.Path(runner_temp + '/bot-reviews.json').read_text())
+          bot_comments = json.loads(pathlib.Path(runner_temp + '/bot-comments.json').read_text())
+          comment_body = pathlib.Path(runner_temp + '/comment.txt').read_text().strip()
+
+          # Basic sanitization: strip control chars and common injection phrases.
+          comment_body = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', comment_body)
+          comment_body = re.sub(r'(?i)ignore\s+(all\s+)?previous\s+instructions?', '[filtered]', comment_body)
+          comment_body = re.sub(r'(?i)(disregard|forget|override)\s+(all\s+)?(previous\s+)?instructions?', '[filtered]', comment_body)
+
+          failing_checks = os.environ.get('FAILING_CHECKS', '')
+          pr_number = os.environ['PR_NUMBER']
+
+          if not failing_checks and not bot_reviews and not bot_comments and not comment_body:
+              print('Nothing to fix')
+              raise SystemExit(0)
+
+          bot_feedback = ''
+          for r in bot_reviews:
+              bot_feedback += f'\n---\n{r["body"]}\n'
+          for c in bot_comments:
+              bot_feedback += f'\n--- {c["path"]}\n{c["body"]}\n'
+
+          message = client.messages.create(
+              model='claude-sonnet-4-6',
+              max_tokens=16000,
+              system=(
+                  'You are an engineer working on WendyOS. '
+                  'Given failing CI logs, automated review comments, and/or instructions from a maintainer, '
+                  'make the minimal code changes needed to:\n'
+                  '1. Fix any failing CI checks.\n'
+                  '2. Apply or address suggestions from automated bot review comments.\n'
+                  '3. Follow any instructions from the maintainer.\n\n'
+                  'Rules:\n'
+                  '- Make targeted, minimal changes. Do not refactor unrelated code.\n'
+                  '- For docs suggestions: apply the suggested content unless it conflicts with the code.\n'
+                  '- For integration test suggestions: add the suggested test files exactly.\n'
+                  '- For CI failures: fix only what the logs indicate is broken.\n'
+                  '- If you cannot determine a safe fix, output nothing.\n\n'
+                  'Output ONLY files that need to change:\n'
+                  '<file path="path/to/file">full file content</file>\n\n'
+                  'Paths are relative to the repository root. If nothing can be safely fixed, output nothing.'
+              ),
+              messages=[{
+                  'role': 'user',
+                  'content': (
+                      f'PR #{pr_number}\n\n'
+                      + (f'## Maintainer instructions\n{comment_body}\n\n' if comment_body else '')
+                      + (f'## Failing CI checks\n{failing_checks}\n\n## CI logs\n```\n{ci_logs[:20000]}\n```\n\n' if failing_checks else '')
+                      + (f'## Automated review comments to address\n{bot_feedback[:20000]}\n\n' if bot_feedback else '')
+                      + f'## PR diff\n```diff\n{diff[:20000]}\n```'
+                  ),
+              }],
+          )
+
+          response_text = message.content[0].text.strip()
+          if not response_text:
+              print('Claude found nothing to fix')
+              raise SystemExit(0)
+
+          repo_root = pathlib.Path('.').resolve()
+          updated = 0
+          for match in re.finditer(r'<file path="([^"]+)">(.*?)</file>', response_text, re.DOTALL):
+              fpath = (repo_root / match.group(1)).resolve()
+              try:
+                  fpath.relative_to(repo_root)
+              except ValueError:
+                  print(f'Skipping unsafe path: {match.group(1)}')
+                  continue
+              is_new = not fpath.exists()
+              fpath.parent.mkdir(parents=True, exist_ok=True)
+              fpath.write_text(match.group(2).strip() + '\n')
+              print(f'{"Created" if is_new else "Updated"}: {fpath.relative_to(repo_root)}')
+              updated += 1
+
+          if updated == 0:
+              print('No files written')
+          PYEOF
+
+      - name: Commit and push fixes
+        if: steps.check-status.outputs.needs_work == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
+          PR_NUMBER: ${{ steps.find-pr.outputs.pr_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: agentic CI fixes and review resolutions [skip ci-loop]"
+            gh pr checkout "$PR_NUMBER" --repo "$REPO" --force
+            git push
+          fi

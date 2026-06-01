@@ -19,7 +19,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
 )
 
 const (
@@ -266,7 +266,6 @@ func templateLanguageManifestURL(branch, language, templateName string) string {
 // read from the response body so far.
 type progressCallback func(written, total int64)
 
-// progressReader wraps an io.Reader and invokes onProgress after each Read.
 type progressReader struct {
 	r          io.Reader
 	total      int64
@@ -394,10 +393,6 @@ func waitForTemplateArchiveRetry(ctx context.Context, delay time.Duration) error
 	}
 }
 
-// extractTemplateArchive reads a gzipped tarball from r and extracts files
-// matching {language}/{templateName}/ into a map of relative path -> content.
-// It also returns the parsed template.json manifest (with optional schema
-// from template.schema.json attached).
 func extractTemplateArchive(r io.Reader, language, templateName string) (map[string][]byte, *templateManifest, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
@@ -901,7 +896,6 @@ func evaluateSchemaCondition(cond *templateSchemaCondition, vals map[string]inte
 }
 
 // promptSchemaQuestion shows the appropriate TUI prompt for a single question
-// and writes the result into vals.
 func promptSchemaQuestion(q templateSchemaQuestion, vals map[string]interface{}) error {
 	fmt.Println()
 

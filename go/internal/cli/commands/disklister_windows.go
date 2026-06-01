@@ -179,8 +179,6 @@ func looksLikeCardReader(d psDisk) bool {
 		strings.Contains(strings.ToLower(d.FriendlyName), "card reader")
 }
 
-// getVolumesForDisk returns the drive letters (e.g. ["E", "F"]) for volumes
-// on a given physical disk number.
 func getVolumesForDisk(diskNumber int) ([]string, error) {
 	script := fmt.Sprintf(
 		"Get-Partition -DiskNumber %d -ErrorAction SilentlyContinue | "+
@@ -286,10 +284,6 @@ func clearDiskPartitions(diskNum int) error {
 	return nil
 }
 
-// writeImageToDisk writes an image file to a physical drive on Windows.
-// It clears existing partitions, locks and dismounts remaining volumes,
-// opens the raw physical device, and writes in 4 MiB chunks with
-// sector-aligned I/O.
 func writeImageToDisk(r io.Reader, totalSize int64, d drive, progressFn func(written int64)) error {
 	diskNum, err := parseDiskNumber(d.DevicePath)
 	if err != nil {
@@ -417,22 +411,36 @@ func writeImageToDisk(r io.Reader, totalSize int64, d drive, progressFn func(wri
 	}
 	closeAllHandles()
 
-	// Remove any auto-assigned drive letters, then take the disk offline.
-	// Set-Disk -IsOffline alone doesn't remove letters that Windows already
-	// assigned during the brief window between releasing locks and going offline.
+	// Remove any auto-assigned drive letters, then (for non-removable
+	// disks) take the disk offline. Set-Disk -IsOffline alone doesn't
+	// remove letters that Windows already assigned during the brief window
+	// between releasing locks and going offline.
 	//
 	// Get-Partition -ErrorAction SilentlyContinue: right after Clear-Disk the
 	// partition table re-read may not have completed and the cmdlet emits a
 	// non-terminating "no MSFT_Partition objects" error we don't want fatal.
 	// Set-Disk: no -Confirm (legacy Storage module rejects it; -IsOffline
 	// doesn't prompt) and no -ErrorAction Stop (we log exit status below).
+	//
+	// Skip Set-Disk -IsOffline for removable targets — Windows rejects it
+	// on USB / SD / MMC and on the PCIE card readers that report as SCSI
+	// but are flagged removable by looksLikeCardReader, with "Not
+	// Supported: Removable media cannot be set to offline." (WDY-1178).
+	// Gating in Go on the same drive.IsRemovable predicate used to select
+	// the install target keeps the cleanup predicate in lockstep with
+	// selection. Removing the partition access paths above is what
+	// actually prevents phantom drive letters; the offline step is only
+	// meaningful on fixed disks (where Windows would otherwise auto-mount
+	// partitions on the next rescan).
 	cleanupScript := fmt.Sprintf(
 		"Get-Partition -DiskNumber %d -ErrorAction SilentlyContinue | "+
 			"Where-Object { $_.DriveLetter } | "+
-			"ForEach-Object { Remove-PartitionAccessPath -DiskNumber $_.DiskNumber -PartitionNumber $_.PartitionNumber -AccessPath \"$($_.DriveLetter):\\\" -ErrorAction SilentlyContinue }; "+
-			"Set-Disk -Number %d -IsOffline $true",
-		diskNum, diskNum,
+			"ForEach-Object { Remove-PartitionAccessPath -DiskNumber $_.DiskNumber -PartitionNumber $_.PartitionNumber -AccessPath \"$($_.DriveLetter):\\\" -ErrorAction SilentlyContinue }",
+		diskNum,
 	)
+	if !d.IsRemovable {
+		cleanupScript += fmt.Sprintf("; Set-Disk -Number %d -IsOffline $true", diskNum)
+	}
 	if output, err := exec.Command(powershellExe, "-NoProfile", "-NonInteractive", "-Command", cleanupScript).CombinedOutput(); err != nil {
 		msg := strings.TrimSpace(string(output))
 		if msg != "" {

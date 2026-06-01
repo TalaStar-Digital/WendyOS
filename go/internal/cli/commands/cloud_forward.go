@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 
-	"github.com/wendylabsinc/wendy/internal/shared/config"
+	"github.com/wendylabsinc/wendy/go/internal/shared/config"
 )
 
 func newCloudTunnelCmd() *cobra.Command {
@@ -88,7 +88,7 @@ func cloudTunnelCommand(ctx context.Context, cloudGRPC, deviceName, brokerURL st
 	}
 	defer ln.Close()
 
-	cliSuccess("Forwarding %s → %s (cloud) → localhost:%d", listenAddr, asset.GetName(), remotePort)
+	cliSuccess("Forwarding %s → %s:%d (via cloud)", listenAddr, asset.GetName(), remotePort)
 	cliLogln("Press Ctrl+C to stop.")
 
 	go func() {
@@ -125,4 +125,5 @@ func serveTunnelConn(ctx context.Context, tcpConn net.Conn, brokerConn *grpc.Cli
 	go relay(tunnelConn, tcpConn)
 	go relay(tcpConn, tunnelConn)
 	<-done
+	<-done // wait for both directions before closing connections
 }

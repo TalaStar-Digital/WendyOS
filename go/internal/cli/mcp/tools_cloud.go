@@ -18,12 +18,12 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/wendylabsinc/wendy/internal/cli/clouddefaults"
-	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
-	"github.com/wendylabsinc/wendy/internal/shared/certs"
-	"github.com/wendylabsinc/wendy/internal/shared/config"
-	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
-	cloudpb "github.com/wendylabsinc/wendy/proto/gen/cloudpb"
+	"github.com/wendylabsinc/wendy/go/internal/cli/clouddefaults"
+	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
+	"github.com/wendylabsinc/wendy/go/internal/shared/certs"
+	"github.com/wendylabsinc/wendy/go/internal/shared/config"
+	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
+	cloudpb "github.com/wendylabsinc/wendy/go/proto/gen/cloudpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -133,8 +133,43 @@ func (s *mcpServer) registerCloudTools(srv *server.MCPServer) {
 		),
 	), s.handleCloudTunnel)
 
+	srv.AddTool(mcpgo.NewTool("run",
+		mcpgo.WithDescription("Build and deploy a local project to a cloud-enrolled device. Runs 'wendy cloud run' with your configured cloud credentials."),
+		mcpgo.WithString("project_path",
+			mcpgo.Required(),
+			mcpgo.Description("Project directory containing wendy.json"),
+		),
+		mcpgo.WithString("device_name",
+			mcpgo.Description("Cloud device name"),
+		),
+		mcpgo.WithString("cloud_grpc",
+			mcpgo.Description("Cloud gRPC endpoint to use when multiple auth sessions exist"),
+		),
+		mcpgo.WithString("broker_url",
+			mcpgo.Description("Tunnel broker host:port; omit to use the default derived from cloud_grpc (port 443 when cloud_grpc ends in :443, otherwise port 50052)"),
+		),
+		mcpgo.WithString("build_type",
+			mcpgo.Description("Build type: docker, swift, or python"),
+		),
+		mcpgo.WithString("product",
+			mcpgo.Description("Swift Package Manager product to build and run"),
+		),
+		mcpgo.WithBoolean("debug",
+			mcpgo.Description("Enable debug logging"),
+		),
+		mcpgo.WithBoolean("deploy",
+			mcpgo.Description("Create container but do not start it"),
+		),
+		mcpgo.WithBoolean("detach",
+			mcpgo.Description("Start container but do not stream logs (default true for MCP)"),
+		),
+		mcpgo.WithNumber("timeout_seconds",
+			mcpgo.Description("Maximum command runtime in seconds (default 300)"),
+		),
+	), s.handleRun)
+
 	srv.AddTool(mcpgo.NewTool("cloud_run",
-		mcpgo.WithDescription("Run 'wendy cloud run' for a local project and return bounded command output"),
+		mcpgo.WithDescription("Deprecated: use run instead. Run 'wendy cloud run' for a local project and return bounded command output"),
 		mcpgo.WithString("project_path",
 			mcpgo.Required(),
 			mcpgo.Description("Project directory containing wendy.json"),
@@ -166,7 +201,7 @@ func (s *mcpServer) registerCloudTools(srv *server.MCPServer) {
 		mcpgo.WithNumber("timeout_seconds",
 			mcpgo.Description("Maximum command runtime in seconds (default 300)"),
 		),
-	), s.handleCloudRun)
+	), s.handleRun)
 }
 
 func (s *mcpServer) handleCloudDiscover(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -192,6 +227,7 @@ func (s *mcpServer) handleCloudConnect(ctx context.Context, req mcpgo.CallToolRe
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	s.SetConn(conn)
+	s.SetConnType("cloud")
 	return mcpgo.NewToolResultText(fmt.Sprintf("connected to %s via cloud", asset.GetName())), nil
 }
 
@@ -290,7 +326,7 @@ func (s *mcpServer) handleCloudTunnel(ctx context.Context, req mcpgo.CallToolReq
 	return mcpgo.NewToolResultText(string(b)), nil
 }
 
-func (s *mcpServer) handleCloudRun(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+func (s *mcpServer) handleRun(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	projectPath := stringParam(req, "project_path")
 	if projectPath == "" {
 		return mcpgo.NewToolResultError("project_path is required"), nil

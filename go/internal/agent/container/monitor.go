@@ -9,8 +9,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/wendylabsinc/wendy/internal/agent/services"
-	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/agent/services"
+	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
 // RestartPolicy determines the container restart behavior.
@@ -27,7 +27,6 @@ const (
 	RestartAlways
 )
 
-// String returns the human-readable name of the restart policy.
 func (p RestartPolicy) String() string {
 	switch p {
 	case RestartNo:
@@ -72,20 +71,21 @@ type containerState struct {
 type ContainerMonitor struct {
 	logger     *zap.Logger
 	containerd services.ContainerdClient
+	logManager *services.ContainerLogManager
 	states     map[string]*containerState
 	mu         sync.Mutex
 	interval   time.Duration
 	stopCh     chan struct{}
 }
 
-// NewContainerMonitor creates a new ContainerMonitor.
-func NewContainerMonitor(logger *zap.Logger, client services.ContainerdClient, interval time.Duration) *ContainerMonitor {
+func NewContainerMonitor(logger *zap.Logger, client services.ContainerdClient, logManager *services.ContainerLogManager, interval time.Duration) *ContainerMonitor {
 	if interval == 0 {
 		interval = 5 * time.Second
 	}
 	return &ContainerMonitor{
 		logger:     logger,
 		containerd: client,
+		logManager: logManager,
 		states:     make(map[string]*containerState),
 		interval:   interval,
 		stopCh:     make(chan struct{}),
@@ -120,6 +120,16 @@ func (m *ContainerMonitor) MarkExplicitStop(appName string) {
 	defer m.mu.Unlock()
 	if state, ok := m.states[appName]; ok {
 		state.ExplicitStop = true
+	}
+}
+
+// ClearExplicitStop reverts a prior MarkExplicitStop, re-enabling automatic
+// restarts for the container. It is a no-op if appName is not registered.
+func (m *ContainerMonitor) ClearExplicitStop(appName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if state, ok := m.states[appName]; ok {
+		state.ExplicitStop = false
 	}
 }
 
@@ -159,7 +169,6 @@ func (m *ContainerMonitor) checkContainers(ctx context.Context) {
 		return
 	}
 
-	// Build a set of running container names.
 	running := make(map[string]bool)
 	for _, c := range containers {
 		if c.GetRunningState() == agentpb.AppRunningState_RUNNING {
@@ -168,39 +177,51 @@ func (m *ContainerMonitor) checkContainers(ctx context.Context) {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	var toRestart []string
 	for appName, state := range m.states {
 		if running[appName] {
 			continue
 		}
-
-		// Container is not running - evaluate restart policy.
 		if !m.shouldRestart(state) {
 			continue
 		}
-
-		// Enforce backoff: don't restart more often than once per 10 seconds.
 		if time.Since(state.LastRestart) < 10*time.Second {
 			continue
 		}
-
 		m.logger.Info("Restarting container",
 			zap.String("app_name", appName),
 			zap.Int("failure_count", state.FailureCount),
 		)
-
 		state.FailureCount++
 		state.LastRestart = time.Now()
+		toRestart = append(toRestart, appName)
+	}
+	m.mu.Unlock()
 
-		go func(name string) {
-			if _, err := m.containerd.StartContainer(ctx, name, "", nil); err != nil {
+	for _, name := range toRestart {
+		go func(n string) {
+			outputCh, err := m.containerd.StartContainer(ctx, n, "", nil)
+			if err != nil {
 				m.logger.Error("Failed to restart container",
-					zap.String("app_name", name),
+					zap.String("app_name", n),
 					zap.Error(err),
 				)
+				return
 			}
-		}(appName)
+			// Drain outputCh so the containerd pipe never blocks.
+			// Publish through the log manager when available so stdout/stderr
+			// from restarted containers reaches OTel (and therefore `wendy device logs`).
+			go func() {
+				for output := range outputCh {
+					if m.logManager != nil {
+						m.logManager.Publish(n, output)
+					}
+				}
+				if m.logManager != nil {
+					m.logManager.Publish(n, services.ContainerOutput{Done: true})
+				}
+			}()
+		}(name)
 	}
 }
 
@@ -212,6 +233,10 @@ func (m *ContainerMonitor) shouldRestart(state *containerState) bool {
 	case RestartUnlessStopped:
 		return !state.ExplicitStop
 	case RestartOnFailure:
+		// The monitor detects only whether a container has stopped; it has no
+		// exit-code signal from containerd. Until exit-code detection is added,
+		// ON_FAILURE behaves like UNLESS_STOPPED: it restarts on any exit, not
+		// only non-zero ones. MaxRetries is still enforced.
 		if state.ExplicitStop {
 			return false
 		}

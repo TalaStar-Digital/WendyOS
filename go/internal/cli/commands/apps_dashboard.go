@@ -9,14 +9,13 @@ import (
 
 	bubbleTable "github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
-	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// dashboardRow holds merged data for one app displayed in the dashboard table.
 type dashboardRow struct {
 	name         string
 	version      string
@@ -128,9 +127,10 @@ type appsDashboardModel struct {
 
 	// Current data.
 	rows  []dashboardRow
-	table bubbleTable.Model
+	table tui.BubbleTable
 
 	// UI state.
+	width  int
 	flash  string
 	height int
 
@@ -388,9 +388,12 @@ func (m *appsDashboardModel) refreshTable() {
 func (m appsDashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.width = msg.Width
 		m.height = msg.Height
+		var cmd tea.Cmd
+		m.table, cmd = m.table.Update(msg)
 		m.refreshTable()
-		return m, nil
+		return m, cmd
 
 	case appsDashContainersMsg:
 		if msg.err != nil {
@@ -572,11 +575,14 @@ func (m appsDashboardModel) View() string {
 
 	// Hint line
 	hint := "↑/↓ navigate  s start  x stop  r remove  R remove+vols  enter logs  d default  q quit"
-	sb.WriteString(dashDimStyle.Render(hint) + "\n\n")
+	if m.table.CanScroll() {
+		hint = "↑/↓ navigate  ←/→ scroll  s start  x stop  r remove  R remove+vols  enter logs  d default  q quit"
+	}
+	sb.WriteString(m.viewLine(dashDimStyle.Render(hint)) + "\n\n")
 
 	// Table or empty state
 	if len(m.rows) == 0 {
-		sb.WriteString(dashDimStyle.Render("  No applications found. Polling…") + "\n")
+		sb.WriteString(m.viewLine(dashDimStyle.Render("  No applications found. Polling…")) + "\n")
 	} else {
 		sb.WriteString(m.table.View() + "\n")
 	}
@@ -592,14 +598,21 @@ func (m appsDashboardModel) View() string {
 	}
 	status := fmt.Sprintf("\n  %d apps  ● %d running  ○ %d stopped  (refreshes every 2s)",
 		len(m.rows), running, stopped)
-	sb.WriteString(dashDimStyle.Render(status) + "\n")
+	sb.WriteString(m.viewLine(dashDimStyle.Render(status)) + "\n")
 
 	// Flash / confirm line
 	if m.confirming {
-		sb.WriteString(dashDimStyle.Render("  "+m.confirmText) + "\n")
+		sb.WriteString(m.viewLine(dashDimStyle.Render("  "+m.confirmText)) + "\n")
 	} else if m.flash != "" {
-		sb.WriteString(dashMetricVal.Render("  "+m.flash) + "\n")
+		sb.WriteString(m.viewLine(dashMetricVal.Render("  "+m.flash)) + "\n")
 	}
 
 	return sb.String()
+}
+
+func (m appsDashboardModel) viewLine(line string) string {
+	if m.width <= 0 {
+		return line
+	}
+	return tui.CropANSIView(line, 0, m.width)
 }

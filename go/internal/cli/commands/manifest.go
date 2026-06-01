@@ -99,7 +99,6 @@ func fetchDeviceManifest(path string) (*deviceManifest, error) {
 	return &dm, nil
 }
 
-// getAvailableDevices fetches the main manifest and each device's version info.
 func getAvailableDevices() ([]deviceInfo, error) {
 	main, err := fetchMainManifest()
 	if err != nil {
@@ -143,8 +142,6 @@ func getAvailableDevices() ([]deviceInfo, error) {
 	return devices, nil
 }
 
-// getImageInfo returns the download URL and metadata for a specific version
-// from an already-fetched device manifest.
 func getImageInfo(dm *deviceManifest, ver string) (*imageInfo, error) {
 	v, ok := dm.Versions[ver]
 	if !ok {
@@ -158,8 +155,6 @@ func getImageInfo(dm *deviceManifest, ver string) (*imageInfo, error) {
 	}, nil
 }
 
-// getOTAUpdateURL returns the Mender artifact URL for a specific version,
-// or an error if the version has no OTA artifact.
 func getOTAUpdateURL(dm *deviceManifest, ver string) (string, error) {
 	v, ok := dm.Versions[ver]
 	if !ok {
@@ -243,8 +238,6 @@ func fetchFirmwareManifest(path string) (*firmwareManifest, error) {
 	return &fm, nil
 }
 
-// getFirmwareInfo returns the download URL and metadata for a specific firmware
-// version from an already-fetched firmware manifest.
 func getFirmwareInfo(fm *firmwareManifest, ver string) (*imageInfo, error) {
 	v, ok := fm.Versions[ver]
 	if !ok {

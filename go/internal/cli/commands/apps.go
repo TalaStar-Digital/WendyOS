@@ -16,11 +16,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/wendylabsinc/wendy/internal/cli/grpcclient"
-	"github.com/wendylabsinc/wendy/internal/cli/providers"
-	"github.com/wendylabsinc/wendy/internal/cli/tui"
-	"github.com/wendylabsinc/wendy/internal/shared/config"
-	"github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
+	"github.com/wendylabsinc/wendy/go/internal/cli/providers"
+	"github.com/wendylabsinc/wendy/go/internal/cli/tui"
+	"github.com/wendylabsinc/wendy/go/internal/shared/config"
+	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
 var (
@@ -551,7 +551,6 @@ func newAppsRemoveCmd() *cobra.Command {
 	return cmd
 }
 
-// stateIcon returns a colored dot for the given state string (for static tables).
 func stateIcon(state string) string {
 	switch strings.ToLower(state) {
 	case "running":
@@ -561,8 +560,6 @@ func stateIcon(state string) string {
 	}
 }
 
-// stateIconPlain returns a plain unicode dot for use in interactive (bubbles) tables
-// where ANSI styling in cell content breaks width calculation and selection.
 func stateIconPlain(state string) string {
 	switch strings.ToLower(state) {
 	case "running":
@@ -572,14 +569,12 @@ func stateIconPlain(state string) string {
 	}
 }
 
-// appInfo holds the display information for an app returned by the agent or provider.
 type appInfo struct {
 	Name    string
 	Version string
 	State   string
 }
 
-// listApps fetches the list of apps from the target device.
 func listApps(ctx context.Context, target *SelectedDevice) ([]appInfo, error) {
 	if target.Bluetooth != nil && target.Bluetooth.IsWendyAgent() {
 		bleClient, err := connectBLEAgent(target.Bluetooth)

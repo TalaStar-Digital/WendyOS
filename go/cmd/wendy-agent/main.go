@@ -20,23 +20,23 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/wendylabsinc/wendy/internal/agent/bluetooth"
-	"github.com/wendylabsinc/wendy/internal/agent/cdi"
-	"github.com/wendylabsinc/wendy/internal/agent/configpartition"
-	"github.com/wendylabsinc/wendy/internal/agent/container"
-	agentcontainerd "github.com/wendylabsinc/wendy/internal/agent/containerd"
-	"github.com/wendylabsinc/wendy/internal/agent/dbusproxy"
-	"github.com/wendylabsinc/wendy/internal/agent/hardware"
-	"github.com/wendylabsinc/wendy/internal/agent/interceptor"
-	"github.com/wendylabsinc/wendy/internal/agent/mtls"
-	agentnet "github.com/wendylabsinc/wendy/internal/agent/network"
-	"github.com/wendylabsinc/wendy/internal/agent/registry"
-	"github.com/wendylabsinc/wendy/internal/agent/services"
-	"github.com/wendylabsinc/wendy/internal/shared/browseropen"
-	"github.com/wendylabsinc/wendy/internal/shared/version"
-	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
-	agentpbv2 "github.com/wendylabsinc/wendy/proto/gen/agentpb/v2"
-	otelpb "github.com/wendylabsinc/wendy/proto/gen/otelpb"
+	"github.com/wendylabsinc/wendy/go/internal/agent/bluetooth"
+	"github.com/wendylabsinc/wendy/go/internal/agent/cdi"
+	"github.com/wendylabsinc/wendy/go/internal/agent/configpartition"
+	"github.com/wendylabsinc/wendy/go/internal/agent/container"
+	agentcontainerd "github.com/wendylabsinc/wendy/go/internal/agent/containerd"
+	"github.com/wendylabsinc/wendy/go/internal/agent/dbusproxy"
+	"github.com/wendylabsinc/wendy/go/internal/agent/hardware"
+	"github.com/wendylabsinc/wendy/go/internal/agent/interceptor"
+	"github.com/wendylabsinc/wendy/go/internal/agent/mtls"
+	agentnet "github.com/wendylabsinc/wendy/go/internal/agent/network"
+	"github.com/wendylabsinc/wendy/go/internal/agent/registry"
+	"github.com/wendylabsinc/wendy/go/internal/agent/services"
+	"github.com/wendylabsinc/wendy/go/internal/shared/browseropen"
+	"github.com/wendylabsinc/wendy/go/internal/shared/version"
+	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
+	agentpbv2 "github.com/wendylabsinc/wendy/go/proto/gen/agentpb/v2"
+	otelpb "github.com/wendylabsinc/wendy/go/proto/gen/otelpb"
 )
 
 const (
@@ -45,12 +45,46 @@ const (
 	defaultOTELHTTPPort = "4318"
 )
 
+// containerMonitorAdapter satisfies services.ContainerMonitorRegistrar without a
+// circular import: container imports services, so we bridge with plain-int policy values
+// that mirror container.RestartPolicy.
+type containerMonitorAdapter struct {
+	m *container.ContainerMonitor
+}
+
+func (a *containerMonitorAdapter) Register(appName string, policy int, maxRetries int) {
+	var rp container.RestartPolicy
+	switch policy {
+	case services.RestartPolicyAlways:
+		rp = container.RestartAlways
+	case services.RestartPolicyUnlessStopped:
+		rp = container.RestartUnlessStopped
+	case services.RestartPolicyOnFailure:
+		rp = container.RestartOnFailure
+	default:
+		// Unknown or RestartPolicyNo — skip registration.
+		return
+	}
+	a.m.Register(appName, rp, maxRetries)
+}
+
+func (a *containerMonitorAdapter) Unregister(appName string) {
+	a.m.Unregister(appName)
+}
+
+func (a *containerMonitorAdapter) MarkExplicitStop(appName string) {
+	a.m.MarkExplicitStop(appName)
+}
+
+func (a *containerMonitorAdapter) ClearExplicitStop(appName string) {
+	a.m.ClearExplicitStop(appName)
+}
+
 func main() {
 	if handled, code := handleUtilityCommand(os.Args[1:]); handled {
 		os.Exit(code)
 	}
 
-	// Setup logger.
 	logCfg := zap.NewProductionConfig()
 	if os.Getenv("WENDY_DEBUG") != "" {
 		logCfg = zap.NewDevelopmentConfig()
@@ -79,10 +113,7 @@ func main() {
 	configpartition.Apply(logger, configPath)
 	services.CommitMenderUpdate(logger)
 
-	// Clean up old agent binary backups from previous updates.
 	services.CleanupOldBackups(logger)
-
-	// Ensure NVIDIA CDI spec exists for GPU container support.
 	cdi.EnsureNVIDIACDISpec(logger)
 
 	var networkMgr services.NetworkManager
@@ -92,7 +123,6 @@ func main() {
 	hwDiscoverer := hardware.NewSystemHardwareDiscoverer(logger)
 	btManager := bluetooth.NewManager(logger)
 
-	// Initialize D-Bus proxy manager if xdg-dbus-proxy is available.
 	var proxyMgr *dbusproxy.Manager
 	if dbusproxy.IsAvailable() {
 		proxyMgr = dbusproxy.NewManager(logger)
@@ -116,39 +146,48 @@ func main() {
 
 	logManager := services.NewContainerLogManager(logger, broadcaster)
 
-	agentSvc := services.NewAgentService(logger, networkMgr, hwDiscoverer, btManager)
-	containerSvc := services.NewContainerService(logger, containerdClient, services.WithLogManager(logManager))
+	installer := &services.AgentInstaller{}
+	agentSvc := services.NewAgentService(logger, networkMgr, hwDiscoverer, btManager, installer)
+
+	var monitor *container.ContainerMonitor
+	if containerdClient != nil {
+		monitor = container.NewContainerMonitor(logger, containerdClient, logManager, 15*time.Second)
+	}
+
+	containerSvcOpts := []services.ContainerServiceOption{
+		services.WithLogManager(logManager),
+	}
+	if monitor != nil {
+		containerSvcOpts = append(containerSvcOpts, services.WithMonitor(&containerMonitorAdapter{m: monitor}))
+	}
+	containerSvc := services.NewContainerService(logger, containerdClient,
+		containerSvcOpts...,
+	)
 	audioSvc := services.NewAudioService(logger)
 	videoSvc := services.NewVideoService(logger)
 
 	provisioningSvc := services.NewProvisioningService(logger, configPath)
 	telemetrySvc := services.NewTelemetryService(logger, broadcaster)
 
-	// v2 services
 	deviceInfoSvc := services.NewDeviceInfoService(logger, hwDiscoverer)
 	wifiSvc := services.NewWiFiService(logger, networkMgr)
 	bluetoothSvc := services.NewBluetoothService(logger, btManager)
-	agentUpdateSvc := services.NewAgentUpdateService(logger)
+	agentUpdateSvc := services.NewAgentUpdateService(logger, installer)
 	osUpdateSvc := services.NewOSUpdateService(logger)
 	containerSvcV2 := services.NewContainerServiceV2(containerSvc)
 	provisioningSvcV2 := services.NewProvisioningServiceV2(provisioningSvc)
 	audioSvcV2 := services.NewAudioServiceV2(audioSvc)
 	telemetrySvcV2 := services.NewTelemetryServiceV2(logger, broadcaster)
 
-	// OTEL receivers.
 	otelLogReceiver := services.NewOTELLogsReceiver(broadcaster)
 	otelMetricReceiver := services.NewOTELMetricsReceiver(broadcaster)
 	otelTraceReceiver := services.NewOTELTraceReceiver(broadcaster)
-
-	// Start container monitor.
-	monitor := container.NewContainerMonitor(logger, containerdClient, 15*time.Second)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	bleDispatcher := bluetooth.NewDispatcher(networkMgr, containerdClient, hwDiscoverer, btManager)
 
-	// registryTLSConfig builds the HTTPS/mTLS config for the embedded registry.
 	// Returns nil if the PEM data is invalid, which causes the registry to stay HTTP.
 	registryTLSConfig := func(certPEM, chainPEM, keyPEM string) *tls.Config {
 		tlsConfig, err := mtls.NewTLSConfig(certPEM, chainPEM, keyPEM)
@@ -159,14 +198,12 @@ func main() {
 		return tlsConfig
 	}
 
-	// Track the registry server so it can be restarted with HTTPS on provisioning.
 	var (
 		registrySrv   *registry.Server
 		registrySrvMu sync.Mutex
 	)
 
-	// startRegistry starts (or restarts) the embedded OCI registry. When tlsConfig
-	// is non-nil it serves HTTPS; nil means plain HTTP (pre-provisioning only).
+	// When tlsConfig is non-nil serves HTTPS; nil means plain HTTP (pre-provisioning only).
 	startRegistry := func(tlsConfig *tls.Config) {
 		registrySrvMu.Lock()
 		defer registrySrvMu.Unlock()
@@ -195,14 +232,14 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	// Start container monitor in background.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		monitor.Run(ctx)
-	}()
+	if monitor != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			monitor.Run(ctx)
+		}()
+	}
 
-	// Collect CPU/memory metrics for all running containers.
 	if containerdClient != nil {
 		wg.Add(1)
 		go func() {
@@ -211,18 +248,23 @@ func main() {
 		}()
 	}
 
-	// Collect CPU/memory metrics for the agent process itself.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		services.CollectAgentMetrics(ctx, broadcaster)
 	}()
 
-	// Main agent gRPC server port.
 	agentPort := defaultAgentPort
 	if p := os.Getenv("WENDY_AGENT_PORT"); p != "" {
 		agentPort = p
 	}
+
+	// mtlsPortNum is agentPort+1; computed here so startTunnelBroker can capture it.
+	agentPortNum, err := strconv.Atoi(agentPort)
+	if err != nil {
+		logger.Fatal("Invalid agent port", zap.String("port", agentPort), zap.Error(err))
+	}
+	mtlsPortNum := agentPortNum + 1
 
 	// startTunnelBroker launches the tunnel broker presence loop in the background.
 	// ProvisioningInfo() is called inside the goroutine to avoid re-entering the
@@ -244,16 +286,14 @@ func main() {
 				logger.Warn("CA chain PEM unavailable; cannot start tunnel broker (re-provision if this persists)")
 				return
 			}
-			client := services.NewTunnelBrokerClient(logger, brokerURL, orgID, assetID, chainPEM)
+			client := services.NewTunnelBrokerClient(logger, brokerURL, orgID, assetID, chainPEM, mtlsPortNum)
 			client.Run(ctx)
 		}()
 	}
 
-	// Track the mTLS server so we can shut it down gracefully.
 	var mtlsServer *grpc.Server
 	var mtlsMu sync.Mutex
 
-	// registerAllServices registers all agent services on the given gRPC server.
 	registerAllServices := func(srv *grpc.Server) {
 		agentpb.RegisterWendyAgentServiceServer(srv, agentSvc)
 		agentpb.RegisterWendyContainerServiceServer(srv, containerSvc)
@@ -272,7 +312,6 @@ func main() {
 		agentpbv2.RegisterWendyTelemetryServiceServer(srv, telemetrySvcV2)
 	}
 
-	// startMTLSServer creates and starts the mTLS gRPC server on agentPort+1.
 	startMTLSServer := func(certPEM, chainPEM, keyPEM string) {
 		mtlsMu.Lock()
 		defer mtlsMu.Unlock()
@@ -320,15 +359,7 @@ func main() {
 		}()
 	}
 
-	// mtlsPortNum is agentPort+1; used for the mTLS server and Avahi advertisement.
-	agentPortNum, err := strconv.Atoi(agentPort)
-	if err != nil {
-		logger.Fatal("Invalid agent port", zap.String("port", agentPort), zap.Error(err))
-	}
-	mtlsPortNum := agentPortNum + 1
-
-	// startBLEPeripheral starts BLE advertising and the mTLS-protected L2CAP server.
-	// Only called after the device is provisioned so the cert is available.
+	// Only called after provisioning so the cert is available.
 	startBLEPeripheral := func(certPEM, chainPEM, keyPEM string) {
 		tlsConfig, err := mtls.NewTLSConfig(certPEM, chainPEM, keyPEM)
 		if err != nil {
@@ -338,7 +369,6 @@ func main() {
 		bluetooth.StartBLEPeripheral(ctx, logger, bleDispatcher, tlsConfig)
 	}
 
-	// Check if already provisioned and start mTLS server and tunnel broker if certificates exist.
 	certPEM, chainPEM, keyPEM := provisioningSvc.ProvisioningCerts()
 	alreadyProvisioned := certPEM != "" && keyPEM != ""
 
@@ -367,13 +397,16 @@ func main() {
 		agentServer = grpc.NewServer(
 			grpc.UnaryInterceptor(interceptor.UnaryErrorInterceptor(logger)),
 			grpc.StreamInterceptor(interceptor.StreamErrorInterceptor(logger)),
-			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-				MinTime:             5 * time.Second,
-				PermitWithoutStream: true,
-			}),
+			grpc.InitialWindowSize(8*1024*1024),
+			grpc.InitialConnWindowSize(16*1024*1024),
 			grpc.KeepaliveParams(keepalive.ServerParameters{
-				Time:    30 * time.Second,
-				Timeout: 10 * time.Second,
+				MaxConnectionIdle: 5 * time.Minute,
+				Time:              30 * time.Second,
+				Timeout:           10 * time.Second,
+			}),
+			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+				MinTime:             10 * time.Second,
+				PermitWithoutStream: true,
 			}),
 		)
 		registerAllServices(agentServer)
@@ -393,8 +426,6 @@ func main() {
 		}()
 	}
 
-	// Set up the provisioning callback to start the mTLS server, shut down
-	// the plaintext server, and switch the registry to HTTPS.
 	provisioningSvc.OnProvisioned = func(certPEM, chainPEM, keyPEM string) {
 		startMTLSServer(certPEM, chainPEM, keyPEM)
 		startTunnelBroker()
@@ -409,7 +440,6 @@ func main() {
 		}
 	}
 
-	// OTEL gRPC receiver server.
 	otelPort := defaultOTELPort
 	if p := os.Getenv("WENDY_OTEL_PORT"); p != "" {
 		otelPort = p
@@ -418,12 +448,23 @@ func main() {
 	otelServer := grpc.NewServer(
 		grpc.UnaryInterceptor(interceptor.UnaryErrorInterceptor(logger)),
 		grpc.StreamInterceptor(interceptor.StreamErrorInterceptor(logger)),
+		grpc.InitialWindowSize(8*1024*1024),
+		grpc.InitialConnWindowSize(16*1024*1024),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionIdle: 5 * time.Minute,
+			Time:              30 * time.Second,
+			Timeout:           10 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
 	)
 	otelpb.RegisterLogsServiceServer(otelServer, otelLogReceiver)
 	otelpb.RegisterMetricsServiceServer(otelServer, otelMetricReceiver)
 	otelpb.RegisterTraceServiceServer(otelServer, otelTraceReceiver)
 
-	otelLis, err := net.Listen("tcp", "127.0.0.1:"+otelPort)
+	otelLis, err := listenDualStackLoopback(otelPort)
 	if err != nil {
 		logger.Fatal("Failed to listen on OTEL port", zap.String("port", otelPort), zap.Error(err))
 	}
@@ -437,14 +478,13 @@ func main() {
 		}
 	}()
 
-	// OTEL HTTP/protobuf receiver server (port 4318).
 	otelHTTPPort := defaultOTELHTTPPort
 	if p := os.Getenv("WENDY_OTEL_HTTP_PORT"); p != "" {
 		otelHTTPPort = p
 	}
 
 	otelHTTPReceiver := services.NewOTELHTTPReceiver(logger, broadcaster)
-	otelHTTPLis, err := net.Listen("tcp", "127.0.0.1:"+otelHTTPPort)
+	otelHTTPLis, err := listenDualStackLoopback(otelHTTPPort)
 	if err != nil {
 		logger.Fatal("Failed to listen on OTEL HTTP port", zap.String("port", otelHTTPPort), zap.Error(err))
 	}
@@ -458,7 +498,6 @@ func main() {
 		}
 	}()
 
-	// Graceful shutdown.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 

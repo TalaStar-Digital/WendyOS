@@ -4,7 +4,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
-	agentpbv2 "github.com/wendylabsinc/wendy/proto/gen/agentpb/v2"
+	agentpbv2 "github.com/wendylabsinc/wendy/go/proto/gen/agentpb/v2"
 )
 
 // TelemetryServiceV2 implements agentpbv2.WendyTelemetryServiceServer by
@@ -15,7 +15,6 @@ type TelemetryServiceV2 struct {
 	broadcaster *TelemetryBroadcaster
 }
 
-// NewTelemetryServiceV2 creates a new TelemetryServiceV2.
 func NewTelemetryServiceV2(logger *zap.Logger, broadcaster *TelemetryBroadcaster) *TelemetryServiceV2 {
 	return &TelemetryServiceV2{logger: logger, broadcaster: broadcaster}
 }

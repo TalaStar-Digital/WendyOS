@@ -1,7 +1,6 @@
 package services
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"go.uber.org/zap"
@@ -17,19 +17,18 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/wendylabsinc/wendy/internal/shared/appconfig"
-	agentpb "github.com/wendylabsinc/wendy/proto/gen/agentpb"
+	"github.com/wendylabsinc/wendy/go/internal/shared/appconfig"
+	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
-// ContainerService implements agentpb.WendyContainerServiceServer.
 type ContainerService struct {
 	agentpb.UnimplementedWendyContainerServiceServer
 	logger     *zap.Logger
 	containerd ContainerdClient
 	logManager *ContainerLogManager
+	monitor    ContainerMonitorRegistrar
 }
 
-// NewContainerService creates a new ContainerService.
 func NewContainerService(logger *zap.Logger, client ContainerdClient, opts ...ContainerServiceOption) *ContainerService {
 	s := &ContainerService{
 		logger:     logger,
@@ -41,17 +40,21 @@ func NewContainerService(logger *zap.Logger, client ContainerdClient, opts ...Co
 	return s
 }
 
-// ContainerServiceOption configures a ContainerService.
 type ContainerServiceOption func(*ContainerService)
 
-// WithLogManager sets the ContainerLogManager on the ContainerService.
 func WithLogManager(lm *ContainerLogManager) ContainerServiceOption {
 	return func(s *ContainerService) {
 		s.logManager = lm
 	}
 }
 
-// ListLayers streams the OCI image layers present in containerd.
+// Containers started with a restart policy are registered for automatic restart monitoring.
+func WithMonitor(m ContainerMonitorRegistrar) ContainerServiceOption {
+	return func(s *ContainerService) {
+		s.monitor = m
+	}
+}
+
 func (s *ContainerService) ListLayers(_ *agentpb.ListLayersRequest, stream grpc.ServerStreamingServer[agentpb.LayerHeader]) error {
 	ctx := stream.Context()
 	layers, err := s.containerd.ListLayers(ctx)
@@ -67,12 +70,10 @@ func (s *ContainerService) ListLayers(_ *agentpb.ListLayersRequest, stream grpc.
 	return nil
 }
 
-// WriteLayer receives a streaming layer upload and writes it to the containerd
-// content store. Chunks are buffered in memory before writing.
+// Chunks are streamed directly to the content store without buffering the entire blob in memory.
 func (s *ContainerService) WriteLayer(stream grpc.BidiStreamingServer[agentpb.WriteLayerRequest, agentpb.WriteLayerResponse]) error {
 	ctx := stream.Context()
 
-	// Receive the first message to get the digest.
 	first, err := stream.Recv()
 	if err == io.EOF {
 		return status.Error(codes.InvalidArgument, "empty layer upload stream")
@@ -86,40 +87,60 @@ func (s *ContainerService) WriteLayer(stream grpc.BidiStreamingServer[agentpb.Wr
 		return status.Error(codes.InvalidArgument, "no digest provided in layer upload")
 	}
 
-	// Buffer all chunks.
-	var data []byte
-	if chunk := first.GetData(); len(chunk) > 0 {
-		data = append(data, chunk...)
-	}
+	sr := &layerStreamReader{stream: stream, pending: first.GetData()}
 
-	for {
-		msg, recvErr := stream.Recv()
-		if recvErr == io.EOF {
-			break
-		}
-		if recvErr != nil {
-			return status.Errorf(codes.Internal, "error receiving layer data: %v", recvErr)
-		}
-		if chunk := msg.GetData(); len(chunk) > 0 {
-			data = append(data, chunk...)
-		}
-	}
-
-	s.logger.Info("Received layer data",
-		zap.String("digest", digest),
-		zap.Int("bytes", len(data)),
-	)
-
-	// Write to containerd content store.
-	if err := s.containerd.WriteLayer(ctx, digest, bytes.NewReader(data), int64(len(data))); err != nil {
+	if err := s.containerd.WriteLayer(ctx, digest, sr, 0); err != nil {
 		return status.Errorf(codes.Internal, "failed to write layer: %v", err)
 	}
 
-	s.logger.Info("Layer written", zap.String("digest", digest), zap.Int("size", len(data)))
+	// Drain any messages not consumed by WriteLayer (e.g. blob already existed).
+	sr.drain()
+
+	s.logger.Info("Layer written", zap.String("digest", digest))
 	return stream.Send(&agentpb.WriteLayerResponse{})
 }
 
-// CreateContainer creates a container from an image with entitlements.
+type layerStreamReader struct {
+	stream  grpc.BidiStreamingServer[agentpb.WriteLayerRequest, agentpb.WriteLayerResponse]
+	pending []byte
+	done    bool
+}
+
+func (r *layerStreamReader) Read(p []byte) (int, error) {
+	for len(r.pending) == 0 {
+		if r.done {
+			return 0, io.EOF
+		}
+		msg, err := r.stream.Recv()
+		if err == io.EOF {
+			r.done = true
+			return 0, io.EOF
+		}
+		if err != nil {
+			return 0, err
+		}
+		r.pending = msg.GetData()
+	}
+	n := copy(p, r.pending)
+	r.pending = r.pending[n:]
+	return n, nil
+}
+
+// drain consumes any remaining messages from the stream without processing them.
+// This is needed when WriteLayer returns early (e.g. blob already exists) so
+// the gRPC stream is not left in a half-read state.
+func (r *layerStreamReader) drain() {
+	if r.done {
+		return
+	}
+	for {
+		if _, err := r.stream.Recv(); err != nil {
+			r.done = true
+			return
+		}
+	}
+}
+
 func (s *ContainerService) CreateContainer(ctx context.Context, req *agentpb.CreateContainerRequest) (*agentpb.CreateContainerResponse, error) {
 	appCfg, err := parseAppConfig(req.GetAppConfig())
 	if err != nil {
@@ -137,7 +158,6 @@ func (s *ContainerService) CreateContainer(ctx context.Context, req *agentpb.Cre
 	return &agentpb.CreateContainerResponse{}, nil
 }
 
-// CreateContainerWithProgress creates a container and streams progress.
 func (s *ContainerService) CreateContainerWithProgress(req *agentpb.CreateContainerRequest, stream grpc.ServerStreamingServer[agentpb.CreateContainerProgressResponse]) error {
 	appCfg, err := parseAppConfig(req.GetAppConfig())
 	if err != nil {
@@ -166,24 +186,20 @@ func (s *ContainerService) CreateContainerWithProgress(req *agentpb.CreateContai
 	})
 }
 
-// RunContainer runs a container and streams stdout/stderr.
 func (s *ContainerService) RunContainer(req *agentpb.RunContainerLayersRequest, stream grpc.ServerStreamingServer[agentpb.RunContainerLayersResponse]) error {
 	ctx := stream.Context()
 
-	// Parse app config.
 	appCfg, err := parseAppConfig(req.GetAppConfig())
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "invalid app config: %v", err)
 	}
 
-	// Assemble the image from uploaded layers if layer headers are provided.
 	if layers := req.GetLayers(); len(layers) > 0 {
 		if err := s.containerd.AssembleImage(ctx, req.GetImageName(), layers); err != nil {
 			return status.Errorf(codes.Internal, "failed to assemble image: %v", err)
 		}
 	}
 
-	// Create the container.
 	createReq := &agentpb.CreateContainerRequest{
 		ImageName:     req.GetImageName(),
 		AppName:       req.GetAppName(),
@@ -201,9 +217,9 @@ func (s *ContainerService) RunContainer(req *agentpb.RunContainerLayersRequest, 
 	return s.streamContainerOutput(ctx, req.GetAppName(), postStartAgentHookFromContext(ctx), nil, stream)
 }
 
-// StartContainer starts an existing container and streams output.
 func (s *ContainerService) StartContainer(req *agentpb.StartContainerRequest, stream grpc.ServerStreamingServer[agentpb.RunContainerLayersResponse]) error {
-	return s.streamContainerOutput(stream.Context(), req.GetAppName(), postStartAgentHookFromContext(stream.Context()), req.GetRestartPolicy(), stream)
+	appName := req.GetAppName()
+	return s.streamContainerOutput(stream.Context(), appName, postStartAgentHookFromContext(stream.Context()), req.GetRestartPolicy(), stream)
 }
 
 func postStartAgentHookFromContext(ctx context.Context) string {
@@ -214,8 +230,98 @@ func postStartAgentHookFromContext(ctx context.Context) string {
 	return values[len(values)-1]
 }
 
-// streamContainerOutput starts a container and streams its stdout/stderr to the client.
-// When a ContainerLogManager is configured, it reads from the log manager subscription
+// monitorPolicyIntFromLabel converts a raw restart policy label string (e.g.
+// "unless-stopped", "on-failure:5", "no") to the integer constants used by
+// ContainerMonitorRegistrar. Returns ok=false for an empty or "no" label.
+func monitorPolicyIntFromLabel(label string) (policy int, maxRetries int, ok bool) {
+	if label == "" || label == "no" {
+		return RestartPolicyNo, 0, false
+	}
+	policyStr, retries, parseOK := parseRestartPolicyLabel(label)
+	if !parseOK {
+		return 0, 0, false
+	}
+	switch policyStr {
+	case "always":
+		return RestartPolicyAlways, 0, true
+	case "unless-stopped":
+		return RestartPolicyUnlessStopped, 0, true
+	case "on-failure":
+		return RestartPolicyOnFailure, retries, true
+	default:
+		return 0, 0, false
+	}
+}
+
+// parseRestartPolicyLabel splits a label like "on-failure:5" into ("on-failure", 5, true).
+// Returns ok=false when the retry count portion cannot be parsed as a non-negative integer.
+func parseRestartPolicyLabel(label string) (policyStr string, retries int, ok bool) {
+	parts := strings.SplitN(label, ":", 2)
+	if len(parts) == 1 {
+		return label, 0, true
+	}
+	n, err := strconv.Atoi(parts[1])
+	if err != nil || n < 0 {
+		return "", 0, false
+	}
+	return parts[0], n, true
+}
+
+// Returns ok=false when the policy should not be registered (nil or explicit NO).
+func monitorPolicyInt(rp *agentpb.RestartPolicy) (policy int, maxRetries int, ok bool) {
+	if rp == nil {
+		return RestartPolicyNo, 0, false
+	}
+	switch rp.GetMode() {
+	case agentpb.RestartPolicyMode_NO:
+		return RestartPolicyNo, 0, false
+	case agentpb.RestartPolicyMode_DEFAULT, agentpb.RestartPolicyMode_UNLESS_STOPPED:
+		return RestartPolicyUnlessStopped, 0, true
+	case agentpb.RestartPolicyMode_ON_FAILURE:
+		retries := int(rp.GetOnFailureMaxRetries())
+		if retries < 0 {
+			retries = 0
+		}
+		return RestartPolicyOnFailure, retries, true
+	default:
+		return 0, 0, false // unknown mode — treat as no policy
+	}
+}
+
+// When restartPolicy is nil the persisted containerd label is used.
+func (s *ContainerService) registerContainerWithMonitor(ctx context.Context, appName string, restartPolicy *agentpb.RestartPolicy) {
+	if s.monitor == nil {
+		return
+	}
+	if policy, maxRetries, ok := monitorPolicyInt(restartPolicy); ok {
+		s.monitor.Register(appName, policy, maxRetries)
+	} else if restartPolicy != nil && restartPolicy.GetMode() == agentpb.RestartPolicyMode_NO {
+		// Explicit NO — remove any existing registration.
+		s.monitor.Unregister(appName)
+	} else {
+		// nil restartPolicy or unrecognized/forward-compatible mode: fall back
+		// to the persisted label so we don't accidentally clear an existing
+		// registration when a newer client sends a mode this agent doesn't know.
+		if label, labelErr := s.containerd.GetContainerRestartPolicyLabel(ctx, appName); labelErr == nil {
+			if label == "" || label == "no" {
+				// No restart policy persisted — clear any stale registration.
+				s.monitor.Unregister(appName)
+			} else if policy, maxRetries, ok := monitorPolicyIntFromLabel(label); ok {
+				s.monitor.Register(appName, policy, maxRetries)
+			} else {
+				// Unknown label value — treat as no restart policy.
+				s.monitor.Unregister(appName)
+			}
+		} else {
+			s.logger.Warn("failed to read restart policy label; monitor registration skipped",
+				zap.String("app_name", appName),
+				zap.Error(labelErr),
+			)
+		}
+	}
+}
+
+// When a ContainerLogManager is configured, reads from the log manager subscription
 // instead of directly from containerd, enabling multi-subscriber fan-out and telemetry bridging.
 func (s *ContainerService) streamContainerOutput(
 	ctx context.Context,
@@ -229,7 +335,17 @@ func (s *ContainerService) streamContainerOutput(
 		return status.Errorf(codes.Internal, "failed to start container: %v", err)
 	}
 
-	// Send started notification.
+	// The container started successfully. If it was previously explicitly
+	// stopped, clear that mark so automatic restarts are re-enabled.
+	// We clear it here (right after start succeeds) rather than after
+	// streaming completes so that stream errors (e.g. client disconnect)
+	// do not leave ExplicitStop set and suppress future automatic restarts.
+	if s.monitor != nil {
+		s.monitor.ClearExplicitStop(appName)
+	}
+
+	s.registerContainerWithMonitor(ctx, appName, restartPolicy)
+
 	if err := stream.Send(&agentpb.RunContainerLayersResponse{
 		ResponseType: &agentpb.RunContainerLayersResponse_Started_{
 			Started: &agentpb.RunContainerLayersResponse_Started{},
@@ -238,16 +354,12 @@ func (s *ContainerService) streamContainerOutput(
 		return err
 	}
 
-	// If a log manager is configured, start a goroutine that publishes containerd
-	// output to the log manager, and subscribe to read from it.
 	var readCh <-chan ContainerOutput
 	if s.logManager != nil {
-		// Subscribe BEFORE starting the pump to avoid missing early output.
 		subID, subCh := s.logManager.Subscribe(appName)
 		defer s.logManager.Unsubscribe(appName, subID)
 		readCh = subCh
 
-		// Pump containerd output into the log manager.
 		go func() {
 			for output := range outputCh {
 				s.logManager.Publish(appName, output)
@@ -293,11 +405,8 @@ func (s *ContainerService) streamContainerOutput(
 	}
 }
 
-// AttachContainer starts a container and multiplexes stdin from the client
-// with stdout/stderr back to the client over a single bidirectional stream.
 // The first client message must set app_name; subsequent messages carry stdin data.
 func (s *ContainerService) AttachContainer(stream grpc.BidiStreamingServer[agentpb.AttachContainerRequest, agentpb.RunContainerLayersResponse]) error {
-	// First message must identify the app.
 	first, err := stream.Recv()
 	if err == io.EOF {
 		return status.Error(codes.InvalidArgument, "missing first attach message")
@@ -313,11 +422,9 @@ func (s *ContainerService) AttachContainer(stream grpc.BidiStreamingServer[agent
 	ctx := stream.Context()
 	postStartAgentCommand := postStartAgentHookFromContext(ctx)
 
-	// Pipe client stdin messages into the container's stdin.
 	stdinR, stdinW := io.Pipe()
 	defer stdinR.Close()
 
-	// Goroutine: forward stdin_data messages from the gRPC stream to stdinW.
 	go func() {
 		defer stdinW.Close()
 		for {
@@ -339,7 +446,13 @@ func (s *ContainerService) AttachContainer(stream grpc.BidiStreamingServer[agent
 		return status.Errorf(codes.Internal, "failed to start container: %v", err)
 	}
 
-	// Send started notification.
+	// Mirror the same monitor bookkeeping as streamContainerOutput: clear any
+	// prior explicit-stop mark and register with the persisted restart policy.
+	if s.monitor != nil {
+		s.monitor.ClearExplicitStop(appName)
+	}
+	s.registerContainerWithMonitor(ctx, appName, nil)
+
 	if err := stream.Send(&agentpb.RunContainerLayersResponse{
 		ResponseType: &agentpb.RunContainerLayersResponse_Started_{
 			Started: &agentpb.RunContainerLayersResponse_Started{},
@@ -348,7 +461,6 @@ func (s *ContainerService) AttachContainer(stream grpc.BidiStreamingServer[agent
 		return err
 	}
 
-	// Fan-out via log manager if configured.
 	var readCh <-chan ContainerOutput
 	if s.logManager != nil {
 		subID, subCh := s.logManager.Subscribe(appName)
@@ -399,17 +511,38 @@ func (s *ContainerService) AttachContainer(stream grpc.BidiStreamingServer[agent
 	}
 }
 
-// StopContainer stops a running container.
 func (s *ContainerService) StopContainer(ctx context.Context, req *agentpb.StopContainerRequest) (*agentpb.StopContainerResponse, error) {
-	if err := s.containerd.StopContainer(ctx, req.GetAppName()); err != nil {
+	appName := req.GetAppName()
+	// Mark the container as explicitly stopped BEFORE issuing the stop so that
+	// the monitor cannot observe the container exit and restart it in the window
+	// between StopContainer returning and MarkExplicitStop being called.
+	// If the stop fails we revert the mark via ClearExplicitStop.
+	if s.monitor != nil {
+		s.monitor.MarkExplicitStop(appName)
+	}
+	if err := s.containerd.StopContainer(ctx, appName); err != nil {
+		// Revert the explicit-stop mark so future restarts are not suppressed.
+		if s.monitor != nil {
+			s.monitor.ClearExplicitStop(appName)
+		}
 		return nil, status.Errorf(codes.Internal, "failed to stop container: %v", err)
 	}
-	s.logger.Info("Container stopped", zap.String("app_name", req.GetAppName()))
+	s.logger.Info("Container stopped", zap.String("app_name", appName))
 	return &agentpb.StopContainerResponse{}, nil
 }
 
-// DeleteContainer deletes a container and optionally its image and volumes.
 func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.DeleteContainerRequest) (*agentpb.DeleteContainerResponse, error) {
+	// Unregister from the monitor BEFORE deletion to close the window where the
+	// monitor could attempt a restart while the container is being removed.
+	// MarkExplicitStop prevents a spurious restart attempt if the monitor fires
+	// between the two calls. Safe to call even if the app was never registered.
+	// If DeleteContainer subsequently fails, the container is left unregistered —
+	// that is acceptable: the caller will retry deletion.
+	if s.monitor != nil {
+		s.monitor.MarkExplicitStop(req.GetAppName())
+		s.monitor.Unregister(req.GetAppName())
+	}
+
 	if err := s.containerd.DeleteContainer(ctx, req.GetAppName(), req.GetDeleteImage()); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to delete container: %v", err)
 	}
@@ -430,7 +563,6 @@ func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.Del
 // (not const) so tests can override it with a temp directory.
 var volumesDir = "/var/lib/wendy/volumes"
 
-// deleteVolumes removes persistent volume directories for an app.
 func (s *ContainerService) deleteVolumes(appName string) {
 	entries, err := os.ReadDir(volumesDir)
 	if err != nil {
@@ -457,7 +589,6 @@ func (s *ContainerService) deleteVolumes(appName string) {
 	}
 }
 
-// ListVolumes lists persistent volumes and which apps use them.
 func (s *ContainerService) ListVolumes(ctx context.Context, _ *agentpb.ListVolumesRequest) (*agentpb.ListVolumesResponse, error) {
 	entries, err := os.ReadDir(volumesDir)
 	if err != nil {
@@ -493,7 +624,6 @@ func (s *ContainerService) ListVolumes(ctx context.Context, _ *agentpb.ListVolum
 	return &agentpb.ListVolumesResponse{Volumes: volumes}, nil
 }
 
-// RemoveVolume deletes a persistent volume directory.
 func (s *ContainerService) RemoveVolume(_ context.Context, req *agentpb.RemoveVolumeRequest) (*agentpb.RemoveVolumeResponse, error) {
 	name := filepath.Base(req.GetName())
 	if name == "" || name == "." || name == ".." || name == "/" {
@@ -544,7 +674,6 @@ func (s *ContainerService) buildVolumeUsageMap(ctx context.Context) map[string][
 	return usage
 }
 
-// dirSize computes the total size of all files in a directory tree.
 func dirSize(path string) int64 {
 	var size int64
 	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
@@ -557,7 +686,6 @@ func dirSize(path string) int64 {
 	return size
 }
 
-// ListContainerStats returns memory and storage stats for all Wendy-managed containers.
 func (s *ContainerService) ListContainerStats(ctx context.Context, _ *agentpb.ListContainerStatsRequest) (*agentpb.ListContainerStatsResponse, error) {
 	stats, err := s.containerd.GetContainerStats(ctx)
 	if err != nil {
@@ -566,7 +694,6 @@ func (s *ContainerService) ListContainerStats(ctx context.Context, _ *agentpb.Li
 	return &agentpb.ListContainerStatsResponse{Stats: stats}, nil
 }
 
-// ListContainers lists running containers.
 func (s *ContainerService) ListContainers(_ *agentpb.ListContainersRequest, stream grpc.ServerStreamingServer[agentpb.ListContainersResponse]) error {
 	containers, err := s.containerd.ListContainers(stream.Context())
 	if err != nil {
@@ -672,7 +799,6 @@ func (s *ContainerService) StreamMCP(stream grpc.BidiStreamingServer[agentpb.MCP
 	}
 }
 
-// parseAppConfig parses the wendy.json app config bytes.
 func parseAppConfig(data []byte) (*appconfig.AppConfig, error) {
 	if len(data) == 0 {
 		return &appconfig.AppConfig{}, nil
@@ -680,6 +806,14 @@ func parseAppConfig(data []byte) (*appconfig.AppConfig, error) {
 	var cfg appconfig.AppConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
+	}
+	// Reject unsafe app IDs at the RPC boundary so direct callers and generated
+	// compose configs can't push comma/'='/newline characters into the env vars
+	// and labels derived from appId. Empty appId is left to existing behaviour.
+	if cfg.AppID != "" {
+		if err := appconfig.ValidateAppID(cfg.AppID); err != nil {
+			return nil, err
+		}
 	}
 	return &cfg, nil
 }
