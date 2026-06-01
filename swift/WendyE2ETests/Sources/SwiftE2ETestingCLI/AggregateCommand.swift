@@ -158,4 +158,3 @@ private func copyItem(at sourceURL: URL, to destinationURL: URL) throws {
     }
     try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
 }
-

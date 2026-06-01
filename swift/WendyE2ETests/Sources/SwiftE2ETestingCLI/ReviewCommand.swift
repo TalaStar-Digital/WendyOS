@@ -515,10 +515,10 @@ private func codexHarness(
         harnessName: "codex",
         modelName: model.name,
         shellCommand:
-            #"prompt="Read and follow the E2E review instructions in $WENDY_E2E_REVIEW_PROMPT."; codex exec --color never --sandbox read-only --model \#(shellQuoted(model.name)) -c model_reasoning_effort="high" "$prompt""#,
+            #"prompt="Read and follow the E2E review instructions in $WENDY_E2E_REVIEW_PROMPT."; codex exec --color never --dangerously-bypass-approvals-and-sandbox --model \#(shellQuoted(model.name)) -c model_reasoning_effort="high" "$prompt""#,
         commandSource: "codex CLI",
         invocationSummary:
-            "codex exec --color never --sandbox read-only --model \(model.name) -c model_reasoning_effort=high <generated prompt>",
+            "codex exec --color never --dangerously-bypass-approvals-and-sandbox --model \(model.name) -c model_reasoning_effort=high <generated prompt>",
         authSummary: authSummary,
         modelSource: model.source
     )
@@ -534,11 +534,11 @@ private func claudeHarness(
         harnessName: "claude",
         modelName: model.name,
         shellCommand: apiKeyOnly
-            ? #"prompt="Read and follow the E2E review instructions in $WENDY_E2E_REVIEW_PROMPT."; claude --bare --model \#(shellQuoted(model.name)) --effort high --tools "Read,Grep,Glob,LS" --print "$prompt""#
-            : #"prompt="Read and follow the E2E review instructions in $WENDY_E2E_REVIEW_PROMPT."; claude --model \#(shellQuoted(model.name)) --effort high --tools "Read,Grep,Glob,LS" --print "$prompt""#,
+            ? #"prompt="Read and follow the E2E review instructions in $WENDY_E2E_REVIEW_PROMPT."; claude --bare --model \#(shellQuoted(model.name)) --effort high --dangerously-skip-permissions --print "$prompt""#
+            : #"prompt="Read and follow the E2E review instructions in $WENDY_E2E_REVIEW_PROMPT."; claude --model \#(shellQuoted(model.name)) --effort high --dangerously-skip-permissions --print "$prompt""#,
         commandSource: "Claude Code CLI",
         invocationSummary:
-            "claude\(bareFlag) --model \(model.name) --effort high --tools Read,Grep,Glob,LS --print <generated prompt>",
+            "claude\(bareFlag) --model \(model.name) --effort high --dangerously-skip-permissions --print <generated prompt>",
         authSummary: authSummary,
         modelSource: model.source
     )

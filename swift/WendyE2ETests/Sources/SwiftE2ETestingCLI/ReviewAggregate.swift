@@ -67,7 +67,12 @@ private func loadE2EReviewAggregateIssues(in runURL: URL) throws -> [E2EReviewAg
                 expectedScope: "test",
                 relativeTo: runURL
             ).map { review in
-                E2EReviewAggregateIssue(scope: .test, suiteKey: suiteKey, testKey: testKey, review: review)
+                E2EReviewAggregateIssue(
+                    scope: .test,
+                    suiteKey: suiteKey,
+                    testKey: testKey,
+                    review: review
+                )
             }
         }
     }
@@ -101,7 +106,8 @@ private func renderE2EReviewAggregate(issues: [E2EReviewAggregateIssue]) -> Stri
         return lines.joined(separator: "\n")
     }
 
-    let runIssues = issues
+    let runIssues =
+        issues
         .filter { $0.scope == .report }
         .sorted(by: reviewAggregateIssueSort)
     for issue in runIssues {
@@ -111,10 +117,12 @@ private func renderE2EReviewAggregate(issues: [E2EReviewAggregateIssue]) -> Stri
     var wroteSuite = false
     let suiteKeys = Set(issues.compactMap(\.suiteKey)).sorted()
     for suiteKey in suiteKeys {
-        let suiteIssues = issues
+        let suiteIssues =
+            issues
             .filter { $0.scope == .suite && $0.suiteKey == suiteKey }
             .sorted(by: reviewAggregateIssueSort)
-        let testIssues = issues
+        let testIssues =
+            issues
             .filter { $0.scope == .test && $0.suiteKey == suiteKey }
         guard !suiteIssues.isEmpty || !testIssues.isEmpty else { continue }
 
@@ -177,7 +185,8 @@ private func reviewAggregateTitleLine(
     headingLevel: Int
 ) -> String {
     let heading = String(repeating: "#", count: headingLevel)
-    return "\(heading) \(issue.severity.displayName): \(reviewAggregateSingleLine(issue.review.title))"
+    return
+        "\(heading) \(issue.severity.displayName): \(reviewAggregateSingleLine(issue.review.title))"
 }
 
 private func appendE2EReviewAggregateMetadata(
@@ -198,7 +207,6 @@ private func appendE2EReviewAggregateMetadata(
     }
     lines.append("- Full review: `\(review.path)`")
 }
-
 
 private func reviewAggregateLocations(_ locations: [E2EReviewLocation]) -> String {
     locations.map { location in

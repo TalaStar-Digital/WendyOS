@@ -100,7 +100,10 @@ struct `'wendy device info'` {
             ) { result in
 
                 #expect(result.status.isSuccess)
-                #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "{\"defaultDevice\":\"\(agentAddress)\"}")
+                #expect(
+                    result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                        == "{\"defaultDevice\":\"\(agentAddress)\"}"
+                )
                 #expect(result.stderr == "")
             }
         }
@@ -330,7 +333,8 @@ struct `'wendy device info'` {
         try await self.scenario.run { cli, agent in
             let agentAddress = agent.machine.address
 
-            try await cli.pty("wendy --device \(agentAddress) device info --check-updates") { result in
+            try await cli.pty("wendy --device \(agentAddress) device info --check-updates") {
+                result in
                 let stdout = result.stdout
 
                 #expect(result.status.isSuccess)
@@ -412,7 +416,8 @@ struct `'wendy device info'` {
             let agentAddress = agent.machine.address
 
             try await cli.sh(
-                posix: "NO_PROXY=\(agentAddress) HTTPS_PROXY=http://127.0.0.1:1 wendy --json --device \(agentAddress) device info --check-updates",
+                posix:
+                    "NO_PROXY=\(agentAddress) HTTPS_PROXY=http://127.0.0.1:1 wendy --json --device \(agentAddress) device info --check-updates",
                 power: """
                     $env:NO_PROXY = '\(agentAddress)'
                     $env:HTTPS_PROXY = 'http://127.0.0.1:1'

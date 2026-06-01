@@ -222,7 +222,9 @@ struct `session` {
             ]
         )
 
-        try await session.sh("if pwd -W >/dev/null 2>&1; then pwd -W | tr -d '\n'; else printf '%s' \"$PWD\"; fi") { result in
+        try await session.sh(
+            "if pwd -W >/dev/null 2>&1; then pwd -W | tr -d '\n'; else printf '%s' \"$PWD\"; fi"
+        ) { result in
             try result.requireSuccess()
 
             #expect(result.stdout == workingDirectory.path)

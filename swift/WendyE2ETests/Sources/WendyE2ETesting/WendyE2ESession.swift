@@ -235,7 +235,10 @@ public actor WendyE2ESession {
         return self.resetDirectoriesOnFirstCommand && !self.didRunCommand
     }
 
-    private func runDefaultShell(posix: String, power: String) async throws -> (
+    private func runDefaultShell(
+        posix: String,
+        power: String
+    ) async throws -> (
         result: WendyE2EShellResult,
         harnessPrefix: [String],
         scriptShellName: String
@@ -260,7 +263,10 @@ public actor WendyE2ESession {
         }
     }
 
-    private func runDefaultPTY(posix: String, power: String) async throws -> (
+    private func runDefaultPTY(
+        posix: String,
+        power: String
+    ) async throws -> (
         result: WendyE2EShellResult,
         harnessPrefix: [String],
         scriptShellName: String
@@ -281,7 +287,10 @@ public actor WendyE2ESession {
                 throw NSError(
                     domain: "WendyE2ETesting.PTY",
                     code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "Windows PTY execution is only available on Windows runners."]
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Windows PTY execution is only available on Windows runners."
+                    ]
                 )
             #endif
         case .macOS, .linux, .wendyOS:
@@ -325,7 +334,8 @@ public actor WendyE2ESession {
             arguments = ["-lc", self.wrapped(command, harnessPrefix: harnessPrefix)]
         } else {
             let wrappedCommand = self.wrapped(command, harnessPrefix: harnessPrefix)
-            let loginShellCommand = "exec \"${SHELL:-/bin/sh}\" -lc \(Self.shellQuote(wrappedCommand))"
+            let loginShellCommand =
+                "exec \"${SHELL:-/bin/sh}\" -lc \(Self.shellQuote(wrappedCommand))"
             executable = Self.localSSHPath
             arguments = [
                 "-o", "BatchMode=yes",
@@ -460,7 +470,10 @@ public actor WendyE2ESession {
             throw NSError(
                 domain: "WendyE2ETesting.PTY",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Windows PTY execution is only available on Windows runners."]
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Windows PTY execution is only available on Windows runners."
+                ]
             )
         #endif
     }
@@ -930,7 +943,10 @@ public actor WendyE2ESession {
                 "wendy-e2e-pty-\(UUID().uuidString)",
                 isDirectory: true
             )
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
             let scriptURL = directory.appendingPathComponent("run.cmd", isDirectory: false)
             let script = (["@echo off"] + commands + ["exit /b %ERRORLEVEL%"])
                 .joined(separator: "\r\n")
@@ -1101,7 +1117,9 @@ public actor WendyE2ESession {
 
             var pseudoConsole: HPCON?
             let size = COORD(X: SHORT(120), Y: SHORT(30))
-            guard CreatePseudoConsole(size, inputRead, outputWrite, DWORD(0), &pseudoConsole) == S_OK else {
+            guard
+                CreatePseudoConsole(size, inputRead, outputWrite, DWORD(0), &pseudoConsole) == S_OK
+            else {
                 if let inputRead { CloseHandle(inputRead) }
                 if let inputWrite { CloseHandle(inputWrite) }
                 if let outputRead { CloseHandle(outputRead) }
@@ -1128,27 +1146,31 @@ public actor WendyE2ESession {
             defer { attributeList.deallocate() }
 
             let processThreadAttributes = OpaquePointer(attributeList)
-            guard InitializeProcThreadAttributeList(
-                processThreadAttributes,
-                DWORD(1),
-                DWORD(0),
-                &attributeListSize
-            ) else {
+            guard
+                InitializeProcThreadAttributeList(
+                    processThreadAttributes,
+                    DWORD(1),
+                    DWORD(0),
+                    &attributeListSize
+                )
+            else {
                 throw Self.windowsProcessError("InitializeProcThreadAttributeList failed")
             }
             defer {
                 DeleteProcThreadAttributeList(processThreadAttributes)
             }
 
-            guard UpdateProcThreadAttribute(
-                processThreadAttributes,
-                DWORD(0),
-                DWORD_PTR(PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE),
-                pseudoConsole,
-                SIZE_T(MemoryLayout<HPCON>.size),
-                nil,
-                nil
-            ) else {
+            guard
+                UpdateProcThreadAttribute(
+                    processThreadAttributes,
+                    DWORD(0),
+                    DWORD_PTR(PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE),
+                    pseudoConsole,
+                    SIZE_T(MemoryLayout<HPCON>.size),
+                    nil,
+                    nil
+                )
+            else {
                 throw Self.windowsProcessError("UpdateProcThreadAttribute failed")
             }
 
