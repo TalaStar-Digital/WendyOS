@@ -38,8 +38,8 @@ on:
         required: false
         default: 'all'
 
-env:
-  GITHUB_TOKEN: ${{ github.token }}
+permissions:
+  contents: read
 
 jobs:
   discover:
@@ -71,6 +71,8 @@ jobs:
         run: make build-cli
 
       - name: Run wendy discover
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           DISCOVER_STDERR=$(mktemp)
           RESULT=$(./go/bin/wendy discover --json --timeout 10s 2>"$DISCOVER_STDERR" || true)
@@ -159,6 +161,8 @@ jobs:
 
       - name: Run integration tests
         if: steps.prepare-docker.outputs.docker_ready == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           # All wendy CLI calls below run via SSH to localhost rather than
           # directly. The self-hosted runner runs as a macOS LaunchAgent which
@@ -167,8 +171,16 @@ jobs:
           # session to localhost runs under the logged-in user, which has that
           # permission. See nightly-os-update.yml for the same pattern.
           WORKDIR="$(pwd)"
-          GITHUB_TOKEN_Q=$(printf '%q' "${GITHUB_TOKEN:-}")
-          SSH_ENV="export PATH='$PATH' DOCKER_HOST='${DOCKER_HOST:-}' GITHUB_TOKEN=$GITHUB_TOKEN_Q"
+          set +x
+          SECRET_FILE=$(mktemp -t wendy-github-token.XXXXXX)
+          chmod 600 "$SECRET_FILE"
+          trap 'rm -f "$SECRET_FILE"' EXIT
+          if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+            printf 'export GITHUB_TOKEN=%q\n' "$GITHUB_TOKEN" > "$SECRET_FILE"
+          else
+            : > "$SECRET_FILE"
+          fi
+          SSH_ENV=". '$SECRET_FILE'; export PATH='$PATH' DOCKER_HOST='${DOCKER_HOST:-}'"
           SSH="ssh -o StrictHostKeyChecking=no localhost"
 
           TEST_ARGS="-w $WORKDIR/go/bin/wendy"
@@ -217,7 +229,7 @@ jobs:
             BUILDER="wendy-$i"
             echo "==> Starting tests on $device (builder: $BUILDER)"
             (
-              $SSH "export PATH='$PATH' DOCKER_HOST='${DOCKER_HOST:-}' GITHUB_TOKEN=$GITHUB_TOKEN_Q WENDY_BUILDX_BUILDER='$BUILDER' && cd '$WORKDIR' && go/scripts/test-ci.sh $TEST_ARGS -h '$device'"
+              $SSH "$SSH_ENV WENDY_BUILDX_BUILDER='$BUILDER' && cd '$WORKDIR' && go/scripts/test-ci.sh $TEST_ARGS -h '$device'"
               rc=$?
               docker buildx rm "$BUILDER" --force 2>/dev/null || true
               exit $rc
@@ -280,6 +292,8 @@ jobs:
 
       - name: Run integration tests
         if: steps.prepare-docker.outputs.docker_ready == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           WORKDIR="$(pwd)"
 

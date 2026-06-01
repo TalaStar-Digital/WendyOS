@@ -1228,7 +1228,7 @@ type githubReleaseFull struct {
 }
 
 func fetchAgentRelease(nightly bool) (*githubReleaseFull, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := newGitHubAPIClient(30 * time.Second)
 
 	if !nightly {
 		req, err := newGitHubAPIGetRequest(githubReleasesURL)

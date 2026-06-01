@@ -42,7 +42,7 @@ Hosts that are not WendyOS OTA targets — including macOS, Windows, unknown pla
 ## Update sequence
 
 1. **Validate target identity** — query `GetAgentVersion` and confirm the target is a WendyOS OTA target. Exits immediately with an error if not.
-2. **Update the agent** — ensure the agent binary is at the latest release before proceeding with the OS image update.
+2. **Update the agent** — ensure the agent binary is at the latest release before proceeding with the OS image update. GitHub release lookups use the `GITHUB_TOKEN` environment variable when present, and fall back to unauthenticated requests otherwise.
 3. **Re-query version** — query `GetAgentVersion` again after the agent update.
 4. **Validate OTA support** — confirm `mender` is present in the featureset.
 5. **Resolve artifact** — if no artifact or URL was provided, look up the latest OTA artifact for the device's reported `device_type`. Exits with an error if the device type is missing or has no matching artifact.
