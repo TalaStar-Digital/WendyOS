@@ -82,10 +82,9 @@ make e2e-test
 make e2e-analyze
 ```
 
-Makefile E2E helpers default to global temporary output roots:
+Makefile E2E helpers default to the repository-local output root:
 
-- Unix/macOS: `/tmp/wendy/<run-id>`
-- Windows: `C:\Windows\Temp\wendy\<run-id>`
+- `<repo-root>/Build/e2e/<run-id>`
 
 Set `WENDY_E2E_OUTPUT_DIR` or pass `--output-dir` to the scripts when you need a
 custom artifact location. If Swift Testing writes terminal control characters

@@ -30,8 +30,10 @@ else
 SHELL := /bin/bash
 endif
 
-WINDOWS_E2E_OUTPUT_DIR := "$$env:SystemRoot\Temp\wendy"
-UNIX_E2E_OUTPUT_DIR := "/tmp/wendy"
+REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
+E2E_OUTPUT_DIR := "$(REPO_ROOT)/Build/e2e"
+WINDOWS_E2E_OUTPUT_DIR := $(E2E_OUTPUT_DIR)
+UNIX_E2E_OUTPUT_DIR := $(E2E_OUTPUT_DIR)
 RUN_E2E_TEST_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows E2E targets require PowerShell.' }; ./Scripts/E2ETest.ps1 --default-run-id "$(1)" $(2)
 RUN_E2E_ANALYZE_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows E2E targets require PowerShell.' }; ./Scripts/E2EAnalyze.ps1 --output-dir $(WINDOWS_E2E_OUTPUT_DIR) --stage $(1)
 REQUIRE_E2E_PI_WINDOWS = @if (-not $$env:WENDY_E2E_PI_COMMAND -and -not (Get-Command pi -ErrorAction SilentlyContinue)) { throw 'ERROR: e2e-review requires pi on PATH or WENDY_E2E_PI_COMMAND.' }

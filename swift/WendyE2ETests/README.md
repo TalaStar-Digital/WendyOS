@@ -16,7 +16,7 @@ output directory, builds the managed CLI into `go/bin` (or
 Swift Testing results and command recordings:
 
 ```bash
-bash Scripts/E2ETest.sh --output-dir Build/e2e
+bash Scripts/E2ETest.sh --output-dir ../Build/e2e
 ```
 
 For the common local workflow, run test attempts first and then analyze attempts matching the current run ID:
@@ -121,7 +121,7 @@ Sandbox isolation is controlled by `--isolation` or `WENDY_E2E_ISOLATION`:
 To render the HTML report from this package:
 
 ```bash
-swift run swift-e2e-testing report --run-dir /tmp/wendy/<workflow-name>.<run-id>
+swift run swift-e2e-testing report --run-dir ../../Build/e2e/<workflow-name>.<run-id>
 ```
 
 ## Behavioral spec workflow

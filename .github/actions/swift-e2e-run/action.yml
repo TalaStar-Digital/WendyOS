@@ -116,8 +116,9 @@ runs:
         WENDY_E2E_TRANSPORT: ${{ inputs.transport }}
       run: |
         set -euo pipefail
+        output_dir="${RUNNER_TEMP}/wendy"
         bash ./Scripts/E2ETest.sh \
-          --output-dir /tmp/wendy \
+          --output-dir "$output_dir" \
           --agent-address "${{ inputs.device_address }}"
 
     - name: Run Swift E2E tests (Windows)
@@ -141,7 +142,7 @@ runs:
       uses: actions/upload-artifact@v5
       with:
         name: ${{ steps.e2e-run-unix.outputs.run_id }}
-        path: /tmp/wendy/${{ steps.e2e-run-unix.outputs.run_id }}/**
+        path: ${{ runner.temp }}/wendy/${{ steps.e2e-run-unix.outputs.run_id }}/**
         if-no-files-found: warn
         retention-days: 14
 

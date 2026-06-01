@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SwiftDir = Split-Path -Parent $ScriptDir
 $PackageDir = Join-Path $SwiftDir 'WendyE2ETests'
+$RepoDir = Split-Path -Parent $SwiftDir
 
 function ConvertTo-SafeRunID([string]$Value) {
     $safe = $Value -replace '[^A-Za-z0-9._-]', '-'
@@ -12,7 +13,7 @@ function ConvertTo-SafeRunID([string]$Value) {
 
 $RunID = $env:WENDY_E2E_RUN_ID
 $DefaultRunID = $null
-$OutputDir = if ($env:WENDY_E2E_OUTPUT_DIR) { $env:WENDY_E2E_OUTPUT_DIR } else { Join-Path (Join-Path $env:SystemRoot 'Temp') 'wendy' }
+$OutputDir = if ($env:WENDY_E2E_OUTPUT_DIR) { $env:WENDY_E2E_OUTPUT_DIR } else { Join-Path (Join-Path $RepoDir 'Build') 'e2e' }
 
 $i = 0
 while ($i -lt $args.Count) {

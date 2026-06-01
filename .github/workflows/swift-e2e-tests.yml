@@ -253,20 +253,20 @@ jobs:
           workflow_id="$(slug "${GITHUB_WORKFLOW:-swift-e2e-tests}")"
           printf -v attempt_suffix '%04d' "${GITHUB_RUN_ATTEMPT:-1}"
           echo "run_artifact_id=${workflow_id}.gh${GITHUB_RUN_ID}.run.${attempt_suffix}" >> "$GITHUB_OUTPUT"
-          echo "run_dir=/tmp/wendy/${workflow_id}.gh${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "run_dir=${RUNNER_TEMP}/wendy/${workflow_id}.gh${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare Swift E2E analysis workspace
         shell: bash
         run: |
           set -euo pipefail
           rm -rf \
-            "/tmp/wendy-raw/${{ github.run_id }}" \
+            "${RUNNER_TEMP}/wendy-raw/${{ github.run_id }}" \
             "${{ steps.e2e-run.outputs.run_dir }}"
 
       - name: Download Swift E2E attempts
         uses: actions/download-artifact@v5
         with:
-          path: /tmp/wendy-raw/${{ github.run_id }}
+          path: ${{ runner.temp }}/wendy-raw/${{ github.run_id }}
           pattern: swift-e2e-tests.gh${{ github.run_id }}.*
 
       - name: Aggregate Swift E2E attempts
@@ -274,13 +274,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t attempt_dirs < <(find /tmp/wendy-raw/${{ github.run_id }} -mindepth 1 -maxdepth 1 -type d | sort)
+          mapfile -t attempt_dirs < <(find "${RUNNER_TEMP}/wendy-raw/${{ github.run_id }}" -mindepth 1 -maxdepth 1 -type d | sort)
           if [[ ${#attempt_dirs[@]} -eq 0 ]]; then
             echo "ERROR: no Swift E2E attempt artifacts downloaded." >&2
             exit 1
           fi
           bash ./Scripts/E2EAggregate.sh \
-            --output-dir /tmp/wendy \
+            --output-dir "${RUNNER_TEMP}/wendy" \
             "${attempt_dirs[@]}"
 
       - name: Verify Pi coding agent

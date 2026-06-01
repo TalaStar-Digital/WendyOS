@@ -3,12 +3,11 @@ $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SwiftDir = Split-Path -Parent $ScriptDir
 $PackageDir = Join-Path $SwiftDir 'WendyE2ETests'
+$RepoDir = Split-Path -Parent $SwiftDir
 $DefaultOutputDir = if ($env:WENDY_E2E_OUTPUT_DIR) {
     $env:WENDY_E2E_OUTPUT_DIR
-} elseif ($env:SystemRoot) {
-    Join-Path (Join-Path $env:SystemRoot 'Temp') 'wendy'
 } else {
-    Join-Path ([System.IO.Path]::GetTempPath()) 'wendy'
+    Join-Path (Join-Path $RepoDir 'Build') 'e2e'
 }
 
 $OutputDir = $DefaultOutputDir

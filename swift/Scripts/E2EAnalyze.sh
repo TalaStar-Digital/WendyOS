@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SWIFT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEFAULT_OUTPUT_DIR="${WENDY_E2E_OUTPUT_DIR:-/tmp/wendy}"
+DEFAULT_OUTPUT_DIR="${WENDY_E2E_OUTPUT_DIR:-$SWIFT_DIR/../Build/e2e}"
 
 OUTPUT_DIR="$DEFAULT_OUTPUT_DIR"
 OPEN_REPORT="true"
