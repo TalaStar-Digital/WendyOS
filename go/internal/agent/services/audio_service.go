@@ -468,7 +468,10 @@ func (s *AudioService) SetDefaultAudioDevice(ctx context.Context, req *agentpb.S
 		var lastWpctlErr error
 		var lastWpctlOutput string
 		for _, nodeID := range nodeIDs {
-			if output, err := wpctlSetDefault(ctx, nodeID); err != nil {
+			wpctlCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			output, err := wpctlSetDefault(wpctlCtx, nodeID)
+			cancel()
+			if err != nil {
 				s.logger.Warn("wpctl set-default failed for node",
 					zap.String("node_id", nodeID), zap.Error(err),
 					zap.String("output", strings.TrimSpace(string(output))))
