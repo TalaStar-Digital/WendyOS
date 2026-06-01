@@ -16,13 +16,14 @@ name: AI PR Feedback Loop
 #   in GitHub token usage logs without disrupting implement.yml operations.
 #
 # CLAUDE CODE INVOCATION:
-#   --allowedTools "Edit,MultiEdit"  EXCLUSIVE allowlist: Claude Code CLI blocks
-#     ALL tools not explicitly listed here. Reconnaissance tools (Bash, Read,
-#     LS, Glob, SearchFiles, etc.), web access (WebFetch, WebSearch), and MCP
-#     tools are ALL blocked by this allowlist alone. Claude cannot enumerate
-#     files, read arbitrary paths, execute shell commands, or exfiltrate data.
-#   --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,
-#     LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,
+#   --allowedTools "Edit,MultiEdit,Read"  EXCLUSIVE allowlist: Claude Code CLI
+#     blocks ALL tools not explicitly listed here. Read is included so claude
+#     can inspect file content before making edits (required to fix CI failures).
+#     Shell execution (Bash), web access (WebFetch, WebSearch), directory
+#     enumeration (LS, Glob), and MCP tools are ALL blocked by this allowlist.
+#     Claude cannot execute shell commands or access the web; any data it reads can still be echoed into logs/PR output, so secret handling relies on the scrubbing and file-deletion steps below.
+#   --disallowedTools "Bash,Write,WebFetch,WebSearch,computer_use,
+#     LS,Glob,ListFiles,SearchFiles,TodoWrite,TodoRead,Agent,
 #     AskFollowupQuestion,mcp__*"  Belt-and-suspenders: explicit denial in
 #     addition to the allowlist, for defense-in-depth.
 #   env -i isolates environment (no GITHUB_TOKEN, no runner tokens)
@@ -930,8 +931,8 @@ jobs:
               shred -u "$USER_PROMPT_FILE" 2>/dev/null || rm -f "$USER_PROMPT_FILE"
               unset USER_PROMPT_FILE
               printf "%s" "$_user_prompt" | claude --print \
-                --allowedTools "Edit,MultiEdit" \
-                --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*"
+                --allowedTools "Edit,MultiEdit,Read" \
+                --disallowedTools "Bash,Write,WebFetch,WebSearch,computer_use,LS,Glob,ListFiles,SearchFiles,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*"
             ' \
             > "$RUNNER_TEMP/claude-output.txt" \
             2> "$RUNNER_TEMP/claude-stderr.txt" || CLAUDE_EXIT=$?
