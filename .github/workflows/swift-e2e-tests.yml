@@ -300,7 +300,7 @@ jobs:
         shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          WENDY_E2E_PI_MODEL: openai/gpt-4o
+          WENDY_E2E_PI_MODEL: openai/gpt-5.5:high
         run: |
           set -euo pipefail
           bash ./Scripts/E2EReview.sh \
