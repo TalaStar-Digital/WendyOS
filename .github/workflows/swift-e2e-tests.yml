@@ -22,6 +22,8 @@ on:
     secrets:
       OPENAI_API_KEY:
         required: false
+      ANTHROPIC_API_KEY:
+        required: false
 
 concurrency:
   group: swift-e2e-tests-${{ github.ref }}
@@ -293,47 +295,13 @@ jobs:
           fi
           pi --version
 
-      - name: Select Pi review model
-        id: pi-auth
-        shell: bash
-        run: |
-          set -euo pipefail
-          auth_file="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json"
-          if node -e '
-            const fs = require("fs");
-            const file = process.argv[1];
-            if (!file || !fs.existsSync(file)) process.exit(1);
-            const auth = JSON.parse(fs.readFileSync(file, "utf8"));
-            process.exit(auth["openai-codex"]?.type === "oauth" ? 0 : 1);
-          ' "$auth_file"; then
-            model="openai-codex/gpt:high"
-            use_api_key="false"
-            echo "Using Pi OpenAI Codex subscription auth."
-          elif node -e '
-            const fs = require("fs");
-            const file = process.argv[1];
-            if (!file || !fs.existsSync(file)) process.exit(1);
-            const auth = JSON.parse(fs.readFileSync(file, "utf8"));
-            process.exit(auth.anthropic?.type === "oauth" ? 0 : 1);
-          ' "$auth_file"; then
-            model="anthropic/claude-opus:high"
-            use_api_key="false"
-            echo "Using Pi Anthropic subscription auth."
-          else
-            model="openai/gpt:high"
-            use_api_key="true"
-            echo "Pi subscription auth not found; using OpenAI API key."
-          fi
-          echo "model=${model}" >> "$GITHUB_OUTPUT"
-          echo "use_api_key=${use_api_key}" >> "$GITHUB_OUTPUT"
-          echo "Selected Pi model pattern: ${model}"
-
       - name: Review Swift E2E run
         working-directory: swift
         shell: bash
         env:
-          OPENAI_API_KEY: ${{ steps.pi-auth.outputs.use_api_key == 'true' && secrets.OPENAI_API_KEY || '' }}
-          WENDY_E2E_PI_MODEL: ${{ steps.pi-auth.outputs.model }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || '' }}
+          WENDY_E2E_PI_MODEL: ${{ vars.WENDY_E2E_PI_MODEL || '' }}
         run: |
           set -euo pipefail
           bash ./Scripts/E2EReview.sh \

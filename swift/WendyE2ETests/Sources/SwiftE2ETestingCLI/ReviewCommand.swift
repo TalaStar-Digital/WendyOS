@@ -100,7 +100,11 @@ extension ReviewCommand {
         )
         print("==> Running Swift E2E run AI review")
         print("    Harness:        pi")
+        print("    Command source: \(piHarness.commandSource)")
+        print("    Invocation:     \(piHarness.invocationSummary)")
         print("    Model:          \(resolvedModel)")
+        print("    Model source:   \(piHarness.modelSource)")
+        print("    Auth:           \(piHarness.authSummary)")
         print("    Repo:           \(repoURL.path)")
         print("    Run:            \(runURL.path)")
         print("    Mode:           \(reviewMode.name)")
@@ -351,6 +355,7 @@ private struct ShellReviewHarness {
     var commandSource: String
     var invocationSummary: String
     var authSummary: String
+    var modelSource: String
     var modelEnvironmentKey: String?
 
     func review(prompt: String, repoURL: URL, runURL: URL) throws {
@@ -371,14 +376,6 @@ private struct ShellReviewHarness {
                 environment[modelEnvironmentKey] = modelName
             }
         }
-
-        print("==> Invoking Swift E2E review harness")
-        print("    Command source: \(commandSource)")
-        print("    Invocation:     \(invocationSummary)")
-        print("    Model:          \(modelName)")
-        print("    Auth:           \(authSummary)")
-        print("    Prompt:         \(promptURL.path)")
-        print("    Repo:           \(repoURL.path)")
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -404,21 +401,28 @@ private func makePiHarness(model: String?) throws -> ShellReviewHarness {
     if !usesCustomCommand {
         try requireExecutable("pi", harness: "pi")
     }
-    let authSummary = try piAuthSummary(
+    let auth = try piAuth(
         environment: environment,
         usesCustomCommand: usesCustomCommand
     )
+    let modelSelection = piModelSelection(
+        explicitModel: model,
+        environment: environment,
+        auth: auth,
+        usesCustomCommand: usesCustomCommand
+    )
     return ShellReviewHarness(
-        modelName: model ?? environment["WENDY_E2E_PI_MODEL", default: "default"],
+        modelName: modelSelection.name,
         shellCommand: usesCustomCommand
             ? customCommand
-            : #"prompt="Read and follow the E2E review instructions in $WENDY_E2E_REVIEW_PROMPT."; if [[ -n "${WENDY_E2E_PI_MODEL:-}" ]]; then pi --model "$WENDY_E2E_PI_MODEL" -p "$prompt"; else pi -p "$prompt"; fi"#,
+            : #"prompt="Read and follow the E2E review instructions in $WENDY_E2E_REVIEW_PROMPT."; pi --model "$WENDY_E2E_PI_MODEL" -p "$prompt""#,
         commandSource: usesCustomCommand ? "WENDY_E2E_PI_COMMAND" : "pi CLI",
         invocationSummary: piInvocationSummary(
-            modelName: model ?? environment["WENDY_E2E_PI_MODEL", default: "default"],
+            modelName: modelSelection.name,
             usesCustomCommand: usesCustomCommand
         ),
-        authSummary: authSummary,
+        authSummary: auth.summary,
+        modelSource: modelSelection.source,
         modelEnvironmentKey: "WENDY_E2E_PI_MODEL"
     )
 }
@@ -427,41 +431,112 @@ private func piInvocationSummary(modelName: String, usesCustomCommand: Bool) -> 
     if usesCustomCommand {
         return "custom shell command (not printed; may contain secrets)"
     }
-    if usesHarnessDefaultModel(modelName) {
-        return "pi -p <generated prompt>"
-    }
     return "pi --model \(modelName) -p <generated prompt>"
 }
 
-private func piAuthSummary(environment: [String: String], usesCustomCommand: Bool) throws -> String
-{
+private struct PiAuth {
+    var openAICodexOAuth: Bool
+    var anthropicOAuth: Bool
+    var openAIAPIKey: Bool
+    var anthropicAPIKey: Bool
+    var summary: String
+}
+
+private struct PiModelSelection {
+    var name: String
+    var source: String
+}
+
+private func piAuth(environment: [String: String], usesCustomCommand: Bool) throws -> PiAuth {
     if usesCustomCommand {
-        return "custom command; auth handled by WENDY_E2E_PI_COMMAND"
+        return PiAuth(
+            openAICodexOAuth: false,
+            anthropicOAuth: false,
+            openAIAPIKey: false,
+            anthropicAPIKey: false,
+            summary: "custom command; auth handled by WENDY_E2E_PI_COMMAND"
+        )
     }
 
     let authPath =
         environment["PI_CODING_AGENT_DIR"].map { "\($0)/auth.json" }
         ?? "\(NSHomeDirectory())/.pi/agent/auth.json"
-    let auth = piAuthTypes(at: authPath)
-    var parts: [String] = []
-    if auth.openAICodexOAuth {
-        parts.append("OpenAI Codex subscription")
-    }
-    if auth.anthropicOAuth {
-        parts.append("Anthropic subscription")
-    }
-    if !environment["OPENAI_API_KEY", default: ""].isEmpty {
-        parts.append("OPENAI_API_KEY")
-    }
-    if !environment["ANTHROPIC_API_KEY", default: ""].isEmpty {
-        parts.append("ANTHROPIC_API_KEY")
-    }
-    if parts.isEmpty {
+    let subscriptions = piAuthTypes(at: authPath)
+    let auth = PiAuth(
+        openAICodexOAuth: subscriptions.openAICodexOAuth,
+        anthropicOAuth: subscriptions.anthropicOAuth,
+        openAIAPIKey: !environment["OPENAI_API_KEY", default: ""].isEmpty,
+        anthropicAPIKey: !environment["ANTHROPIC_API_KEY", default: ""].isEmpty,
+        summary: piAuthSummary(
+            openAICodexOAuth: subscriptions.openAICodexOAuth,
+            anthropicOAuth: subscriptions.anthropicOAuth,
+            openAIAPIKey: !environment["OPENAI_API_KEY", default: ""].isEmpty,
+            anthropicAPIKey: !environment["ANTHROPIC_API_KEY", default: ""].isEmpty
+        )
+    )
+
+    if auth.summary.isEmpty {
         throw ValidationError(
             "Pi review requires recognized auth. Configure OpenAI Codex or Anthropic subscription auth in \(authPath), set OPENAI_API_KEY or ANTHROPIC_API_KEY, or set WENDY_E2E_PI_COMMAND."
         )
     }
+    return auth
+}
+
+private func piAuthSummary(
+    openAICodexOAuth: Bool,
+    anthropicOAuth: Bool,
+    openAIAPIKey: Bool,
+    anthropicAPIKey: Bool
+) -> String {
+    var parts: [String] = []
+    if openAICodexOAuth {
+        parts.append("OpenAI Codex subscription")
+    }
+    if anthropicOAuth {
+        parts.append("Anthropic subscription")
+    }
+    if openAIAPIKey {
+        parts.append("OPENAI_API_KEY")
+    }
+    if anthropicAPIKey {
+        parts.append("ANTHROPIC_API_KEY")
+    }
     return parts.joined(separator: ", ")
+}
+
+private func piModelSelection(
+    explicitModel: String?,
+    environment: [String: String],
+    auth: PiAuth,
+    usesCustomCommand: Bool
+) -> PiModelSelection {
+    if let explicitModel, !usesHarnessDefaultModel(explicitModel) {
+        return PiModelSelection(name: explicitModel, source: "--model")
+    }
+    let environmentModel = environment["WENDY_E2E_PI_MODEL", default: ""]
+    if !usesHarnessDefaultModel(environmentModel) {
+        return PiModelSelection(name: environmentModel, source: "WENDY_E2E_PI_MODEL")
+    }
+    if usesCustomCommand {
+        return PiModelSelection(name: "default", source: "WENDY_E2E_PI_COMMAND")
+    }
+    if auth.openAICodexOAuth {
+        return PiModelSelection(name: "openai-codex/gpt:high", source: "OpenAI Codex subscription")
+    }
+    if auth.anthropicOAuth {
+        return PiModelSelection(
+            name: "anthropic/claude-opus:high",
+            source: "Anthropic subscription"
+        )
+    }
+    if auth.openAIAPIKey {
+        return PiModelSelection(name: "openai/gpt:high", source: "OPENAI_API_KEY")
+    }
+    if auth.anthropicAPIKey {
+        return PiModelSelection(name: "anthropic/claude-opus:high", source: "ANTHROPIC_API_KEY")
+    }
+    return PiModelSelection(name: "default", source: "unresolved")
 }
 
 private func piAuthTypes(at path: String) -> (openAICodexOAuth: Bool, anthropicOAuth: Bool) {
