@@ -283,15 +283,13 @@ jobs:
             --output-dir /tmp/wendy \
             "${attempt_dirs[@]}"
 
-      - name: Install Pi coding agent
+      - name: Verify Pi coding agent
         shell: bash
         run: |
           set -euo pipefail
           if ! command -v pi >/dev/null 2>&1; then
-            prefix="${RUNNER_TEMP:-/tmp}/pi-coding-agent"
-            npm install -g --ignore-scripts --prefix "$prefix" @earendil-works/pi-coding-agent
-            echo "$prefix/bin" >> "$GITHUB_PATH"
-            export PATH="$prefix/bin:$PATH"
+            echo "::error::pi must be preinstalled on the self-hosted AI runner"
+            exit 1
           fi
           pi --version
 
