@@ -1,5 +1,6 @@
 import { Provider } from '@/components/provider';
 import type { ReactNode } from 'react';
+import { ogImage } from '@/lib/shared';
 import './global.css';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
@@ -15,6 +16,15 @@ export const metadata = {
     template: '%s | WendyOS Docs',
   },
   description: 'Developer documentation for WendyOS, wendy-agent, and the Wendy CLI.',
+  openGraph: {
+    type: 'website',
+    siteName: 'WendyOS Docs',
+    images: [{ url: ogImage, width: 1200, height: 630, alt: 'Wendy — Physical AI Platform' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    images: [ogImage],
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

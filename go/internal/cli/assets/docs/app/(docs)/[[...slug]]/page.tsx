@@ -1,5 +1,6 @@
 import { getMDXComponents } from '@/components/mdx';
-import { getPageImage, source } from '@/lib/source';
+import { source } from '@/lib/source';
+import { ogImage } from '@/lib/shared';
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from 'fumadocs-ui/layouts/docs/page';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import type { Metadata } from 'next';
@@ -48,7 +49,11 @@ export async function generateMetadata(props: PageProps): Promise<Metadata> {
     title: page.data.title,
     description: page.data.description,
     openGraph: {
-      images: getPageImage(page).url,
+      images: ogImage,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      images: ogImage,
     },
   };
 }
