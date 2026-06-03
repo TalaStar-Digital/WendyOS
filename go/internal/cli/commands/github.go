@@ -45,6 +45,8 @@ func newGitHubAPIGetRequest(rawURL string) (*http.Request, error) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", githubAPIUserAgent())
+	// net/http header values are strings, so Go cannot zero this secret after use;
+	// keep it scoped to this request and avoid logging the returned request.
 	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
