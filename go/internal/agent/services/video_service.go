@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/wendylabsinc/wendy/go/internal/agent/board"
 	"github.com/wendylabsinc/wendy/go/internal/agent/camera"
 	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
@@ -90,6 +91,7 @@ type VideoService struct {
 	readDeviceName     func(base string) (string, error)
 	classifyTransport  func(base string) (camera.Transport, string)
 	enumerateLibcamera func(ctx context.Context) (map[string]string, error)
+	isJetson           func() bool
 }
 
 // NewVideoService creates a new VideoService.
@@ -105,6 +107,7 @@ func NewVideoService(logger *zap.Logger) *VideoService {
 		},
 		classifyTransport:  camera.Classify,
 		enumerateLibcamera: camera.EnumerateLibcamera,
+		isJetson:           func() bool { return board.Detect().IsJetson() },
 	}
 }
 
@@ -215,7 +218,7 @@ func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.
 	libcameraID := s.lookupLibcameraID(ctx, transport)
 
 	if transport == camera.TransportCSI {
-		s.logger.Info("CSI camera detected, using GStreamer with libcamera", zap.String("device", path))
+		s.logger.Info("CSI camera detected, using GStreamer", zap.String("device", path))
 		return s.streamGStreamer(ctx, stream, path, req, transport, libcameraID)
 	}
 
@@ -416,6 +419,15 @@ func resolveGSTBinary(name string) (string, error) {
 	return "", fmt.Errorf("%s not found; install GStreamer on the device", name)
 }
 
+// hostIsJetson reports whether the agent host is a Jetson, tolerating a nil
+// injection (struct-literal-constructed services in tests treat it as false).
+func (s *VideoService) hostIsJetson() bool {
+	if s.isJetson == nil {
+		return false
+	}
+	return s.isJetson()
+}
+
 // streamGStreamer spawns gst-launch-1.0 on the device to encode via the best available
 // encoder and pipes the resulting stream back as VideoFrame chunks.
 func (s *VideoService) streamGStreamer(ctx context.Context, stream grpc.ServerStreamingServer[agentpb.VideoFrame], path string, req *agentpb.StreamVideoRequest, transport camera.Transport, libcameraID string) (runErr error) {
@@ -441,7 +453,17 @@ func (s *VideoService) streamGStreamer(ctx context.Context, stream grpc.ServerSt
 	}
 	s.logger.Info("GStreamer encoder selected", zap.String("encoder", enc.element), zap.String("codec", enc.codec.String()))
 
-	args := buildGStreamerArgs(gstPath, path, req, enc.element, enc.hasH264Parse, transport, libcameraID, available)
+	var args []string
+	if useArgusSource(transport, s.hostIsJetson(), available) {
+		// Argus indexes sensors by sensor-id; /dev/videoN maps to sensor-id N
+		// for the common single-CSI-camera case.
+		sensorID := int(req.GetDeviceId())
+		s.logger.Info("CSI camera on Jetson — capturing via nvarguscamerasrc (Argus)",
+			zap.Int("sensor_id", sensorID), zap.String("encoder", enc.element))
+		args = buildArgusGStreamerArgs(gstPath, req, sensorID, enc.element, enc.hasH264Parse, available)
+	} else {
+		args = buildGStreamerArgs(gstPath, path, req, enc.element, enc.hasH264Parse, transport, libcameraID, available)
+	}
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
