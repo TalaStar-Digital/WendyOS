@@ -59,15 +59,16 @@ jobs:
             agent_os: wendyOS
             transport: lan
 
-          - name: Windows 11 → Ubuntu 24
-            target_id: windows-ubuntu-24
-            runner_id: windows-11
-            runner_label: windows-11
-            cli_os: windows
-            device_id: ubuntu-24
-            device_address: wendy-SER9.local
-            agent_os: linux
-            transport: lan
+          # // DISABLED: no CI hardware set up yet for this job.
+          # - name: Windows 11 → Ubuntu 24
+          #   target_id: windows-ubuntu-24
+          #   runner_id: windows-11
+          #   runner_label: windows-11
+          #   cli_os: windows
+          #   device_id: ubuntu-24
+          #   device_address: wendy-SER9.local
+          #   agent_os: linux
+          #   transport: lan
 
           - name: macOS 26 → Ubuntu 24
             target_id: macos-ubuntu-24
@@ -79,15 +80,16 @@ jobs:
             agent_os: linux
             transport: lan
 
-          - name: Ubuntu 24 → Ubuntu 24
-            target_id: ubuntu-ubuntu-24
-            runner_id: ubuntu-24-04
-            runner_label: ubuntu-24
-            cli_os: linux
-            device_id: ubuntu-24
-            device_address: wendy-SER9.local
-            agent_os: linux
-            transport: lan
+          # // DISABLED: no CI hardware set up yet for this job.
+          # - name: Ubuntu 24 → Ubuntu 24
+          #   target_id: ubuntu-ubuntu-24
+          #   runner_id: ubuntu-24-04
+          #   runner_label: ubuntu-24
+          #   cli_os: linux
+          #   device_id: ubuntu-24
+          #   device_address: wendy-SER9.local
+          #   agent_os: linux
+          #   transport: lan
 
           # // DISABLED: no CI hardware set up yet for this job.
           # - name: Ubuntu 24 → Raspberry Pi 5
