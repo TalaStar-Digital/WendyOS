@@ -647,6 +647,15 @@ func buildGStreamerArgs(gstPath, devicePath string, req *agentpb.StreamVideoRequ
 	return append([]string{gstPath, "-q"}, strings.Fields(pipeline)...)
 }
 
+// useArgusSource reports whether the NVIDIA Argus capture path should be used:
+// a CSI sensor, on a Jetson host, with the nvarguscamerasrc element installed.
+// On Jetson L4T, libcamera has no Tegra pipeline handler (cam --list is empty)
+// and plain v4l2src cannot drive the raw-Bayer VI pipeline, so nvarguscamerasrc
+// (sensor -> ISP -> NVMM NV12) is the only working GStreamer source.
+func useArgusSource(transport camera.Transport, isJetson bool, available map[string]bool) bool {
+	return transport == camera.TransportCSI && isJetson && available != nil && available["nvarguscamerasrc"]
+}
+
 // buildSourceElement chooses the capture source element for the GStreamer
 // pipeline. See buildGStreamerArgs for the selection rules.
 func buildSourceElement(devicePath string, transport camera.Transport, libcameraID string, available map[string]bool) string {

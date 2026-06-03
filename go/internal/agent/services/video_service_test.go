@@ -542,3 +542,27 @@ func TestBuildSourceElement_NilAvailableMapTreatedAsLibcamerasrcAbsent(t *testin
 		t.Errorf("nil availability must degrade CSI to v4l2src, got %q", src)
 	}
 }
+
+func TestUseArgusSource(t *testing.T) {
+	withArgus := map[string]bool{"nvarguscamerasrc": true}
+	cases := []struct {
+		name      string
+		transport camera.Transport
+		isJetson  bool
+		available map[string]bool
+		want      bool
+	}{
+		{"csi jetson with plugin", camera.TransportCSI, true, withArgus, true},
+		{"usb jetson with plugin", camera.TransportUSB, true, withArgus, false},
+		{"csi non-jetson with plugin", camera.TransportCSI, false, withArgus, false},
+		{"csi jetson no plugin", camera.TransportCSI, true, map[string]bool{}, false},
+		{"csi jetson nil map", camera.TransportCSI, true, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := useArgusSource(tc.transport, tc.isJetson, tc.available); got != tc.want {
+				t.Errorf("useArgusSource(%v, %v, %v) = %v, want %v", tc.transport, tc.isJetson, tc.available, got, tc.want)
+			}
+		})
+	}
+}
