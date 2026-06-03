@@ -433,6 +433,41 @@ resolve_cli_auth_config_path() {
   fi
 }
 
+preflight_cli_auth_fixture() {
+  if [[ -z "$AGENT_ADDRESS" ]]; then
+    return
+  fi
+
+  echo "==> Checking CLI auth fixture"
+
+  local command
+  IFS= read -r -d '' command <<EOF || true
+set -euo pipefail
+
+auth_config_path=$(shell_quote "$CLI_AUTH_CONFIG_PATH")
+wendy_path=$(shell_quote "$CLI_BIN_DIR/wendy")
+agent_address=$(shell_quote "$AGENT_ADDRESS")
+preflight_home="\${TMPDIR:-/tmp}/wendy-e2e-auth-preflight.\$\$"
+trap 'rm -rf "\$preflight_home"' EXIT
+
+if [[ ! -f "\$auth_config_path" ]]; then
+  echo "ERROR: CLI auth fixture config does not exist: \$auth_config_path" >&2
+  echo "Run 'wendy auth login' or set WENDY_E2E_CLI_AUTH_CONFIG_PATH." >&2
+  exit 1
+fi
+
+mkdir -p "\$preflight_home/.wendy"
+cp "\$auth_config_path" "\$preflight_home/.wendy/config.json"
+HOME="\$preflight_home" "\$wendy_path" --json --device "\$agent_address" device info >/dev/null
+EOF
+
+  if ! run_cli_command "$command"; then
+    echo "ERROR: CLI auth fixture cannot access $AGENT_ADDRESS." >&2
+    echo "Run 'wendy auth login' with an account that can access the provisioned device, or set WENDY_E2E_CLI_AUTH_CONFIG_PATH." >&2
+    exit 1
+  fi
+}
+
 build_cli() {
   local wendy_path="$CLI_BIN_DIR/wendy"
 
@@ -637,6 +672,7 @@ if [[ -z "$CLI_ADDRESS" ]]; then
 fi
 
 build_cli
+preflight_cli_auth_fixture
 
 SWIFT_TEST_ENV=(
   "WENDY_E2E_RUN_ID=$RUN_ID"

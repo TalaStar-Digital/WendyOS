@@ -103,6 +103,42 @@ function Resolve-CLIAuthConfigPath {
     return Join-Path $HOME '.wendy/config.json'
 }
 
+function Test-CLIAuthFixture {
+    if (-not $script:AgentAddress) { return }
+
+    Write-Output '==> Checking CLI auth fixture'
+
+    if (-not (Test-Path -LiteralPath $script:CLIAuthConfigPath -PathType Leaf)) {
+        throw "ERROR: CLI auth fixture config does not exist: $script:CLIAuthConfigPath`nRun 'wendy auth login' or set WENDY_E2E_CLI_AUTH_CONFIG_PATH."
+    }
+
+    $preflightHome = Join-Path ([System.IO.Path]::GetTempPath()) ("wendy-e2e-auth-preflight.{0}" -f [System.Guid]::NewGuid().ToString('N'))
+    $oldHome = $env:HOME
+    $oldUserProfile = $env:USERPROFILE
+    $oldAppData = $env:APPDATA
+    $oldLocalAppData = $env:LOCALAPPDATA
+    try {
+        $wendyDirectory = Join-Path $preflightHome '.wendy'
+        New-Item -ItemType Directory -Force -Path $wendyDirectory | Out-Null
+        Copy-Item -LiteralPath $script:CLIAuthConfigPath -Destination (Join-Path $wendyDirectory 'config.json') -Force
+
+        $env:HOME = $preflightHome
+        $env:USERPROFILE = $preflightHome
+        $env:APPDATA = Join-Path $preflightHome 'AppData/Roaming'
+        $env:LOCALAPPDATA = Join-Path $preflightHome 'AppData/Local'
+        & $script:WendyCLIPath --json --device $script:AgentAddress device info | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "ERROR: CLI auth fixture cannot access $script:AgentAddress.`nRun 'wendy auth login' with an account that can access the provisioned device, or set WENDY_E2E_CLI_AUTH_CONFIG_PATH."
+        }
+    } finally {
+        $env:HOME = $oldHome
+        $env:USERPROFILE = $oldUserProfile
+        $env:APPDATA = $oldAppData
+        $env:LOCALAPPDATA = $oldLocalAppData
+        Remove-Item -LiteralPath $preflightHome -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Build-CLI {
     $exeName = if ($env:OS -eq 'Windows_NT') { 'wendy.exe' } else { 'wendy' }
     $wendyPath = Join-Path $script:CLIBinDir $exeName
@@ -336,6 +372,7 @@ New-Item -ItemType Directory -Force -Path $script:RunDir | Out-Null
 $script:CLIAuthConfigPath = Resolve-CLIAuthConfigPath
 
 Build-CLI
+Test-CLIAuthFixture
 
 $swiftArgs = @('test')
 if (-not $Parallel) { $swiftArgs += '--no-parallel' }
