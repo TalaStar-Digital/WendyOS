@@ -611,6 +611,57 @@ func listGSTElements(inspectPath string) (map[string]bool, error) {
 	return elements, nil
 }
 
+// Argus sensor-mode defaults, applied when the request leaves a dimension at 0.
+// nvarguscamerasrc needs explicit width/height to pick a sensor mode; without
+// them it defaults to the sensor's largest mode (e.g. 4032x3040), which is
+// needlessly heavy for a live view.
+const (
+	argusDefaultWidth     = 1920
+	argusDefaultHeight    = 1080
+	argusDefaultFramerate = 30
+)
+
+// buildArgusGStreamerArgs builds a gst-launch-1.0 pipeline that captures from a
+// Jetson CSI sensor via nvarguscamerasrc (ISP-processed NV12 in NVMM memory) and
+// encodes to H.264. The nvv4l2h264enc hardware encoder consumes NVMM NV12
+// directly (zero-copy); any other encoder needs frames copied to system memory
+// first via nvvidconv. sensorID is the Argus sensor index (derived from the
+// /dev/videoN suffix by the caller; correct for the common single-CSI-camera
+// case).
+func buildArgusGStreamerArgs(gstPath string, req *agentpb.StreamVideoRequest, sensorID int, encoder string, hasH264Parse bool, available map[string]bool) []string {
+	width := req.GetWidth()
+	if width == 0 {
+		width = argusDefaultWidth
+	}
+	height := req.GetHeight()
+	if height == 0 {
+		height = argusDefaultHeight
+	}
+	framerate := req.GetFramerate()
+	if framerate == 0 {
+		framerate = argusDefaultFramerate
+	}
+	nvmmCaps := fmt.Sprintf("video/x-raw(memory:NVMM),width=%d,height=%d,framerate=%d/1,format=NV12", width, height, framerate)
+
+	var tail string
+	if encoder == "nvv4l2h264enc" {
+		// HW encoder accepts NVMM NV12 directly — no copy to system memory.
+		tail = "nvv4l2h264enc"
+		if hasH264Parse {
+			tail += h264ByteStream
+		}
+	} else {
+		// Any other encoder needs frames in system memory; nvvidconv does the
+		// NVMM->CPU copy, then the shared encoderSegment handles the rest.
+		tail = "nvvidconv ! video/x-raw,format=NV12 ! " + encoderSegment(encoder, hasH264Parse)
+	}
+
+	pipeline := fmt.Sprintf("nvarguscamerasrc sensor-id=%d ! %s ! %s ! fdsink fd=1", sensorID, nvmmCaps, tail)
+	// -q matches buildGStreamerArgs: suppress gst-launch status text so it does
+	// not corrupt the binary H.264 stream on stdout.
+	return append([]string{gstPath, "-q"}, strings.Fields(pipeline)...)
+}
+
 // buildGStreamerArgs constructs the gst-launch-1.0 argument list. The capture
 // source is selected by transport:
 //

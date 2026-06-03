@@ -543,6 +543,78 @@ func TestBuildSourceElement_NilAvailableMapTreatedAsLibcamerasrcAbsent(t *testin
 	}
 }
 
+func TestBuildArgusGStreamerArgs_NVV4L2DirectNVMM(t *testing.T) {
+	args := buildArgusGStreamerArgs("gst", &agentpb.StreamVideoRequest{}, 0, "nvv4l2h264enc", true,
+		map[string]bool{"nvarguscamerasrc": true, "nvv4l2h264enc": true})
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "nvarguscamerasrc sensor-id=0") {
+		t.Errorf("expected nvarguscamerasrc with sensor-id=0: %v", args)
+	}
+	if !strings.Contains(joined, "video/x-raw(memory:NVMM)") {
+		t.Errorf("expected NVMM caps for the Argus path: %v", args)
+	}
+	if !strings.Contains(joined, "nvv4l2h264enc") {
+		t.Errorf("expected nvv4l2h264enc encoder: %v", args)
+	}
+	if strings.Contains(joined, "nvvidconv") || strings.Contains(joined, "videoconvert") {
+		t.Errorf("nvv4l2h264enc consumes NVMM directly; must not convert: %v", args)
+	}
+	if !strings.Contains(joined, "h264parse config-interval=-1") {
+		t.Errorf("expected Annex B normalization when h264parse available: %v", args)
+	}
+	if !strings.Contains(joined, "fdsink fd=1") {
+		t.Errorf("expected fdsink fd=1 output: %v", args)
+	}
+	if len(args) < 2 || args[0] != "gst" || args[1] != "-q" {
+		t.Errorf("expected [gst -q ...]: %v", args)
+	}
+}
+
+func TestBuildArgusGStreamerArgs_DefaultDimensions(t *testing.T) {
+	args := buildArgusGStreamerArgs("gst", &agentpb.StreamVideoRequest{}, 0, "nvv4l2h264enc", true, nil)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "width=1920") || !strings.Contains(joined, "height=1080") || !strings.Contains(joined, "framerate=30/1") {
+		t.Errorf("expected default 1920x1080@30 caps: %v", args)
+	}
+}
+
+func TestBuildArgusGStreamerArgs_RequestDimensionsOverrideDefaults(t *testing.T) {
+	req := &agentpb.StreamVideoRequest{Width: 1280, Height: 720, Framerate: 60}
+	args := buildArgusGStreamerArgs("gst", req, 0, "nvv4l2h264enc", true, nil)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "width=1280") || !strings.Contains(joined, "height=720") || !strings.Contains(joined, "framerate=60/1") {
+		t.Errorf("expected requested caps to override defaults: %v", args)
+	}
+}
+
+func TestBuildArgusGStreamerArgs_SensorID(t *testing.T) {
+	args := buildArgusGStreamerArgs("gst", &agentpb.StreamVideoRequest{}, 1, "nvv4l2h264enc", false, nil)
+	if !strings.Contains(strings.Join(args, " "), "sensor-id=1") {
+		t.Errorf("expected sensor-id=1: %v", args)
+	}
+}
+
+func TestBuildArgusGStreamerArgs_NoH264ParseOmitsByteStream(t *testing.T) {
+	args := buildArgusGStreamerArgs("gst", &agentpb.StreamVideoRequest{}, 0, "nvv4l2h264enc", false, nil)
+	if strings.Contains(strings.Join(args, " "), "h264parse") {
+		t.Errorf("must not add h264parse when unavailable: %v", args)
+	}
+}
+
+func TestBuildArgusGStreamerArgs_NonNVEncoderUsesNvvidconv(t *testing.T) {
+	args := buildArgusGStreamerArgs("gst", &agentpb.StreamVideoRequest{}, 0, "x264enc", true, nil)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "video/x-raw(memory:NVMM)") {
+		t.Errorf("expected NVMM source caps: %v", args)
+	}
+	if !strings.Contains(joined, "nvvidconv ! video/x-raw,format=NV12") {
+		t.Errorf("non-NV encoder must convert NVMM->system via nvvidconv: %v", args)
+	}
+	if !strings.Contains(joined, "x264enc") {
+		t.Errorf("expected x264enc segment: %v", args)
+	}
+}
+
 func TestUseArgusSource(t *testing.T) {
 	withArgus := map[string]bool{"nvarguscamerasrc": true}
 	cases := []struct {
