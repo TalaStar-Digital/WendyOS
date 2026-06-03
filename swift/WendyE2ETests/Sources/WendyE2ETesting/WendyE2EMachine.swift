@@ -26,7 +26,7 @@ public enum WendyE2EMachineOS: String, Sendable {
             self = .linux
         case "windows", "win":
             self = .windows
-        case "wendyos", "wendy-os", "wendy_os":
+        case "wendy", "wendyos", "wendy-os", "wendy_os":
             self = .wendyOS
         default:
             return nil

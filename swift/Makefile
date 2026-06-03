@@ -61,6 +61,8 @@ RUN_E2E_TEST_UNIX = @output_dir=$(UNIX_E2E_OUTPUT_DIR); \
 	run_name="$$(e2e_cli_id)-to-$(1)"; \
 	run_id="$${WENDY_E2E_RUN_ID:-$$(next_e2e_run_id "$$output_dir" "$$run_name")}"; \
 	WENDY_E2E_RUN_ID="$$run_id" WENDY_E2E_RUN_NAME="$$run_name" bash ./Scripts/E2ETest.sh $(2)
+REQUIRE_E2E_DEVICE_WINDOWS = @if (-not '$(strip $(DEVICE))') { throw 'ERROR: DEVICE is required. Usage: make $(1) DEVICE=<address>' }
+REQUIRE_E2E_DEVICE_UNIX = @device='$(strip $(DEVICE))'; if [ -z "$$device" ]; then echo "ERROR: DEVICE is required. Usage: make $(1) DEVICE=<address>" >&2; exit 64; fi
 RUN_E2E_ANALYZE_UNIX = @bash ./Scripts/E2EAnalyze.sh --output-dir $(UNIX_E2E_OUTPUT_DIR) --stage $(1)
 REQUIRE_E2E_REVIEW_UNIX = @if ! command -v codex >/dev/null 2>&1 && ! command -v claude >/dev/null 2>&1; then echo "ERROR: e2e-review requires codex or claude." >&2; exit 64; fi
 
@@ -157,6 +159,45 @@ e2e-report-windows:
 .PHONY: e2e-report-unix
 e2e-report-unix:
 	$(call RUN_E2E_ANALYZE_UNIX,report)
+
+.PHONY: e2e-test-wendy
+e2e-test-wendy: e2e-test-wendy-$(HOST_ENV) ## Run Swift E2E tests against a WendyOS device; requires DEVICE
+
+.PHONY: e2e-test-wendy-windows
+e2e-test-wendy-windows:
+	$(call REQUIRE_E2E_DEVICE_WINDOWS,e2e-test-wendy)
+	$(call RUN_E2E_TEST_WINDOWS,wendy,--output-dir $(WINDOWS_E2E_OUTPUT_DIR) --agent-os wendy --agent-address "$(DEVICE)")
+
+.PHONY: e2e-test-wendy-unix
+e2e-test-wendy-unix:
+	$(call REQUIRE_E2E_DEVICE_UNIX,e2e-test-wendy)
+	$(call RUN_E2E_TEST_UNIX,wendy,--output-dir $(UNIX_E2E_OUTPUT_DIR) --agent-os wendy --agent-address "$(DEVICE)")
+
+.PHONY: e2e-test-linux
+e2e-test-linux: e2e-test-linux-$(HOST_ENV) ## Run Swift E2E tests against a Linux device; requires DEVICE
+
+.PHONY: e2e-test-linux-windows
+e2e-test-linux-windows:
+	$(call REQUIRE_E2E_DEVICE_WINDOWS,e2e-test-linux)
+	$(call RUN_E2E_TEST_WINDOWS,linux,--output-dir $(WINDOWS_E2E_OUTPUT_DIR) --agent-os linux --agent-address "$(DEVICE)")
+
+.PHONY: e2e-test-linux-unix
+e2e-test-linux-unix:
+	$(call REQUIRE_E2E_DEVICE_UNIX,e2e-test-linux)
+	$(call RUN_E2E_TEST_UNIX,linux,--output-dir $(UNIX_E2E_OUTPUT_DIR) --agent-os linux --agent-address "$(DEVICE)")
+
+.PHONY: e2e-test-macos
+e2e-test-macos: e2e-test-macos-$(HOST_ENV) ## Run Swift E2E tests against a macOS device; requires DEVICE
+
+.PHONY: e2e-test-macos-windows
+e2e-test-macos-windows:
+	$(call REQUIRE_E2E_DEVICE_WINDOWS,e2e-test-macos)
+	$(call RUN_E2E_TEST_WINDOWS,macos,--output-dir $(WINDOWS_E2E_OUTPUT_DIR) --agent-os macos --agent-address "$(DEVICE)")
+
+.PHONY: e2e-test-macos-unix
+e2e-test-macos-unix:
+	$(call REQUIRE_E2E_DEVICE_UNIX,e2e-test-macos)
+	$(call RUN_E2E_TEST_UNIX,macos,--output-dir $(UNIX_E2E_OUTPUT_DIR) --agent-os macos --agent-address "$(DEVICE)")
 
 e2e-test-wendyos-jetson-orin-nano: DEVICE ?= wendyos-jetson-orin-nano.local
 .PHONY: e2e-test-wendyos-jetson-orin-nano

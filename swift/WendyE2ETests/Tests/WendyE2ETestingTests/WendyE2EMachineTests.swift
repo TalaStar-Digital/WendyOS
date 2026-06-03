@@ -55,6 +55,13 @@ struct `machine` {
     }
 
     @Test
+    func `parses machine OS environment aliases`() {
+        #expect(WendyE2EMachineOS(environmentValue: "wendy") == .wendyOS)
+        #expect(WendyE2EMachineOS(environmentValue: "linux") == .linux)
+        #expect(WendyE2EMachineOS(environmentValue: "macos") == .macOS)
+    }
+
+    @Test
     func `stores a routable address`() {
         let machine = WendyE2EMachine(id: "remote", name: "Remote", address: "192.168.64.2")
 
