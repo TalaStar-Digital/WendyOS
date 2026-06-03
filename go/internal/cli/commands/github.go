@@ -17,7 +17,7 @@ func newGitHubAPIClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if req.URL == nil || req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Host, githubAPIHost) {
+			if !isCanonicalGitHubAPIURL(req.URL) {
 				req.Header.Del("Authorization")
 			}
 			return nil
@@ -33,7 +33,7 @@ func newGitHubAPIGetRequest(rawURL string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-	if parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, githubAPIHost) {
+	if !isCanonicalGitHubAPIURL(parsed) {
 		return nil, fmt.Errorf("unsupported GitHub API URL: scheme=%q host=%q", parsed.Scheme, parsed.Host)
 	}
 
@@ -52,6 +52,10 @@ func newGitHubAPIGetRequest(rawURL string) (*http.Request, error) {
 	}
 
 	return req, nil
+}
+
+func isCanonicalGitHubAPIURL(u *url.URL) bool {
+	return u != nil && u.Scheme == "https" && strings.EqualFold(u.Host, githubAPIHost)
 }
 
 func githubAPIUserAgent() string {
