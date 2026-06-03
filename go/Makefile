@@ -2,7 +2,7 @@ ifeq ($(OS),Windows_NT)
 DETECTED_HOST_OS := windows
 DETECTED_HOST_ENV := windows
 else
-UNAME_S := $(shell uname -s)
+UNAME_S := $(shell uname -s 2>/dev/null)
 ifeq ($(UNAME_S),Darwin)
 DETECTED_HOST_OS := macos
 DETECTED_HOST_ENV := unix
@@ -18,9 +18,25 @@ endif
 HOST_OS ?= $(DETECTED_HOST_OS)
 HOST_ENV ?= $(DETECTED_HOST_ENV)
 
+VALID_HOST_OSES := macos linux windows unknown
+VALID_HOST_ENVS := unix windows
+
+ifneq ($(words $(HOST_OS)),1)
+$(error HOST_OS must be one of: $(VALID_HOST_OSES); got '$(HOST_OS)')
+endif
+ifeq ($(filter $(VALID_HOST_OSES),$(HOST_OS)),)
+$(error HOST_OS must be one of: $(VALID_HOST_OSES); got '$(HOST_OS)')
+endif
+ifneq ($(words $(HOST_ENV)),1)
+$(error HOST_ENV must be one of: $(VALID_HOST_ENVS); got '$(HOST_ENV)')
+endif
+ifeq ($(filter $(VALID_HOST_ENVS),$(HOST_ENV)),)
+$(error HOST_ENV must be one of: $(VALID_HOST_ENVS); got '$(HOST_ENV)')
+endif
+
 ifeq ($(HOST_ENV),windows)
 override SHELL := powershell.exe
-.SHELLFLAGS := -NoProfile -ExecutionPolicy Bypass -Command
+.SHELLFLAGS := -NoProfile -NonInteractive -Command
 endif
 
 .PHONY: build build-cli build-agent test vet proto clean fmt lint install \
@@ -36,6 +52,8 @@ endif
 VERSION ?= dev
 MSI_VERSION ?= 0.0.1
 LDFLAGS := -s -w -X github.com/wendylabsinc/wendy/go/internal/shared/version.Version=$(VERSION)
+override WENDY_GO_LDFLAGS := $(LDFLAGS)
+export WENDY_GO_LDFLAGS
 ifeq ($(HOST_OS),macos)
 # Go/cgo adds -lobjc for each Objective-C package. The native CLI links
 # multiple CoreBluetooth-backed packages, and recent Apple linkers warn about
@@ -47,7 +65,7 @@ endif
 WXS := installer/windows/wendy.wxs
 
 GO_BUILD_CROSS_UNIX = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -ldflags "$(LDFLAGS)" -o $(3) $(4)
-GO_BUILD_CROSS_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows make recipes require PowerShell.' }; $$env:CGO_ENABLED = '0'; $$env:GOOS = '$(1)'; $$env:GOARCH = '$(2)'; go build -ldflags "$(LDFLAGS)" -o $(3) $(4); if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }
+GO_BUILD_CROSS_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows make recipes require PowerShell.' }; $$env:CGO_ENABLED = '0'; $$env:GOOS = '$(1)'; $$env:GOARCH = '$(2)'; go build -ldflags $$env:WENDY_GO_LDFLAGS -o $(3) $(4); if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }
 
 # Build both CLI and agent (native)
 .PHONY: build

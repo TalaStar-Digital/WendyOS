@@ -56,6 +56,21 @@ All Go code lives under `go/`. Run every `make` target and `go` command from tha
 
 The `Makefile` lives in `go/`. All targets below are run from `go/`.
 
+### Host detection
+
+The Makefile auto-detects the host environment and dispatches each target through a host-specific recipe:
+
+- **Windows** (`%OS% == Windows_NT`): uses `powershell.exe` and `-windows` target variants.
+- **macOS / Linux / other Unix**: uses the default shell and `-unix` target variants.
+
+You can override detection when needed:
+
+```sh
+make build HOST_ENV=unix   # force Unix recipes on a misdetected host
+```
+
+Allowed values are `HOST_ENV=unix|windows` and `HOST_OS=macos|linux|windows|unknown`.
+
 ### Build both binaries (native architecture)
 
 ```sh
@@ -78,7 +93,7 @@ make build-agent   # bin/wendy-agent
 
 ### Cross-compile
 
-The Makefile contains pre-wired targets for every supported platform. All cross-compiled targets use `CGO_ENABLED=0`:
+The Makefile contains pre-wired targets for every supported platform. All cross-compiled targets use `CGO_ENABLED=0` and dispatch to the correct host-specific recipe automatically:
 
 ```sh
 make build-agent-linux-amd64    # bin/wendy-agent-linux-amd64
@@ -88,7 +103,24 @@ make build-cli-windows-amd64    # bin/wendy-windows-amd64.exe
 make build-all                  # all of the above in one shot
 ```
 
+On Windows, cross-compile recipes set `$env:CGO_ENABLED`, `$env:GOOS`, and `$env:GOARCH` through PowerShell before invoking `go build`.
+
 Note: macOS CLI builds in CI run on a macOS runner (`macos-15`) with `CGO_ENABLED=1` because CoreBluetooth is required for BLE support.
+
+### Windows limitations
+
+The following targets are not supported on Windows and fail with an explicit error:
+
+| Target | Reason |
+|---|---|
+| `build-agent` | Native Windows agent build is not implemented yet |
+| `install` | Depends on `wendy-agent`, which is unavailable on Windows |
+| `proto` | Uses `scripts/generate-proto.sh` |
+| `licenses` | Uses `scripts/check-licenses.sh` |
+| `licenses-update` | Uses `scripts/check-licenses.sh` |
+| `sync-assets` | Uses Unix shell and `rsync` |
+
+Use macOS, Linux, or WSL for these targets.
 
 ### Version embedding
 
@@ -137,6 +169,8 @@ cd go
 make install
 # installs both binaries to $(go env GOPATH)/bin
 ```
+
+> **Note:** `make install` is not supported on Windows because `wendy-agent` does not have a Windows build yet. Run this target on macOS, Linux, or WSL.
 
 ## Regenerating Protobuf Code
 
