@@ -34,7 +34,7 @@ func newGitHubAPIGetRequest(rawURL string) (*http.Request, error) {
 		return nil, err
 	}
 	if parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, githubAPIHost) {
-		return nil, fmt.Errorf("unsupported GitHub API URL: %s", rawURL)
+		return nil, fmt.Errorf("unsupported GitHub API URL: scheme=%q host=%q", parsed.Scheme, parsed.Host)
 	}
 
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)

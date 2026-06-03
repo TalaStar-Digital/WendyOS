@@ -3,6 +3,7 @@ package commands
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/wendylabsinc/wendy/go/internal/shared/version"
@@ -43,8 +44,12 @@ func TestNewGitHubAPIGetRequestWithToken(t *testing.T) {
 func TestNewGitHubAPIGetRequestRejectsNonGitHubAPIURL(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "secret-token")
 
-	if _, err := newGitHubAPIGetRequest("https://example.com/releases"); err == nil {
+	_, err := newGitHubAPIGetRequest("https://example.com/releases?token=secret-token")
+	if err == nil {
 		t.Fatal("expected error for non-GitHub API URL")
+	}
+	if strings.Contains(err.Error(), "secret-token") || strings.Contains(err.Error(), "/releases") {
+		t.Fatalf("error exposes rejected URL details: %v", err)
 	}
 	if _, err := newGitHubAPIGetRequest("http://api.github.com/releases"); err == nil {
 		t.Fatal("expected error for non-HTTPS GitHub API URL")
