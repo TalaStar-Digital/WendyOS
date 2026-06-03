@@ -41,7 +41,7 @@ journalctl -u wendy-agent -n 200
 
 ### Internal telemetry log stream
 
-The agent tees its own `zap` logger into the telemetry broadcaster, which means internal agent logs are forwarded through the OTEL telemetry stream alongside container logs. You can observe them via `wendy telemetry logs` from the CLI (requires the device to be provisioned).
+The agent tees its own `zap` logger into the telemetry broadcaster, which means internal agent logs are forwarded through the OTEL telemetry stream alongside container logs. You can observe them via `wendy device telemetry-stream` from the CLI (requires the device to be provisioned).
 
 ## Environment Variables
 
@@ -50,6 +50,7 @@ All environment variables are read at startup. Restart the agent after changing 
 | Variable | Default | Description |
 |---|---|---|
 | `WENDY_DEBUG` | _(unset)_ | Set to any value to enable development-mode logging (verbose, human-readable) |
+| `WENDY_TLS_DEBUG` | _(unset)_ | Set to any value to log TLS handshake details for debugging mTLS connection issues |
 | `WENDY_CONFIG_PATH` | `/etc/wendy-agent` | Directory for provisioning certificates and config |
 | `WENDY_AGENT_PORT` | `50051` | Port for the plaintext gRPC server (pre-provisioning only) |
 | `WENDY_CONTAINERD_ADDR` | _(containerd default)_ | Unix socket path for the containerd client |
@@ -189,6 +190,29 @@ If the device certificate was regenerated, the old mTLS port listener may still 
 sudo systemctl restart wendy-agent
 ```
 
+### mTLS handshake fails with "certificate not yet valid"
+
+If the device's real-time clock (RTC) is not synchronized (common on first boot or after power loss), the device clock may predate the provisioning certificate's `NotBefore` time. This causes all client certificates to appear "not yet valid" from the device's perspective.
+
+Check the device clock:
+
+```sh
+ssh wendy@<device-ip> 'timedatectl status'
+```
+
+If NTP is not synchronized, wait for NTP sync or force it:
+
+```sh
+# Force NTP sync (if using systemd-timesyncd)
+sudo systemctl restart systemd-timesyncd
+```
+
+The agent logs a warning at startup if it detects clock skew. For TLS handshake details, run the CLI with:
+
+```sh
+WENDY_TLS_DEBUG=1 wendy device version
+```
+
 ## Inspecting Agent Internals
 
 ### Container state
@@ -215,7 +239,7 @@ wendy device info
 The agent collects CPU and memory metrics for itself (via `services.CollectAgentMetrics`) and for each running container (via `services.CollectContainerMetrics`). These are streamed through the OTEL broadcaster and available via:
 
 ```sh
-wendy telemetry metrics
+wendy device telemetry-stream
 ```
 
 ### Running the agent under a debugger
