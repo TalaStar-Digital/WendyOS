@@ -28,14 +28,14 @@ On Windows:
 winget install WendyLabs.Wendy
 ```
 
-If you are running a local, trusted PowerShell setup script and script execution is disabled, use a one-time bypass only after reviewing the script:
+Some local setup scripts are unsigned, so Windows may block them even when you trust the repository. If you need to run a local, trusted PowerShell setup script, use a one-time bypass only after reviewing the script:
 
 ```powershell
 Get-Content .\set-up-windows.ps1
 powershell -ExecutionPolicy Bypass -File .\set-up-windows.ps1
 ```
 
-The bypass applies only to that PowerShell invocation. Run it from a non-elevated PowerShell window unless the script explicitly requires administrator privileges.
+The bypass applies only to that PowerShell invocation. Run it from a non-elevated (standard-user) PowerShell window. If a specific step fails with an access-denied error, review that section of the script before re-running as Administrator.
 
 Package-specific options are available via
 [Homebrew, .deb, .rpm, and AUR](INSTALL.md).
