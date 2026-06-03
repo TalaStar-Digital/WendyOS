@@ -199,6 +199,39 @@ jobs:
           path: ${{ runner.temp }}/wendy-raw/${{ github.run_id }}
           pattern: swift-e2e-tests.gh${{ github.run_id }}.*
 
+      - name: Normalize Swift E2E attempt artifact layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw_dir="${RUNNER_TEMP}/wendy-raw/${{ github.run_id }}"
+
+          # WORKAROUND: actions/download-artifact has no setting that makes matched
+          # artifacts always extract the same way. A single matched artifact extracts
+          # directly into `path`, while multiple matched artifacts extract into child
+          # directories. Normalize the single-artifact case so aggregation always sees:
+          #   <raw_dir>/<attempt-id>/attempt.json
+          if [[ -f "${raw_dir}/attempt.json" ]]; then
+            attempt_id="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["attemptID"])' "${raw_dir}/attempt.json")"
+            if [[ -z "${attempt_id}" || "${attempt_id}" == *"/"* ]]; then
+              echo "ERROR: invalid Swift E2E attempt ID: ${attempt_id}" >&2
+              exit 1
+            fi
+
+            normalized_dir="${RUNNER_TEMP}/wendy-normalized/${{ github.run_id }}"
+            rm -rf "${normalized_dir}"
+            mkdir -p "${normalized_dir}/${attempt_id}"
+
+            shopt -s dotglob nullglob
+            entries=("${raw_dir}"/*)
+            if [[ ${#entries[@]} -eq 0 ]]; then
+              echo "ERROR: downloaded Swift E2E attempt artifact is empty: ${raw_dir}" >&2
+              exit 1
+            fi
+            mv "${entries[@]}" "${normalized_dir}/${attempt_id}/"
+            rm -rf "${raw_dir}"
+            mv "${normalized_dir}" "${raw_dir}"
+          fi
+
       - name: Aggregate Swift E2E attempts
         working-directory: swift
         shell: bash
