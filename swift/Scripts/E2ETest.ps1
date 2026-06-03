@@ -97,6 +97,12 @@ function Invoke-CLICommand([string]$Command) {
     return & powershell -NoProfile -NonInteractive -Command $Command
 }
 
+function Resolve-CLIAuthConfigPath {
+    if ($script:CLIAuthConfigPath) { return $script:CLIAuthConfigPath }
+    if ($script:CLIAddress) { return (Invoke-CLICommand 'printf "%s/.wendy/config.json" "$HOME"') -join '' }
+    return Join-Path $HOME '.wendy/config.json'
+}
+
 function Build-CLI {
     $exeName = if ($env:OS -eq 'Windows_NT') { 'wendy.exe' } else { 'wendy' }
     $wendyPath = Join-Path $script:CLIBinDir $exeName
@@ -209,6 +215,7 @@ $OutputDir = $env:WENDY_E2E_OUTPUT_DIR
 $CLIRootDir = $env:WENDY_E2E_CLI_ROOT_DIR
 $CLIRepoDir = $env:WENDY_E2E_CLI_REPO_DIR
 $CLIBinDir = $env:WENDY_E2E_CLI_BIN_DIR
+$CLIAuthConfigPath = $env:WENDY_E2E_CLI_AUTH_CONFIG_PATH
 $CLIUser = $env:WENDY_E2E_CLI_USER
 $CLIAddress = $env:WENDY_E2E_CLI_ADDRESS
 $CLIOS = if ($env:WENDY_E2E_CLI_OS) { $env:WENDY_E2E_CLI_OS } else { 'windows' }
@@ -237,6 +244,7 @@ while ($i -lt $script:RemainingArgs.Count) {
         '--cli-root-dir' { $CLIRootDir = Get-ValueOption '--cli-root-dir' $i; $i += 2; continue }
         '--cli-repo-dir' { $CLIRepoDir = Get-ValueOption '--cli-repo-dir' $i; $i += 2; continue }
         '--cli-bin-dir' { $CLIBinDir = Get-ValueOption '--cli-bin-dir' $i; $i += 2; continue }
+        '--cli-auth-config' { $CLIAuthConfigPath = Get-ValueOption '--cli-auth-config' $i; $i += 2; continue }
         '--cli-user' { $CLIUser = Get-ValueOption '--cli-user' $i; $i += 2; continue }
         '--cli-address' { $CLIAddress = Get-ValueOption '--cli-address' $i; $i += 2; continue }
         '--cli-os' { $CLIOS = Get-ValueOption '--cli-os' $i; $i += 2; continue }
@@ -295,6 +303,7 @@ if (-not $AgentAddress) {
 $script:RunID = $RunID
 $script:CLIUser = $CLIUser
 $script:CLIAddress = $CLIAddress
+$script:CLIAuthConfigPath = if ($CLIAuthConfigPath) { if ($CLIAddress) { ConvertTo-RemotePath $CLIAuthConfigPath } else { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($CLIAuthConfigPath) } } else { $null }
 $script:CLIOS = $CLIOS
 $script:AgentUser = $AgentUser
 $script:AgentAddress = $AgentAddress
@@ -324,6 +333,8 @@ if (Test-Path -LiteralPath $script:RunDir) { Remove-Item -LiteralPath $script:Ru
 if (-not $AgentAddress -and (Test-Path -LiteralPath $script:AgentRunDir)) { Remove-Item -LiteralPath $script:AgentRunDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $script:RunDir | Out-Null
 
+$script:CLIAuthConfigPath = Resolve-CLIAuthConfigPath
+
 Build-CLI
 
 $swiftArgs = @('test')
@@ -340,6 +351,7 @@ $env:WENDY_E2E_RUN_DIR = $script:RunDir
 $env:WENDY_E2E_CLI_RUN_DIR = $script:CLIRunDir
 $env:WENDY_E2E_CLI_REPO_DIR = if ($script:CLIRepoDir) { $script:CLIRepoDir } else { '' }
 $env:WENDY_E2E_CLI_BIN_DIR = if ($script:CLIBinDir) { $script:CLIBinDir } else { '' }
+$env:WENDY_E2E_CLI_AUTH_CONFIG_PATH = if ($script:CLIAuthConfigPath) { $script:CLIAuthConfigPath } else { '' }
 $env:WENDY_E2E_CLI_USER = if ($CLIUser) { $CLIUser } else { '' }
 $env:WENDY_E2E_CLI_ADDRESS = if ($CLIAddress) { $CLIAddress } else { '' }
 $env:WENDY_E2E_AGENT_RUN_DIR = $script:AgentRunDir

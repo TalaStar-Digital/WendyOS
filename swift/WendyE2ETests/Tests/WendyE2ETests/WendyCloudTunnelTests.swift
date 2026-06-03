@@ -91,7 +91,7 @@ struct `'wendy cloud tunnel'` {
         // AI: Judge whether the failure is actionable for a user who expected a
         // tunnel to start. The output should make the auth problem obvious and
         // should not imply that a listener or forwarding session remains active.
-        try await self.scenario.run { cli, _ in
+        try await self.scenario.run(authenticated: false) { cli, _ in
             try await cli.sh("wendy cloud tunnel 65535:80") { result in
                 let stderr = result.stderr
 

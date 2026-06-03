@@ -48,6 +48,7 @@ OUTPUT_DIR="${WENDY_E2E_OUTPUT_DIR:-}"
 CLI_ROOT_DIR="${WENDY_E2E_CLI_ROOT_DIR:-}"
 CLI_REPO_DIR="${WENDY_E2E_CLI_REPO_DIR:-}"
 CLI_BIN_DIR="${WENDY_E2E_CLI_BIN_DIR:-}"
+CLI_AUTH_CONFIG_PATH="${WENDY_E2E_CLI_AUTH_CONFIG_PATH:-}"
 CLI_USER="${WENDY_E2E_CLI_USER:-}"
 CLI_ADDRESS="${WENDY_E2E_CLI_ADDRESS:-}"
 CLI_OS="${WENDY_E2E_CLI_OS:-}"
@@ -112,6 +113,8 @@ Options:
   --cli-root-dir DIR    Root directory for CLI machine runs.
   --cli-repo-dir DIR    wendy-agent repo root on the CLI machine.
   --cli-bin-dir DIR     Directory where the built wendy CLI is written.
+  --cli-auth-config PATH
+                        CLI auth fixture config copied into authenticated tests.
   --cli-user USER       Optional SSH user for the CLI machine.
   --cli-address HOST    Optional address for the CLI machine.
   --cli-os OS           Optional OS override for the CLI machine.
@@ -137,6 +140,7 @@ Environment:
   WENDY_E2E_CLI_ROOT_DIR              Root directory for CLI machine runs.
   WENDY_E2E_CLI_REPO_DIR              wendy-agent repo root on the CLI machine.
   WENDY_E2E_CLI_BIN_DIR               Directory where the built wendy CLI is written.
+  WENDY_E2E_CLI_AUTH_CONFIG_PATH      CLI auth fixture config copied into authenticated tests.
   WENDY_E2E_CLI_USER                  Optional SSH user for the CLI machine.
   WENDY_E2E_CLI_ADDRESS               Optional address for the CLI machine.
   WENDY_E2E_CLI_OS                    Optional OS override for the CLI machine.
@@ -179,6 +183,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --cli-bin-dir)
       CLI_BIN_DIR="$2"
+      shift 2
+      ;;
+    --cli-auth-config)
+      CLI_AUTH_CONFIG_PATH="$2"
       shift 2
       ;;
     --cli-user)
@@ -412,6 +420,19 @@ run_cli_command() {
   fi
 }
 
+resolve_cli_auth_config_path() {
+  if [[ -n "$CLI_AUTH_CONFIG_PATH" ]]; then
+    printf "%s" "$CLI_AUTH_CONFIG_PATH"
+    return
+  fi
+
+  if [[ -n "$CLI_ADDRESS" ]]; then
+    run_cli_command 'printf "%s/.wendy/config.json" "$HOME"'
+  else
+    printf "%s/.wendy/config.json" "${HOME:?}"
+  fi
+}
+
 build_cli() {
   local wendy_path="$CLI_BIN_DIR/wendy"
 
@@ -610,6 +631,11 @@ else
   SWIFT_TEST_ARGS+=("--filter" "$joined_filter")
 fi
 
+CLI_AUTH_CONFIG_PATH="$(resolve_cli_auth_config_path)"
+if [[ -z "$CLI_ADDRESS" ]]; then
+  CLI_AUTH_CONFIG_PATH="$(expand_local_path "$CLI_AUTH_CONFIG_PATH")"
+fi
+
 build_cli
 
 SWIFT_TEST_ENV=(
@@ -618,6 +644,7 @@ SWIFT_TEST_ENV=(
   "WENDY_E2E_CLI_RUN_DIR=$CLI_RUN_DIR"
   "WENDY_E2E_CLI_REPO_DIR=$CLI_REPO_DIR"
   "WENDY_E2E_CLI_BIN_DIR=$CLI_BIN_DIR"
+  "WENDY_E2E_CLI_AUTH_CONFIG_PATH=$CLI_AUTH_CONFIG_PATH"
   "WENDY_E2E_CLI_USER=$CLI_USER"
   "WENDY_E2E_CLI_ADDRESS=$CLI_ADDRESS"
   "WENDY_E2E_AGENT_RUN_DIR=$AGENT_RUN_DIR"

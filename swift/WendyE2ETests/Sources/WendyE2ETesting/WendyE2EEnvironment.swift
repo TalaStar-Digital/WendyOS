@@ -56,6 +56,10 @@ public enum WendyE2EEnvironment {
         value("WENDY_E2E_CLI_BIN_DIR")
     }
 
+    public static var cliAuthConfigPath: String? {
+        value("WENDY_E2E_CLI_AUTH_CONFIG_PATH")
+    }
+
     public static var agentOS: WendyE2EMachineOS? {
         value("WENDY_E2E_AGENT_OS").flatMap(WendyE2EMachineOS.init(environmentValue:))
     }

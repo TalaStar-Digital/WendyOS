@@ -35,16 +35,10 @@ struct `'wendy device info'` {
         try await self.scenario.run { cli, agent in
             let agentAddress = agent.machine.address
 
-            try await cli.sh(
-                posix: """
-                    mkdir -p "$HOME/.wendy"
-                    printf '%s\n' '{"defaultDevice":"default-device-that-should-not-be-used.invalid"}' > "$HOME/.wendy/config.json"
-                    """,
-                power: """
-                    New-Item -ItemType Directory -Force -Path (Join-Path $env:HOME '.wendy') | Out-Null
-                    Set-Content -LiteralPath (Join-Path $env:HOME '.wendy/config.json') -Value '{"defaultDevice":"default-device-that-should-not-be-used.invalid"}'
-                    """
+            let configScript = Self.setDefaultDeviceConfigScript(
+                "default-device-that-should-not-be-used.invalid"
             )
+            try await cli.sh(posix: configScript.posix, power: configScript.power)
             try await cli.sh("wendy --device \(agentAddress) device info --json") { result in
                 let stdout = result.stdout
                 let stderr = result.stderr
@@ -70,16 +64,8 @@ struct `'wendy device info'` {
         try await self.scenario.run { cli, agent in
             let agentAddress = agent.machine.address
 
-            try await cli.sh(
-                posix: """
-                    mkdir -p "$HOME/.wendy"
-                    printf '%s\n' '{"defaultDevice":"\(agentAddress)"}' > "$HOME/.wendy/config.json"
-                    """,
-                power: """
-                    New-Item -ItemType Directory -Force -Path (Join-Path $env:HOME '.wendy') | Out-Null
-                    Set-Content -LiteralPath (Join-Path $env:HOME '.wendy/config.json') -Value '{"defaultDevice":"\(agentAddress)"}'
-                    """
-            )
+            let configScript = Self.setDefaultDeviceConfigScript(agentAddress)
+            try await cli.sh(posix: configScript.posix, power: configScript.power)
 
             try await cli.sh("wendy device info --json") { result in
                 let stdout = result.stdout
@@ -100,10 +86,12 @@ struct `'wendy device info'` {
             ) { result in
 
                 #expect(result.status.isSuccess)
-                #expect(
-                    result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                        == "{\"defaultDevice\":\"\(agentAddress)\"}"
+                let json = try #require(
+                    try JSONSerialization.jsonObject(with: Data(result.stdout.utf8))
+                        as? [String: Any]
                 )
+
+                #expect(json["defaultDevice"] as? String == agentAddress)
                 #expect(result.stderr == "")
             }
         }
@@ -203,16 +191,8 @@ struct `'wendy device info'` {
         try await self.scenario.run { cli, agent in
             let agentAddress = agent.machine.address
 
-            try await cli.sh(
-                posix: """
-                    mkdir -p "$HOME/.wendy"
-                    printf '%s\n' '{"defaultDevice":"\(agentAddress)"}' > "$HOME/.wendy/config.json"
-                    """,
-                power: """
-                    New-Item -ItemType Directory -Force -Path (Join-Path $env:HOME '.wendy') | Out-Null
-                    Set-Content -LiteralPath (Join-Path $env:HOME '.wendy/config.json') -Value '{"defaultDevice":"\(agentAddress)"}'
-                    """
-            )
+            let configScript = Self.setDefaultDeviceConfigScript(agentAddress)
+            try await cli.sh(posix: configScript.posix, power: configScript.power)
 
             try await cli.sh("wendy device info") { result in
 
@@ -436,6 +416,52 @@ struct `'wendy device info'` {
         }
     }
 
+    private static func setDefaultDeviceConfigScript(
+        _ device: String
+    ) -> (
+        posix: String,
+        power: String
+    ) {
+        let jsonDevice = Self.jsonStringLiteral(device)
+        let powerDevice = "'" + device.replacingOccurrences(of: "'", with: "''") + "'"
+        return (
+            posix: """
+            python3 - <<'PY'
+            import json
+            import os
+
+            path = os.path.join(os.environ["HOME"], ".wendy", "config.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            try:
+                with open(path, encoding="utf-8") as config_file:
+                    config = json.load(config_file)
+            except FileNotFoundError:
+                config = {}
+            config["defaultDevice"] = \(jsonDevice)
+            with open(path, "w", encoding="utf-8") as config_file:
+                json.dump(config, config_file, separators=(",", ":"))
+                config_file.write("\\n")
+            PY
+            """,
+            power: """
+            $configPath = Join-Path $env:HOME '.wendy/config.json'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $configPath) | Out-Null
+            if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+                $config = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+            } else {
+                $config = [pscustomobject]@{}
+            }
+            $config | Add-Member -NotePropertyName 'defaultDevice' -NotePropertyValue \(powerDevice) -Force
+            $config | ConvertTo-Json -Depth 20 -Compress | Set-Content -LiteralPath $configPath
+            """
+        )
+    }
+
+    private static func jsonStringLiteral(_ value: String) -> String {
+        let data = try! JSONSerialization.data(withJSONObject: [value])
+        let arrayLiteral = String(decoding: data, as: UTF8.self)
+        return String(arrayLiteral.dropFirst().dropLast())
+    }
 }
 
 /// Deprecated compatibility alias for `wendy device info`.

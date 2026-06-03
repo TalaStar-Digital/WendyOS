@@ -5,12 +5,14 @@ final class CLIAndAgentScenario: WendyE2EScenario, Sendable {
     // MARK: - Internal
 
     func run<Result>(
+        authenticated: Bool = true,
         filePath: String = #filePath,
         function: String = #function,
         line: Int = #line,
         _ body: @Sendable (_ cli: WendyE2ESession, _ agent: WendyE2ESession) async throws -> Result
     ) async throws -> Result {
         let (cli, agent) = try await self.setUp(
+            authenticated: authenticated,
             filePath: filePath,
             function: function,
             line: line
@@ -37,6 +39,7 @@ final class CLIAndAgentScenario: WendyE2EScenario, Sendable {
     // MARK: - Private
 
     private func setUp(
+        authenticated: Bool,
         filePath: String,
         function: String,
         line: Int
@@ -111,6 +114,9 @@ final class CLIAndAgentScenario: WendyE2EScenario, Sendable {
                 recorder: recorder
             )
             cliSession = cli
+            if authenticated {
+                try await Self.installCLIAuthFixture(into: cli)
+            }
             let agent = try await WendyE2ESession.begin(
                 for: agentMachine,
                 workingDirectory: agentSandbox.workingDirectory,
@@ -160,6 +166,39 @@ final class CLIAndAgentScenario: WendyE2EScenario, Sendable {
         let homeDirectory: String?
         let temporaryDirectory: String?
         let workingDirectory: String?
+    }
+
+    private static func installCLIAuthFixture(into cli: WendyE2ESession) async throws {
+        let source = WendyE2EEnvironment.cliAuthConfigPath ?? ""
+        try await cli.sh(
+            posix: """
+                auth_config_source=
+                auth_config_source=\(Self.shellQuote(source))
+                if [ -z "$auth_config_source" ] || [ ! -f "$auth_config_source" ]; then
+                  echo "ERROR: authenticated Wendy E2E scenario requires a CLI auth fixture config. Run 'wendy auth login' or set WENDY_E2E_CLI_AUTH_CONFIG_PATH." >&2
+                  exit 1
+                fi
+                mkdir -p "$HOME/.wendy"
+                auth_config_target="$HOME/.wendy/config.json"
+                if [ "$auth_config_source" != "$auth_config_target" ]; then
+                  cp "$auth_config_source" "$auth_config_target"
+                fi
+                chmod 600 "$auth_config_target" 2>/dev/null || true
+                """,
+            power: """
+                $authConfigSource = \(Self.powerShellQuote(source))
+                if (-not $authConfigSource -or -not (Test-Path -LiteralPath $authConfigSource -PathType Leaf)) {
+                    Write-Error "authenticated Wendy E2E scenario requires a CLI auth fixture config. Run 'wendy auth login' or set WENDY_E2E_CLI_AUTH_CONFIG_PATH."
+                    exit 1
+                }
+                $authConfigDirectory = Join-Path $env:HOME '.wendy'
+                New-Item -ItemType Directory -Force -Path $authConfigDirectory | Out-Null
+                $authConfigTarget = Join-Path $authConfigDirectory 'config.json'
+                if ($authConfigSource -ne $authConfigTarget) {
+                    Copy-Item -LiteralPath $authConfigSource -Destination $authConfigTarget -Force
+                }
+                """
+        )
     }
 
     private static func roleSandbox(
@@ -243,6 +282,14 @@ final class CLIAndAgentScenario: WendyE2EScenario, Sendable {
 
     private static func preferredSeparator(for path: String) -> String {
         path.contains("\\") && !path.contains("/") ? "\\" : "/"
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func powerShellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "''") + "'"
     }
 
     private static func hasTrailingSeparator(_ path: String) -> Bool {
