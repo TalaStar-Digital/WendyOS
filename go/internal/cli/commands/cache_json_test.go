@@ -217,9 +217,19 @@ func captureCommandStdout(t *testing.T, fn func() error) (string, error) {
 
 	oldStdout := os.Stdout
 	os.Stdout = writer
+	restored := false
+	restoreStdout := func() {
+		if restored {
+			return
+		}
+		_ = writer.Close()
+		os.Stdout = oldStdout
+		restored = true
+	}
+	defer restoreStdout()
+
 	execErr := fn()
-	_ = writer.Close()
-	os.Stdout = oldStdout
+	restoreStdout()
 	defer reader.Close()
 
 	var buf bytes.Buffer

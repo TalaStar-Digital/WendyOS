@@ -33,6 +33,8 @@ Each element of the returned array represents one cached item:
 | `sizeBytes` | integer | Size in bytes |
 | `size` | string | Human-readable size string |
 
+> **Note:** `path` is a full local filesystem path and may include the current username or CI runner cache location. Redact it before forwarding command output to shared logs or support channels.
+
 Returns `[]` when the cache is empty.
 
 ### `wendy os cache list --json`

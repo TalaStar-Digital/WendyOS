@@ -27,10 +27,6 @@ func newOSCacheListCmd() *cobra.Command {
 		Name      string `json:"name"`
 		SizeBytes int64  `json:"sizeBytes"`
 		Size      string `json:"size"`
-
-		// Keep the existing human-readable output in MiB while exposing the
-		// same JSON shape as `wendy cache list --json`.
-		sizeMB float64
 	}
 
 	printJSON := func(items []osCacheEntry) error {
@@ -84,7 +80,6 @@ func newOSCacheListCmd() *cobra.Command {
 					Name:      entry.Name(),
 					SizeBytes: size,
 					Size:      formatSize(size),
-					sizeMB:    float64(size) / (1024 * 1024),
 				})
 			}
 
@@ -96,7 +91,8 @@ func newOSCacheListCmd() *cobra.Command {
 				fmt.Println("No cached OS images.")
 			} else {
 				for _, item := range items {
-					fmt.Printf("  %s  (%.1f MB)\n", item.Name, item.sizeMB)
+					sizeMB := float64(item.SizeBytes) / (1024 * 1024)
+					fmt.Printf("  %s  (%.1f MB)\n", item.Name, sizeMB)
 				}
 				fmt.Printf("\nCache directory: %s\n", dir)
 			}
