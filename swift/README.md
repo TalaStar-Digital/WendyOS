@@ -95,10 +95,10 @@ The Makefile includes helpers for the common cases:
 
 - `make e2e-test` runs the E2E suite against the local host and writes attempt
   artifacts only.
-- `make e2e-test-mac-mini` runs an attempt against `mac-mini.local`.
-- `make e2e-test-jetson-orin-nano` runs an attempt against
+- `make e2e-test-macos-mac-mini` runs an attempt against `mac-mini.local`.
+- `make e2e-test-wendyos-jetson-orin-nano` runs an attempt against
   `wendyos-jetson-orin-nano.local`.
-- `make e2e-test-raspberry-pi-5` runs an attempt against
+- `make e2e-test-wendyos-raspberry-pi-5` runs an attempt against
   `wendyos-raspberry-pi-5.local`.
 - `make e2e-aggregate` integrates attempts for the current run ID, updating run
   directories in place.
@@ -111,7 +111,7 @@ The Makefile includes helpers for the common cases:
 Device-targeted helpers accept a `DEVICE` override:
 
 ```bash
-make e2e-test-mac-mini DEVICE=my-mac.local
+make e2e-test-macos-mac-mini DEVICE=my-mac.local
 make e2e-analyze
 ```
 

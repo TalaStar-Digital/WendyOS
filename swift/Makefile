@@ -158,41 +158,41 @@ e2e-report-windows:
 e2e-report-unix:
 	$(call RUN_E2E_ANALYZE_UNIX,report)
 
-e2e-test-jetson-orin-nano: DEVICE ?= wendyos-jetson-orin-nano.local
-.PHONY: e2e-test-jetson-orin-nano
-e2e-test-jetson-orin-nano: e2e-test-jetson-orin-nano-$(HOST_ENV) ## Run Swift E2E tests against Jetson Orin Nano and write attempt artifacts
+e2e-test-wendyos-jetson-orin-nano: DEVICE ?= wendyos-jetson-orin-nano.local
+.PHONY: e2e-test-wendyos-jetson-orin-nano
+e2e-test-wendyos-jetson-orin-nano: e2e-test-wendyos-jetson-orin-nano-$(HOST_ENV) ## Run Swift E2E tests against Jetson Orin Nano and write attempt artifacts
 
-.PHONY: e2e-test-jetson-orin-nano-windows
-e2e-test-jetson-orin-nano-windows:
-	$(call RUN_E2E_TEST_WINDOWS,jetson-orin-nano,--output-dir $(WINDOWS_E2E_OUTPUT_DIR) --agent-os wendyOS --agent-address "$(DEVICE)")
+.PHONY: e2e-test-wendyos-jetson-orin-nano-windows
+e2e-test-wendyos-jetson-orin-nano-windows:
+	$(call RUN_E2E_TEST_WINDOWS,wendyos-jetson-orin-nano,--output-dir $(WINDOWS_E2E_OUTPUT_DIR) --agent-os wendyOS --agent-address "$(DEVICE)")
 
-.PHONY: e2e-test-jetson-orin-nano-unix
-e2e-test-jetson-orin-nano-unix:
-	$(call RUN_E2E_TEST_UNIX,jetson-orin-nano,--output-dir $(UNIX_E2E_OUTPUT_DIR) --agent-os wendyOS --agent-address "$(DEVICE)")
+.PHONY: e2e-test-wendyos-jetson-orin-nano-unix
+e2e-test-wendyos-jetson-orin-nano-unix:
+	$(call RUN_E2E_TEST_UNIX,wendyos-jetson-orin-nano,--output-dir $(UNIX_E2E_OUTPUT_DIR) --agent-os wendyOS --agent-address "$(DEVICE)")
 
-e2e-test-raspberry-pi-5: DEVICE ?= wendyos-raspberry-pi-5.local
-.PHONY: e2e-test-raspberry-pi-5
-e2e-test-raspberry-pi-5: e2e-test-raspberry-pi-5-$(HOST_ENV) ## Run Swift E2E tests against Raspberry Pi 5 and write attempt artifacts
+e2e-test-wendyos-raspberry-pi-5: DEVICE ?= wendyos-raspberry-pi-5.local
+.PHONY: e2e-test-wendyos-raspberry-pi-5
+e2e-test-wendyos-raspberry-pi-5: e2e-test-wendyos-raspberry-pi-5-$(HOST_ENV) ## Run Swift E2E tests against Raspberry Pi 5 and write attempt artifacts
 
-.PHONY: e2e-test-raspberry-pi-5-windows
-e2e-test-raspberry-pi-5-windows:
-	$(call RUN_E2E_TEST_WINDOWS,raspberry-pi-5,--output-dir $(WINDOWS_E2E_OUTPUT_DIR) --agent-os wendyOS --agent-address "$(DEVICE)")
+.PHONY: e2e-test-wendyos-raspberry-pi-5-windows
+e2e-test-wendyos-raspberry-pi-5-windows:
+	$(call RUN_E2E_TEST_WINDOWS,wendyos-raspberry-pi-5,--output-dir $(WINDOWS_E2E_OUTPUT_DIR) --agent-os wendyOS --agent-address "$(DEVICE)")
 
-.PHONY: e2e-test-raspberry-pi-5-unix
-e2e-test-raspberry-pi-5-unix:
-	$(call RUN_E2E_TEST_UNIX,raspberry-pi-5,--output-dir $(UNIX_E2E_OUTPUT_DIR) --agent-os wendyOS --agent-address "$(DEVICE)")
+.PHONY: e2e-test-wendyos-raspberry-pi-5-unix
+e2e-test-wendyos-raspberry-pi-5-unix:
+	$(call RUN_E2E_TEST_UNIX,wendyos-raspberry-pi-5,--output-dir $(UNIX_E2E_OUTPUT_DIR) --agent-os wendyOS --agent-address "$(DEVICE)")
 
-e2e-test-mac-mini: DEVICE ?= mac-mini.local
-.PHONY: e2e-test-mac-mini
-e2e-test-mac-mini: e2e-test-mac-mini-$(HOST_ENV) ## Run Swift E2E tests against Mac mini and write attempt artifacts
+e2e-test-macos-mac-mini: DEVICE ?= mac-mini.local
+.PHONY: e2e-test-macos-mac-mini
+e2e-test-macos-mac-mini: e2e-test-macos-mac-mini-$(HOST_ENV) ## Run Swift E2E tests against Mac mini and write attempt artifacts
 
-.PHONY: e2e-test-mac-mini-windows
-e2e-test-mac-mini-windows:
-	$(call RUN_E2E_TEST_WINDOWS,mac-mini,--output-dir $(WINDOWS_E2E_OUTPUT_DIR) --agent-os macOS --agent-address "$(DEVICE)")
+.PHONY: e2e-test-macos-mac-mini-windows
+e2e-test-macos-mac-mini-windows:
+	$(call RUN_E2E_TEST_WINDOWS,macos-mac-mini,--output-dir $(WINDOWS_E2E_OUTPUT_DIR) --agent-os macOS --agent-address "$(DEVICE)")
 
-.PHONY: e2e-test-mac-mini-unix
-e2e-test-mac-mini-unix:
-	$(call RUN_E2E_TEST_UNIX,mac-mini,--output-dir $(UNIX_E2E_OUTPUT_DIR) --agent-os macOS --agent-address "$(DEVICE)")
+.PHONY: e2e-test-macos-mac-mini-unix
+e2e-test-macos-mac-mini-unix:
+	$(call RUN_E2E_TEST_UNIX,macos-mac-mini,--output-dir $(UNIX_E2E_OUTPUT_DIR) --agent-os macOS --agent-address "$(DEVICE)")
 
 .PHONY: report
 report: report-$(HOST_ENV) ## Render the latest Swift E2E run report and open it
