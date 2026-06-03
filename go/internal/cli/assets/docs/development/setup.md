@@ -69,7 +69,7 @@ You can override detection when needed:
 make build HOST_ENV=unix   # force Unix recipes on a misdetected host
 ```
 
-Allowed values are `HOST_ENV=unix|windows` and `HOST_OS=macos|linux|windows|unknown`.
+Allowed values are `HOST_ENV=unix|windows` and `HOST_OS=macos|linux|windows|unknown`. Any other value fails immediately; treat these as developer/CI overrides and do not derive them from untrusted input.
 
 ### Build both binaries (native architecture)
 

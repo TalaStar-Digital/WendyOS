@@ -21,22 +21,16 @@ HOST_ENV ?= $(DETECTED_HOST_ENV)
 VALID_HOST_OSES := macos linux windows unknown
 VALID_HOST_ENVS := unix windows
 
-ifneq ($(words $(HOST_OS)),1)
-$(error HOST_OS must be one of: $(VALID_HOST_OSES); got '$(HOST_OS)')
+ifeq ($(findstring |$(HOST_OS)|,$(foreach host_os,$(VALID_HOST_OSES),|$(host_os)|)),)
+$(error HOST_OS must be one of: $(VALID_HOST_OSES). Received an invalid value.)
 endif
-ifeq ($(filter $(VALID_HOST_OSES),$(HOST_OS)),)
-$(error HOST_OS must be one of: $(VALID_HOST_OSES); got '$(HOST_OS)')
-endif
-ifneq ($(words $(HOST_ENV)),1)
-$(error HOST_ENV must be one of: $(VALID_HOST_ENVS); got '$(HOST_ENV)')
-endif
-ifeq ($(filter $(VALID_HOST_ENVS),$(HOST_ENV)),)
-$(error HOST_ENV must be one of: $(VALID_HOST_ENVS); got '$(HOST_ENV)')
+ifeq ($(findstring |$(HOST_ENV)|,$(foreach host_env,$(VALID_HOST_ENVS),|$(host_env)|)),)
+$(error HOST_ENV must be one of: $(VALID_HOST_ENVS). Received an invalid value.)
 endif
 
 ifeq ($(HOST_ENV),windows)
-override SHELL := powershell.exe
-.SHELLFLAGS := -NoProfile -NonInteractive -Command
+SHELL := powershell.exe
+.SHELLFLAGS := -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
 endif
 
 .PHONY: build build-cli build-agent test vet proto clean fmt lint install \
@@ -52,8 +46,6 @@ endif
 VERSION ?= dev
 MSI_VERSION ?= 0.0.1
 LDFLAGS := -s -w -X github.com/wendylabsinc/wendy/go/internal/shared/version.Version=$(VERSION)
-override WENDY_GO_LDFLAGS := $(LDFLAGS)
-export WENDY_GO_LDFLAGS
 ifeq ($(HOST_OS),macos)
 # Go/cgo adds -lobjc for each Objective-C package. The native CLI links
 # multiple CoreBluetooth-backed packages, and recent Apple linkers warn about
@@ -64,8 +56,18 @@ endif
 
 WXS := installer/windows/wendy.wxs
 
-GO_BUILD_CROSS_UNIX = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -ldflags "$(LDFLAGS)" -o $(3) $(4)
-GO_BUILD_CROSS_WINDOWS = @if (-not $$PSVersionTable) { throw 'Windows make recipes require PowerShell.' }; $$env:CGO_ENABLED = '0'; $$env:GOOS = '$(1)'; $$env:GOARCH = '$(2)'; go build -ldflags $$env:WENDY_GO_LDFLAGS -o $(3) $(4); if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }
+VALID_CROSS_GOOS := linux darwin windows
+VALID_CROSS_GOARCHS := amd64 arm64
+VALID_CROSS_OUTPUTS := \
+       bin/wendy-agent-linux-amd64 bin/wendy-agent-linux-arm64 \
+       bin/wendy-linux-amd64 bin/wendy-linux-arm64 \
+       bin/wendy-darwin-amd64 bin/wendy-darwin-arm64 \
+       bin/wendy-windows-amd64.exe bin/wendy-windows-arm64.exe
+VALID_CROSS_PACKAGES := ./cmd/wendy ./cmd/wendy-agent
+ASSERT_GO_BUILD_CROSS_ARGS = $(if $(filter $(1),$(VALID_CROSS_GOOS)),,$(error GOOS must be one of: $(VALID_CROSS_GOOS)))$(if $(filter $(2),$(VALID_CROSS_GOARCHS)),,$(error GOARCH must be one of: $(VALID_CROSS_GOARCHS)))$(if $(filter $(3),$(VALID_CROSS_OUTPUTS)),,$(error output path is not an allowed cross-build artifact))$(if $(filter $(4),$(VALID_CROSS_PACKAGES)),,$(error package path is not an allowed cross-build package))
+
+GO_BUILD_CROSS_UNIX = $(call ASSERT_GO_BUILD_CROSS_ARGS,$(1),$(2),$(3),$(4))set -e; CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -ldflags "$(LDFLAGS)" -o $(3) $(4)
+GO_BUILD_CROSS_WINDOWS = $(call ASSERT_GO_BUILD_CROSS_ARGS,$(1),$(2),$(3),$(4))@if (-not $$PSVersionTable) { throw 'Windows make recipes require PowerShell.' }; $$env:CGO_ENABLED = '0'; $$env:GOOS = '$(1)'; $$env:GOARCH = '$(2)'; go build -ldflags "$$env:WENDY_GO_LDFLAGS" -o '$(3)' '$(4)'; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }
 
 # Build both CLI and agent (native)
 .PHONY: build
@@ -118,6 +120,11 @@ build-all-windows: build-agent-linux-amd64-windows build-agent-linux-arm64-windo
            build-cli-linux-amd64-windows build-cli-linux-arm64-windows \
            build-cli-darwin-amd64-windows build-cli-darwin-arm64-windows \
            build-cli-windows-amd64-windows build-cli-windows-arm64-windows
+
+build-agent-linux-amd64-windows build-agent-linux-arm64-windows \
+        build-cli-linux-amd64-windows build-cli-linux-arm64-windows \
+        build-cli-darwin-amd64-windows build-cli-darwin-arm64-windows \
+        build-cli-windows-amd64-windows build-cli-windows-arm64-windows: export WENDY_GO_LDFLAGS := $(LDFLAGS)
 
 .PHONY: build-agent-linux-amd64
 build-agent-linux-amd64: build-agent-linux-amd64-$(HOST_ENV)
