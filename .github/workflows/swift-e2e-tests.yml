@@ -509,24 +509,21 @@ jobs:
           tested_ref="${GITHUB_REF_NAME:-${GITHUB_SHA}}"
           review_text="$(cat "${COMMENT_PATH}")"
           if [[ -n "${artifact_url}" ]]; then
-            review_text="${review_text}
-
----
-
-Report artifact: <${artifact_url}|${artifact_name}>"
+            review_text+=$'\n\n---\n\n'
+            review_text+="Report artifact: <${artifact_url}|${artifact_name}>"
           fi
 
           max_review_length=28000
           if (( ${#review_text} > max_review_length )); then
-            review_text="${review_text:0:max_review_length}
-
-… truncated. Full report: <${run_url}|GitHub Actions run>"
+            review_text="${review_text:0:max_review_length}"
+            review_text+=$'\n\n'
+            review_text+="… truncated. Full report: <${run_url}|GitHub Actions run>"
           fi
 
           message_header="Swift E2E ${review_mode} review for ${tested_ref}: ${run_url}"
           if [[ -n "${DIFF_BASE_REF}" ]]; then
-            message_header="${message_header}
-Diff base: ${DIFF_BASE_REF}"
+            message_header+=$'\n'
+            message_header+="Diff base: ${DIFF_BASE_REF}"
           fi
 
           jq -n \
