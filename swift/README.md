@@ -111,6 +111,8 @@ The Makefile includes helpers for the common cases:
 - `make e2e-review` reviews existing run results.
 - `make e2e-report` renders run HTML reports and opens the newest report on
   macOS.
+- `make e2e-reference` generates Swift E2E HTML reference documentation and
+  opens it.
 - `make e2e-analyze` runs `e2e-aggregate`, `e2e-review`, and `e2e-report` in
   order for the current run ID.
 
