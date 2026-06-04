@@ -59,6 +59,7 @@ AGENT_USER="${WENDY_E2E_AGENT_USER:-}"
 AGENT_ADDRESS="${WENDY_E2E_AGENT_ADDRESS:-}"
 AGENT_OS="${WENDY_E2E_AGENT_OS:-}"
 TRANSPORT="${WENDY_E2E_TRANSPORT:-}"
+AGENT_INFO_JSON=""
 ISOLATION="${WENDY_E2E_ISOLATION:-per-test}"
 VERBOSE="${WENDY_E2E_VERBOSE:-false}"
 PARALLEL="${WENDY_E2E_PARALLEL:-false}"
@@ -458,14 +459,16 @@ fi
 
 mkdir -p "\$preflight_home/.wendy"
 cp "\$auth_config_path" "\$preflight_home/.wendy/config.json"
-HOME="\$preflight_home" "\$wendy_path" --json --device "\$agent_address" device info >/dev/null
+HOME="\$preflight_home" "\$wendy_path" --json --device "\$agent_address" device info
 EOF
 
-  if ! run_cli_command "$command"; then
+  local agent_info_json
+  if ! agent_info_json="$(run_cli_command "$command")"; then
     echo "ERROR: CLI auth fixture cannot access $AGENT_ADDRESS." >&2
     echo "Run 'wendy auth login' with an account that can access the provisioned device, or set WENDY_E2E_CLI_AUTH_CONFIG_PATH." >&2
     exit 1
   fi
+  AGENT_INFO_JSON="$agent_info_json"
 }
 
 build_cli() {
@@ -542,6 +545,14 @@ json_string() {
 json_string_or_null() {
   if [[ -n "${1:-}" ]]; then
     json_string "$1"
+  else
+    printf "null"
+  fi
+}
+
+json_raw_or_null() {
+  if [[ -n "${1:-}" ]]; then
+    printf "%s" "$1"
   else
     printf "null"
   fi
@@ -628,7 +639,8 @@ write_attempt_info() {
     printf '    "agentOS": '; json_string_or_null "$AGENT_OS"; echo ","
     printf '    "agentAddress": '; json_string_or_null "$AGENT_ADDRESS"; echo ","
     printf '    "agentUser": '; json_string_or_null "$AGENT_USER"; echo ","
-    printf '    "transport": '; json_string_or_null "$TRANSPORT"; echo
+    printf '    "transport": '; json_string_or_null "$TRANSPORT"; echo ","
+    printf '    "agentInfo": '; json_raw_or_null "$AGENT_INFO_JSON"; echo
     echo '  },'
     echo '  "paths": {'
     printf '    "attemptDirectory": '; json_string "$RUN_DIR"; echo ","

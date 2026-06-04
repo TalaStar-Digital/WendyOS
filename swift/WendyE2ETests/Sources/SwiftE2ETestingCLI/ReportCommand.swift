@@ -1411,24 +1411,31 @@ private func targetRoute(for target: String, attemptURL: URL) throws -> TargetRo
     let cliPlatform = info.cliOS.map(targetPlatformForOS) ?? targetPlatform(for: components.cli)
     let agentPlatform = targetPlatformForAgent(
         component: components.agent,
-        os: info.agentOS
+        info: info
     )
     return TargetRoute(cli: cliPlatform, agent: agentPlatform)
 }
 
 private func targetRouteComponents(for target: String) -> (cli: String, agent: String?) {
     let separator = "-to-"
-    guard let range = target.range(of: separator) else {
-        return (target, nil)
+    if let range = target.range(of: separator) {
+        return (String(target[..<range.lowerBound]), String(target[range.upperBound...]))
     }
 
-    return (String(target[..<range.lowerBound]), String(target[range.upperBound...]))
+    for prefix in ["macos", "ubuntu", "windows", "linux"] {
+        let routePrefix = "\(prefix)-"
+        if target.hasPrefix(routePrefix) {
+            return (prefix, String(target.dropFirst(routePrefix.count)))
+        }
+    }
+
+    return (target, nil)
 }
 
-private func targetInfo(at attemptURL: URL) throws -> (cliOS: String?, agentOS: String?) {
+private func targetInfo(at attemptURL: URL) throws -> TargetInfo {
     let attemptInfoURL = attemptURL.appendingPathComponent("attempt.json")
     guard FileManager.default.fileExists(atPath: attemptInfoURL.path) else {
-        return (nil, nil)
+        return TargetInfo()
     }
 
     let data = try Data(contentsOf: attemptInfoURL)
@@ -1436,12 +1443,21 @@ private func targetInfo(at attemptURL: URL) throws -> (cliOS: String?, agentOS: 
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
         let target = object["target"] as? [String: Any]
     else {
-        return (nil, nil)
+        return TargetInfo()
     }
 
-    return (
-        nonEmptyString(target["cliOS"]),
-        nonEmptyString(target["agentOS"])
+    let agentInfo = target["agentInfo"] as? [String: Any]
+    return TargetInfo(
+        cliOS: nonEmptyString(target["cliOS"]),
+        agentOS: nonEmptyString(target["agentOS"]),
+        agentDeviceType: nonEmptyString(target["agentDeviceType"])
+            ?? nonEmptyString(agentInfo?["deviceType"]),
+        agentHardwarePlatform: nonEmptyString(target["agentHardwarePlatform"])
+            ?? nonEmptyString(agentInfo?["hardwarePlatform"]),
+        agentGPUVendor: nonEmptyString(target["agentGPUVendor"])
+            ?? nonEmptyString(agentInfo?["gpuVendor"]),
+        agentJetPackVersion: nonEmptyString(target["agentJetPackVersion"])
+            ?? nonEmptyString(agentInfo?["jetpackVersion"])
     )
 }
 
@@ -1456,18 +1472,17 @@ private func renderTargetLogo(_ platform: TargetPlatform) -> String {
     "<span class=\"target-logo \(platform.cssClass)\" role=\"img\" aria-label=\"\(escapeHTML(platform.label))\">\(platform.symbol)</span>"
 }
 
-private func targetPlatformForAgent(component: String?, os: String?) -> TargetPlatform? {
-    guard component != nil || os != nil else {
-        return nil
+private func targetPlatformForAgent(component: String?, info: TargetInfo) -> TargetPlatform? {
+    if let hardwarePlatform = targetHardwarePlatform(for: info), hardwarePlatform != .unknown {
+        return hardwarePlatform
     }
-
     if let component {
         let hardwarePlatform = targetHardwarePlatform(for: component)
         if hardwarePlatform != .unknown {
             return hardwarePlatform
         }
     }
-    if let os {
+    if let os = info.agentOS {
         return targetPlatformForOS(os)
     }
     if let component {
@@ -1493,12 +1508,35 @@ private func targetPlatformForOS(_ value: String) -> TargetPlatform {
     return .unknown
 }
 
-private func targetHardwarePlatform(for value: String) -> TargetPlatform {
-    let normalized = value.lowercased()
-    if normalized.contains("jetson") || normalized.contains("nvidia") {
+private func targetHardwarePlatform(for info: TargetInfo) -> TargetPlatform? {
+    if let agentHardwarePlatform = info.agentHardwarePlatform {
+        let hardwarePlatform = targetHardwarePlatform(for: agentHardwarePlatform)
+        if hardwarePlatform != .unknown {
+            return hardwarePlatform
+        }
+    }
+    if let agentDeviceType = info.agentDeviceType {
+        let hardwarePlatform = targetHardwarePlatform(for: agentDeviceType)
+        if hardwarePlatform != .unknown {
+            return hardwarePlatform
+        }
+    }
+    if info.agentJetPackVersion != nil {
         return .nvidia
     }
-    if normalized.contains("raspberry") || normalized.contains("raspi") {
+    return nil
+}
+
+private func targetHardwarePlatform(for value: String) -> TargetPlatform {
+    let normalized = value.lowercased()
+    if normalized.contains("jetson") || normalized.contains("nvidia")
+        || normalized.contains("tegra")
+    {
+        return .nvidia
+    }
+    if normalized.contains("raspberry") || normalized.contains("raspi")
+        || normalized.contains("rpi")
+    {
         return .raspberryPi
     }
     return .unknown
@@ -1522,6 +1560,15 @@ private func targetPlatform(for value: String) -> TargetPlatform {
         return .linux
     }
     return .unknown
+}
+
+private struct TargetInfo {
+    var cliOS: String? = nil
+    var agentOS: String? = nil
+    var agentDeviceType: String? = nil
+    var agentHardwarePlatform: String? = nil
+    var agentGPUVendor: String? = nil
+    var agentJetPackVersion: String? = nil
 }
 
 private struct TargetRoute {

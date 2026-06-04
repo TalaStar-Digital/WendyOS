@@ -126,9 +126,14 @@ function Test-CLIAuthFixture {
         $env:USERPROFILE = $preflightHome
         $env:APPDATA = Join-Path $preflightHome 'AppData/Roaming'
         $env:LOCALAPPDATA = Join-Path $preflightHome 'AppData/Local'
-        & $script:WendyCLIPath --json --device $script:AgentAddress device info | Out-Null
+        $probeOutput = (& $script:WendyCLIPath --json --device $script:AgentAddress device info) -join "`n"
         if ($LASTEXITCODE -ne 0) {
             throw "ERROR: CLI auth fixture cannot access $script:AgentAddress.`nRun 'wendy auth login' with an account that can access the provisioned device, or set WENDY_E2E_CLI_AUTH_CONFIG_PATH."
+        }
+        try {
+            $script:AgentInfo = $probeOutput | ConvertFrom-Json
+        } catch {
+            $script:AgentInfo = $null
         }
     } finally {
         $env:HOME = $oldHome
@@ -217,6 +222,7 @@ function Write-AttemptInfo([int]$Status) {
             agentAddress = if ($script:AgentAddress) { $script:AgentAddress } else { $null }
             agentUser = if ($script:AgentUser) { $script:AgentUser } else { $null }
             transport = if ($script:Transport) { $script:Transport } else { $null }
+            agentInfo = if ($script:AgentInfo) { $script:AgentInfo } else { $null }
         }
         paths = [ordered]@{
             attemptDirectory = $script:RunDir
@@ -262,6 +268,7 @@ $AgentUser = $env:WENDY_E2E_AGENT_USER
 $AgentAddress = $env:WENDY_E2E_AGENT_ADDRESS
 $AgentOS = $env:WENDY_E2E_AGENT_OS
 $Transport = $env:WENDY_E2E_TRANSPORT
+$script:AgentInfo = $null
 $Isolation = if ($env:WENDY_E2E_ISOLATION) { $env:WENDY_E2E_ISOLATION } else { 'per-test' }
 $Verbose = if ($env:WENDY_E2E_VERBOSE) { ConvertTo-Bool 'WENDY_E2E_VERBOSE' $env:WENDY_E2E_VERBOSE } else { $false }
 $Parallel = if ($env:WENDY_E2E_PARALLEL) { ConvertTo-Bool 'WENDY_E2E_PARALLEL' $env:WENDY_E2E_PARALLEL } else { $false }
