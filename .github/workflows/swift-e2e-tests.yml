@@ -484,18 +484,15 @@ jobs:
         shell: bash
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.WENDY_E2E_SLACK_WEBHOOK_URL || '' }}
-          COMMENT_PATH: ${{ steps.e2e-run.outputs.run_dir }}/review.md
           REPORT_ARTIFACT_NAME: ${{ steps.e2e-run.outputs.run_artifact_id }}
           REPORT_ARTIFACT_URL: ${{ steps.upload_e2e_report.outputs['artifact-url'] }}
           DIFF_BASE_REF: ${{ inputs.diff_base_ref || '' }}
+          TESTS: ${{ inputs.tests || '' }}
+          E2E_RESULT: ${{ needs.swift-e2e-tests.result }}
         run: |
           set -euo pipefail
           if [[ -z "${SLACK_WEBHOOK_URL}" ]]; then
             echo "WENDY_E2E_SLACK_WEBHOOK_URL is not configured; skipping Slack notification."
-            exit 0
-          fi
-          if [[ ! -f "${COMMENT_PATH}" ]]; then
-            echo "No Swift E2E review aggregate found at ${COMMENT_PATH}; skipping Slack notification."
             exit 0
           fi
 
@@ -507,27 +504,39 @@ jobs:
             review_mode="diff"
           fi
           tested_ref="${GITHUB_REF_NAME:-${GITHUB_SHA}}"
-          review_text="$(cat "${COMMENT_PATH}")"
-          if [[ -n "${artifact_url}" ]]; then
-            review_text+=$'\n\n---\n\n'
-            review_text+="Report artifact: <${artifact_url}|${artifact_name}>"
-          fi
+          short_sha="${GITHUB_SHA:0:12}"
+          tests_label="${TESTS:-WendyE2ETests}"
 
-          max_review_length=28000
-          if (( ${#review_text} > max_review_length )); then
-            review_text="${review_text:0:max_review_length}"
-            review_text+=$'\n\n'
-            review_text+="… truncated. Full report: <${run_url}|GitHub Actions run>"
-          fi
+          case "${E2E_RESULT:-unknown}" in
+            success) status_label="PASSED" ;;
+            failure) status_label="FAILED" ;;
+            cancelled) status_label="CANCELLED" ;;
+            skipped) status_label="SKIPPED" ;;
+            *) status_label="UNKNOWN" ;;
+          esac
 
-          message_header="Swift E2E ${review_mode} review for ${tested_ref}: ${run_url}"
+          message="Swift E2E: ${status_label}"
+          message+=$'\n'
+          message+="Mode: ${review_mode}"
+          message+=$'\n'
+          message+="Ref: ${tested_ref} (${short_sha})"
+          message+=$'\n'
+          message+="Trigger: ${GITHUB_EVENT_NAME} by ${GITHUB_ACTOR}"
           if [[ -n "${DIFF_BASE_REF}" ]]; then
-            message_header+=$'\n'
-            message_header+="Diff base: ${DIFF_BASE_REF}"
+            message+=$'\n'
+            message+="Diff base: ${DIFF_BASE_REF}"
+          fi
+          message+=$'\n'
+          message+="Tests: ${tests_label}"
+          message+=$'\n'
+          message+="Run: <${run_url}|GitHub Actions>"
+          if [[ -n "${artifact_url}" ]]; then
+            message+=$'\n'
+            message+="Report: <${artifact_url}|${artifact_name}>"
           fi
 
           jq -n \
-            --arg text "${message_header}\n\n${review_text}" \
+            --arg text "${message}" \
             '{text: $text}' \
             > slack-payload.json
           curl --fail --silent --show-error \
