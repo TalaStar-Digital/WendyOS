@@ -346,6 +346,10 @@ try await WendyE2ESession.with(
 }
 ```
 
+The single-string forms of `sh` and `pty` use the same command text for POSIX
+shells and PowerShell. Use them only when the command is portable across the
+machines under test.
+
 The no-callback forms of `sh` and `pty` require the command to succeed. Use the
 callback form when a command may fail or needs assertions:
 
@@ -364,13 +368,25 @@ try await cli.pty("wendy device info") { result in
 }
 ```
 
-For OS-specific shell syntax, provide both variants:
+For OS-specific shell syntax, provide both variants. The session chooses `posix`
+for macOS, Linux, and WendyOS machines, and `power` for Windows machines:
 
 ```swift
 try await agent.sh(
     posix: "nc -z 127.0.0.1 50051",
     power: "Test-NetConnection -ComputerName 127.0.0.1 -Port 50051"
 )
+```
+
+The variant form also supports callbacks:
+
+```swift
+try await cli.sh(
+    posix: "printf 'hello\\n'",
+    power: "Write-Output hello"
+) { result in
+    #expect(result.normalizedStdout == "hello")
+}
 ```
 
 `WendyE2ESession.wendyCacheDirectory` returns the Wendy cache path for the
