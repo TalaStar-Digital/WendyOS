@@ -880,8 +880,8 @@ func (z *zipReadCloser) Close() error {
 }
 
 // streamZipImageEntry opens a zip archive and returns a streaming reader over
-// the first .img, .raw, or .wic entry it finds, plus the uncompressed size.
-// The caller must Close the returned reader.
+// the first .img, .raw, .wic, or .sdimg entry it finds, plus the uncompressed
+// size. The caller must Close the returned reader.
 func streamZipImageEntry(zipPath string) (io.ReadCloser, int64, error) {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -893,7 +893,8 @@ func streamZipImageEntry(zipPath string) (io.ReadCloser, int64, error) {
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(f.Name))
-		if ext != ".img" && ext != ".raw" && ext != ".wic" {
+		// .sdimg is the Mender A/B disk image RPi targets now produce.
+		if ext != ".img" && ext != ".raw" && ext != ".wic" && ext != ".sdimg" {
 			continue
 		}
 
@@ -917,7 +918,7 @@ func streamZipImageEntry(zipPath string) (io.ReadCloser, int64, error) {
 	}
 
 	r.Close()
-	return nil, 0, fmt.Errorf("no .img, .raw, or .wic file found in zip archive")
+	return nil, 0, fmt.Errorf("no .img, .raw, .wic, or .sdimg file found in zip archive")
 }
 
 func resolveOSImage(deviceKey string, img *imageInfo) (string, error) {
