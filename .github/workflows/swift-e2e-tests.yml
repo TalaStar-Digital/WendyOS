@@ -489,6 +489,7 @@ jobs:
           DIFF_BASE_REF: ${{ inputs.diff_base_ref || '' }}
           TESTS: ${{ inputs.tests || '' }}
           E2E_RESULT: ${{ needs.swift-e2e-tests.result }}
+          REVIEW_PATH: ${{ steps.e2e-run.outputs.run_dir }}/review.md
         run: |
           set -euo pipefail
           if [[ -z "${SLACK_WEBHOOK_URL}" ]]; then
@@ -508,36 +509,161 @@ jobs:
           tests_label="${TESTS:-WendyE2ETests}"
 
           case "${E2E_RESULT:-unknown}" in
-            success) status_label="PASSED" ;;
-            failure) status_label="FAILED" ;;
-            cancelled) status_label="CANCELLED" ;;
-            skipped) status_label="SKIPPED" ;;
-            *) status_label="UNKNOWN" ;;
+            success)
+              status_label="passed"
+              status_emoji="✅"
+              status_color="#22c55e"
+              ;;
+            failure)
+              status_label="failed"
+              status_emoji="❌"
+              status_color="#ef4444"
+              ;;
+            cancelled)
+              status_label="cancelled"
+              status_emoji="⏹️"
+              status_color="#f59e0b"
+              ;;
+            skipped)
+              status_label="skipped"
+              status_emoji="⏭️"
+              status_color="#94a3b8"
+              ;;
+            *)
+              status_label="unknown"
+              status_emoji="❔"
+              status_color="#64748b"
+              ;;
           esac
 
-          message="Swift E2E: ${status_label}"
-          message+=$'\n'
-          message+="Mode: ${review_mode}"
-          message+=$'\n'
-          message+="Ref: ${tested_ref} (${short_sha})"
-          message+=$'\n'
-          message+="Trigger: ${GITHUB_EVENT_NAME} by ${GITHUB_ACTOR}"
-          if [[ -n "${DIFF_BASE_REF}" ]]; then
-            message+=$'\n'
-            message+="Diff base: ${DIFF_BASE_REF}"
-          fi
-          message+=$'\n'
-          message+="Tests: ${tests_label}"
-          message+=$'\n'
-          message+="Run: <${run_url}|GitHub Actions>"
-          if [[ -n "${artifact_url}" ]]; then
-            message+=$'\n'
-            message+="Report: <${artifact_url}|${artifact_name}>"
+          review_excerpt=""
+          if [[ -f "${REVIEW_PATH}" ]]; then
+            review_excerpt="$(python3 - <<'PY' || true
+          import os
+          import pathlib
+          import re
+
+          path = pathlib.Path(os.environ["REVIEW_PATH"])
+          text = path.read_text(encoding="utf-8", errors="replace").strip()
+          text = re.sub(r"^#\s*Swift E2E Review\s*", "", text).strip()
+          text = re.sub(r"\s+", " ", text)
+          limit = 900
+          if len(text) > limit:
+              text = text[: limit - 1].rstrip() + "…"
+          print(text)
+          PY
+          )"
           fi
 
           jq -n \
-            --arg text "${message}" \
-            '{text: $text}' \
+            --arg color "${status_color}" \
+            --arg fallback "${status_emoji} Swift E2E Tests ${status_label}" \
+            --arg title "${status_emoji} Swift E2E Tests ${status_label}" \
+            --arg mode "${review_mode}" \
+            --arg ref "${tested_ref}" \
+            --arg sha "${short_sha}" \
+            --arg trigger "${GITHUB_EVENT_NAME}" \
+            --arg actor "${GITHUB_ACTOR}" \
+            --arg tests "${tests_label}" \
+            --arg diff_base "${DIFF_BASE_REF}" \
+            --arg run_url "${run_url}" \
+            --arg artifact_url "${artifact_url}" \
+            --arg artifact_name "${artifact_name}" \
+            --arg review_excerpt "${review_excerpt}" \
+            '{
+              text: $fallback,
+              attachments: [
+                {
+                  color: $color,
+                  blocks: (
+                    [
+                      {
+                        type: "header",
+                        text: {
+                          type: "plain_text",
+                          text: $title,
+                          emoji: true
+                        }
+                      },
+                      {
+                        type: "section",
+                        fields: [
+                          { type: "mrkdwn", text: "*Mode:*\n\($mode)" },
+                          { type: "mrkdwn", text: "*Tests:*\n\($tests)" },
+                          { type: "mrkdwn", text: "*Ref:*\n\($ref)" },
+                          { type: "mrkdwn", text: "*Commit:*\n`\($sha)`" },
+                          { type: "mrkdwn", text: "*Trigger:*\n\($trigger)" },
+                          { type: "mrkdwn", text: "*Actor:*\n\($actor)" }
+                        ]
+                      }
+                    ]
+                    + (
+                      if $diff_base != "" then
+                        [
+                          {
+                            type: "context",
+                            elements: [
+                              { type: "mrkdwn", text: "*Diff base:* `\($diff_base)`" }
+                            ]
+                          }
+                        ]
+                      else [] end
+                    )
+                    + [
+                      {
+                        type: "actions",
+                        elements: (
+                          [
+                            {
+                              type: "button",
+                              text: { type: "plain_text", text: "Open GitHub Actions" },
+                              url: $run_url
+                            }
+                          ]
+                          + (
+                            if $artifact_url != "" then
+                              [
+                                {
+                                  type: "button",
+                                  text: { type: "plain_text", text: "Open E2E Report" },
+                                  url: $artifact_url
+                                }
+                              ]
+                            else [] end
+                          )
+                        )
+                      }
+                    ]
+                    + (
+                      if $review_excerpt != "" then
+                        [
+                          { type: "divider" },
+                          {
+                            type: "section",
+                            text: {
+                              type: "mrkdwn",
+                              text: "*AI review*\n\($review_excerpt)"
+                            }
+                          }
+                        ]
+                      else [] end
+                    )
+                    + (
+                      if $artifact_url != "" then
+                        [
+                          {
+                            type: "context",
+                            elements: [
+                              { type: "mrkdwn", text: "Report artifact: <\($artifact_url)|\($artifact_name)>" }
+                            ]
+                          }
+                        ]
+                      else [] end
+                    )
+                  )
+                }
+              ]
+            }' \
             > slack-payload.json
           curl --fail --silent --show-error \
             -X POST \
