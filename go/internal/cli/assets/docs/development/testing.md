@@ -83,6 +83,27 @@ Pull requests from within the repository that modify files under `.github/` auto
 
 ---
 
+## Swift E2E Tests
+
+The `swift/WendyE2ETests` package runs the real `wendy` binary against isolated
+sandboxes, records every shell command, and writes artifacts for local
+debugging, CI, and AI review. It is separate from the `.github/ci-tests/`
+integration tests described above.
+
+Quick start from `swift/`:
+
+```sh
+make e2e-test      # build the CLI, run local E2E tests, write attempts
+make e2e-analyze   # aggregate attempts, run AI review, render the report
+make e2e-reference # render HTML reference documentation from test prose
+```
+
+See [`swift/WendyE2ETests/README.md`](../../swift/WendyE2ETests/README.md) for
+the full contributor reference, including sandbox isolation modes, artifact
+layouts, CI triggering, and test-writing guidance.
+
+---
+
 ## Automated Integration Test Coverage (CI)
 
 When a PR is merged into `main`, the workflow `.github/workflows/integration-test-coverage.yml` automatically checks whether the merged changes introduced new CLI features, device capabilities, entitlements, or deployment modes that are not yet covered by an integration test.
