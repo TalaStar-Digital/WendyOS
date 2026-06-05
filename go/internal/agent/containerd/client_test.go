@@ -58,6 +58,30 @@ func TestCreateContainerProgressMappingUsesUnpackingPhaseForStart(t *testing.T) 
 	}
 }
 
+func TestCreateContainerProgressMappingUsesUnpackingPhaseForLayerStart(t *testing.T) {
+	progress := UnpackProgress{
+		Phase:       "layer-start",
+		LayerIndex:  1,
+		TotalLayers: 4,
+		LayerSize:   2048,
+	}
+
+	got := toCreateContainerProgress(progress)
+
+	if got.GetPhase() != agentpb.CreateContainerProgress_UNPACKING {
+		t.Fatalf("phase = %v; want UNPACKING", got.GetPhase())
+	}
+	if got.GetLayerIndex() != 1 {
+		t.Fatalf("layer index = %d; want 1", got.GetLayerIndex())
+	}
+	if got.GetTotalLayers() != 4 {
+		t.Fatalf("total layers = %d; want 4", got.GetTotalLayers())
+	}
+	if got.GetLayerSize() != 2048 {
+		t.Fatalf("layer size = %d; want 2048", got.GetLayerSize())
+	}
+}
+
 func TestBuildContainerBaseEnvIncludesWendyHostname(t *testing.T) {
 	old := deviceHostnameWithSuffix
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })

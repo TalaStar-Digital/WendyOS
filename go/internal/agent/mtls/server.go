@@ -8,12 +8,19 @@ import (
 	"time"
 
 	"github.com/wendylabsinc/wendy/go/internal/shared/certs"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 )
 
-func NewTLSConfig(certPEM, chainPEM, keyPEM string) (*tls.Config, error) {
+// NewTLSConfig creates a TLS config from PEM-encoded certificate, chain, and private key.
+// The certificate and chain are concatenated to form the full server certificate chain.
+// Client certificates are required and verified against the chain as a CA pool.
+// ML-DSA (post-quantum) signed certificates are handled via a custom VerifyPeerCertificate
+// callback because Go's crypto/x509 does not natively support ML-DSA signature verification.
+// logger may be nil; when provided, rejected client certificates are logged at WARN level.
+func NewTLSConfig(certPEM, chainPEM, keyPEM string, logger *zap.Logger) (*tls.Config, error) {
 	if chainPEM == "" {
 		return nil, fmt.Errorf("CA chain PEM is required to verify client certificates; device may need to be re-provisioned")
 	}
@@ -56,12 +63,15 @@ func NewTLSConfig(certPEM, chainPEM, keyPEM string) (*tls.Config, error) {
 		// performs the actual ML-DSA-aware chain verification instead.
 		ClientCAs:             nil,
 		MinVersion:            tls.VersionTLS12,
-		VerifyPeerCertificate: buildVerifyPeerCertificate(caPool, caCerts),
+		VerifyPeerCertificate: buildVerifyPeerCertificate(caPool, caCerts, logger),
 	}, nil
 }
 
-func NewServer(certPEM, chainPEM, keyPEM string, extraOpts ...grpc.ServerOption) (*grpc.Server, error) {
-	tlsConfig, err := NewTLSConfig(certPEM, chainPEM, keyPEM)
+// NewServer creates a gRPC server with mTLS credentials.
+// Additional gRPC server options can be passed and will be applied alongside the TLS credentials.
+// logger may be nil; when provided, rejected client certificates are logged at WARN level.
+func NewServer(certPEM, chainPEM, keyPEM string, logger *zap.Logger, extraOpts ...grpc.ServerOption) (*grpc.Server, error) {
+	tlsConfig, err := NewTLSConfig(certPEM, chainPEM, keyPEM, logger)
 	if err != nil {
 		return nil, fmt.Errorf("creating TLS config: %w", err)
 	}

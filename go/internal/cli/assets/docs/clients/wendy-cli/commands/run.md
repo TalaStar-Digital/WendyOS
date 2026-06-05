@@ -7,6 +7,22 @@ Runs your app on a Wendy-enabled device:
 5. [Starts the app](./device/apps/start.md)
 6. [Attaches the logs](./device/logs.md) if needed (when `--detach` is not provided)
 
+## Docker build-args
+
+When building a Dockerfile project, `wendy run` passes the target device's hardware parameters as `--build-arg` values so the Dockerfile can branch on platform, GPU vendor, or CUDA version. Declare any arg you want to use with `ARG`:
+
+| Build-arg | Values | Notes |
+|---|---|---|
+| `WENDY_PLATFORM` | `nvidia-jetson` \| `generic` | Platform tier derived from the device type |
+| `WENDY_DEBUG` | `true` \| `false` | Set when `--debug` is passed |
+| `WENDY_DEVICE_TYPE` | e.g. `jetson-agx-orin` | Raw device type; absent when unknown |
+| `WENDY_HAS_GPU` | `true` \| `false` | Absent on older agents |
+| `WENDY_GPU_VENDOR` | e.g. `nvidia`, `qualcomm` | Absent when no GPU is reported |
+| `WENDY_JETPACK_VERSION` | e.g. `6.0` | Jetson only |
+| `WENDY_CUDA_VERSION` | e.g. `12.6` | Jetson only |
+
+`WENDY_PLATFORM` and `WENDY_DEBUG` are always set. The remaining args are only injected when the agent reports them, so Dockerfiles can define their own `ARG` defaults for devices that predate the field.
+
 ## Multi-service projects (`wendy.json` with `services`)
 
 When `wendy.json` contains a `services` map, `wendy run` automatically switches to the multi-service path:

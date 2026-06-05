@@ -1,3 +1,11 @@
+ifeq ($(OS),Windows_NT)
+HOST_ENV ?= windows
+UNAME_S :=
+else
+HOST_ENV ?= unix
+UNAME_S := $(shell uname -s 2>/dev/null)
+endif
+
 .PHONY: build build-cli build-agent test vet proto clean fmt lint install \
        build-all \
        build-agent-linux-amd64 build-agent-linux-arm64 \
@@ -11,7 +19,7 @@
 VERSION ?= dev
 MSI_VERSION ?= 0.0.1
 LDFLAGS := -s -w -X github.com/wendylabsinc/wendy/go/internal/shared/version.Version=$(VERSION)
-ifeq ($(shell uname -s),Darwin)
+ifeq ($(UNAME_S),Darwin)
 # Go/cgo adds -lobjc for each Objective-C package. The native CLI links
 # multiple CoreBluetooth-backed packages, and recent Apple linkers warn about
 # the duplicate even though it is harmless.
@@ -24,10 +32,16 @@ build: build-cli build-agent
 
 # Build the wendy CLI
 build-cli:
+ifeq ($(HOST_ENV),windows)
+	powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "New-Item -ItemType Directory -Force -Path bin | Out-Null; go build -o bin/wendy.exe ./cmd/wendy; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }"
+else
+	mkdir -p bin
 	go build -o bin/wendy ./cmd/wendy
+endif
 
 # Build the wendy-agent
 build-agent:
+	mkdir -p bin
 	go build -o bin/wendy-agent ./cmd/wendy-agent
 
 # Cross-compile all targets

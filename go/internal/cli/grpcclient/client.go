@@ -22,8 +22,13 @@ import (
 )
 
 const (
-	grpcInitialStreamWindow = 8 * 1024 * 1024
-	grpcInitialConnWindow   = 16 * 1024 * 1024
+	// Stream/connection flow-control windows are intentionally small so that
+	// gRPC backpressure reaches the agent's Send() within ~250ms when the
+	// consumer falls behind, engaging the camera pipeline's agent-side
+	// frame-dropping. The floor (~128KB) keeps a single 1080p IDR (50–150KB)
+	// from stalling on the window.
+	grpcInitialStreamWindow = 256 * 1024
+	grpcInitialConnWindow   = 512 * 1024
 	grpcReadBufferSize      = 256 * 1024
 	grpcWriteBufferSize     = 256 * 1024
 	grpcKeepaliveTime       = 30 * time.Second

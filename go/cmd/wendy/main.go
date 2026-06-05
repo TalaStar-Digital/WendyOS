@@ -139,7 +139,14 @@ func formatError(err error) error {
 		strings.Contains(prefix, "creating enrollment token") ||
 		strings.Contains(prefix, "connecting to cloud")
 
+	isTLSError := strings.Contains(msg, "tls:") ||
+		strings.Contains(msg, "bad certificate") ||
+		strings.Contains(msg, "authentication handshake failed") ||
+		strings.Contains(msg, "certificate required")
+
 	switch {
+	case strings.Contains(msg, "code = Unavailable") && isTLSError && !isPKICoreCall && !isCloudCall:
+		return fmt.Errorf("%sTLS handshake rejected by device (possible clock skew or cert mismatch).\n  Check the device clock: ssh wendy@<host> 'timedatectl status'\n  For full TLS details rerun with WENDY_TLS_DEBUG=1", prefix)
 	case strings.Contains(msg, "code = Unavailable") && strings.Contains(msg, "connection refused"):
 		if isPKICoreCall {
 			return fmt.Errorf("%sCould not connect to local pki-core. Check that the gRPC endpoint is reachable from this machine.", prefix)

@@ -236,6 +236,15 @@ func TestStreamZipImageEntry(t *testing.T) {
 		r.Close()
 	})
 
+	t.Run("reads sdimg entry", func(t *testing.T) {
+		zipPath := makeTestZip(t, "wendyos.sdimg", content)
+		r, _, err := streamZipImageEntry(zipPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		r.Close()
+	})
+
 	t.Run("no image entry returns error", func(t *testing.T) {
 		zipPath := makeTestZip(t, "readme.txt", content)
 		_, _, err := streamZipImageEntry(zipPath)

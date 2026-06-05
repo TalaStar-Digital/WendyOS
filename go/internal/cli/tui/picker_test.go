@@ -80,6 +80,71 @@ func TestPickerModel_ShowsDescriptionColumnWhenPresent(t *testing.T) {
 	}
 }
 
+func TestPickerModel_CustomColumns(t *testing.T) {
+	m := NewPickerWithTitleAndColumns("Select a model", []PickerColumn{
+		{
+			Title:    "model",
+			MinWidth: 16,
+			Required: true,
+			Value: func(item PickerItem) string {
+				return item.Name
+			},
+		},
+		{
+			Title: "size",
+			Value: func(item PickerItem) string {
+				return item.Size
+			},
+		},
+		{
+			Title: "parameters",
+			Value: func(item PickerItem) string {
+				return item.Parameters
+			},
+		},
+		{
+			Title: "comments",
+			Value: func(item PickerItem) string {
+				return item.Comments
+			},
+		},
+	})
+
+	updated, _ := m.Update(PickerAddMsg{Items: []PickerItem{
+		{
+			Name:       "gemma4:e2b",
+			Size:       "edge",
+			Parameters: "E2B",
+			Comments:   "default for small devices",
+			Value:      "gemma4:e2b",
+		},
+	}})
+	pm := updated.(PickerModel)
+
+	view := pm.View()
+	for _, want := range []string{"model", "size", "parameters", "comments", "gemma4:e2b", "default for small devices"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected picker view to contain %q, got %q", want, view)
+		}
+	}
+}
+
+func TestPickerModel_CustomColumnsNilFallsBackToDefaultPicker(t *testing.T) {
+	m := NewPickerWithTitleAndColumns("Select", nil)
+
+	updated, _ := m.Update(PickerAddMsg{Items: []PickerItem{
+		{Name: "alpha", Description: "only show populated optional columns", Value: "alpha"},
+	}})
+	pm := updated.(PickerModel)
+
+	if hasColumn(pm.table.Columns(), "Type") {
+		t.Fatal("nil custom columns should not force the fixed default column layout")
+	}
+	if !hasColumn(pm.table.Columns(), "Description") {
+		t.Fatal("nil custom columns should preserve the default picker dynamic column behavior")
+	}
+}
+
 func TestPickerTableData_KeepsFullColumnContentForScrolling(t *testing.T) {
 	items := []PickerItem{{
 		Name:        "wendyos-sunny-daisy",
@@ -276,6 +341,37 @@ func TestPickerModel_ShowsUSBInTypeColumn(t *testing.T) {
 	view := pm.View()
 	if !strings.Contains(view, "USB, LAN") {
 		t.Fatalf("expected picker view to contain %q, got %q", "USB, LAN", view)
+	}
+}
+
+func TestPickerModel_ShowsSelectedHintAtBottom(t *testing.T) {
+	dockerHint := "Hint: Use Docker Desktop for local container or Compose runs when you do not need WendyOS hardware."
+	localHint := "Hint: Use Local Machine for native Swift, Go, or Python apps that should run directly on this computer."
+	m := NewPicker()
+
+	updated, _ := m.Update(PickerAddMsg{Items: []PickerItem{
+		{Name: "Docker Desktop", Type: "Docker Desktop", Hint: dockerHint, Value: "docker"},
+		{Name: "Local Machine", Type: "This Device", Hint: localHint, Value: "local"},
+	}})
+	pm := updated.(PickerModel)
+
+	plain := ansi.Strip(pm.View())
+	if got := lastNonEmptyLine(plain); got != dockerHint {
+		t.Fatalf("footer hint = %q, want %q", got, dockerHint)
+	}
+	if strings.Contains(plain, localHint) {
+		t.Fatalf("unexpected non-selected hint %q in view %q", localHint, plain)
+	}
+
+	updated, _ = pm.Update(tea.KeyMsg{Type: tea.KeyDown})
+	pm = updated.(PickerModel)
+
+	plain = ansi.Strip(pm.View())
+	if got := lastNonEmptyLine(plain); got != localHint {
+		t.Fatalf("footer hint after moving cursor = %q, want %q", got, localHint)
+	}
+	if strings.Contains(plain, dockerHint) {
+		t.Fatalf("unexpected previous hint %q in view %q", dockerHint, plain)
 	}
 }
 
@@ -477,4 +573,12 @@ func columnWidth(cols []bubbleTable.Column, title string) int {
 		}
 	}
 	return 0
+}
+
+func lastNonEmptyLine(view string) string {
+	lines := strings.Split(strings.TrimSpace(view), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(lines[len(lines)-1])
 }

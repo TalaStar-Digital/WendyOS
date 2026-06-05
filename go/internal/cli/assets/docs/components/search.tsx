@@ -3,6 +3,7 @@
 import { create } from '@orama/orama';
 import { useDocsSearch } from 'fumadocs-core/search/client';
 import { useI18n } from 'fumadocs-ui/contexts/i18n';
+import { basePath } from '@/lib/shared';
 import {
   SearchDialog,
   SearchDialogClose,
@@ -28,6 +29,10 @@ export default function DefaultSearchDialog(props: SharedProps) {
     type: 'static',
     initOrama,
     locale,
+    // The static client fetches the exported index from `/api/search` by
+    // default, which omits the deploy basePath (e.g. `/latest`, `/release-x`,
+    // `/branch-main-<sha>`) and 404s on every non-root deploy. Prefix it.
+    from: `${basePath}/api/search`,
   });
 
   return (

@@ -75,7 +75,7 @@ bitbake edgeos-vm-image
 - **Machines**: `raspberrypi4-64-edgeos`, `raspberrypi5-edgeos`
 - **Image**: `edgeos-rpi-image`
 - **Features**: I2C, SPI, serial console enabled
-- **Output**: `.wic.bz2`, `.wic.bmap`
+- **Output**: `.wic.bz2`, `.wic.bmap`, `.sdimg` (Mender A/B)
 
 ```bash
 bitbake edgeos-rpi-image

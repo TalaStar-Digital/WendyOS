@@ -71,9 +71,14 @@ type githubRelease struct {
 }
 
 func checkLatestRelease() (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newGitHubAPIClient(10 * time.Second)
 
-	resp, err := client.Get(githubReleasesURL)
+	req, err := newGitHubAPIGetRequest(githubReleasesURL)
+	if err != nil {
+		return "", fmt.Errorf("creating GitHub API request: %w", err)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetching releases: %w", err)
 	}

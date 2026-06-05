@@ -3,7 +3,14 @@ name: Security
 on:
   pull_request:
     branches: [main]
-    paths: ['go/**', 'Proto/**', 'go.mod', 'go.sum']
+    # The docs site lives under go/internal/cli/assets/docs but is a Next.js app,
+    # not Go. Exclude it so docs-only PRs don't run the Go vuln/security scans.
+    paths:
+      - 'go/**'
+      - '!go/internal/cli/assets/docs/**'
+      - 'Proto/**'
+      - 'go.mod'
+      - 'go.sum'
   schedule:
     - cron: '0 6 * * *'
   workflow_dispatch:
@@ -17,10 +24,10 @@ jobs:
     name: govulncheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum

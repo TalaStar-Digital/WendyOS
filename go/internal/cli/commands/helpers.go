@@ -569,6 +569,11 @@ func connectFromSelectedDevice(target *SelectedDevice, cfg resolveConfig) (*grpc
 // falling back to plaintext if no certs are available or all mTLS attempts fail.
 // It tries each stored certificate in order so that both production and local
 // pki-core certs are attempted.
+//
+// If every mTLS probe fails with a TLS handshake error, the plaintext fallback
+// is skipped and the TLS error is returned with a diagnostic hint. This prevents
+// the misleading "connection refused" from the plaintext port masking the real
+// cause (e.g. clock skew causing "certificate not yet valid").
 func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.AgentConnection, error) {
 	tlsDebug := os.Getenv("WENDY_TLS_DEBUG") != ""
 	allCerts := loadAllCLICerts()
@@ -579,7 +584,21 @@ func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.
 			// point at the mTLS port), then fall back to port+1 (the normal case
 			// where discovery returns the plaintext port and mTLS is port+1).
 			mtlsAddrs := []string{plaintextAddr, hostPort(host, port+1)}
-			for _, mtlsAddr := range mtlsAddrs {
+			// Two-bucket tracking per address index:
+			//
+			//   plaintextAddrCertReject — plaintextAddr itself was a TLS endpoint that
+			//   rejected our cert (tunnel/mTLS-only-discovery case where index 0 IS
+			//   already the mTLS port). isCertRejectionError only fires on server-sent
+			//   TLS alerts, not on "server sent non-TLS preface" errors from plaintext ports.
+			//
+			//   mtlsPortCertFails / mtlsPortNonCertFails — cert-rejection vs. other
+			//   failures at port+1 (the dedicated mTLS port in the normal case).
+			//
+			// Suppress the plaintext fallback if plaintextAddr itself was rejected, OR if
+			// all port+1 probe failures were cert rejections (none were just "unreachable").
+			var plaintextAddrCertReject bool
+			var mtlsPortCertFails, mtlsPortNonCertFails int
+			for addrIdx, mtlsAddr := range mtlsAddrs {
 				for i := range allCerts {
 					conn, tlsErr := grpcclient.ConnectWithTLS(ctx, mtlsAddr, &allCerts[i])
 					if tlsErr != nil {
@@ -601,11 +620,44 @@ func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.
 						fmt.Fprintf(os.Stderr, "[tls-debug] GetAgentVersion(%s) error: %v\n", mtlsAddr, probeErr)
 					}
 					conn.Close()
+					if addrIdx == 0 {
+						if isCertRejectionError(probeErr) {
+							plaintextAddrCertReject = true
+						}
+					} else {
+						if isCertRejectionError(probeErr) {
+							mtlsPortCertFails++
+						} else {
+							mtlsPortNonCertFails++
+						}
+					}
 				}
+			}
+			if plaintextAddrCertReject || (mtlsPortCertFails > 0 && mtlsPortNonCertFails == 0) {
+				return nil, fmt.Errorf("TLS handshake rejected by device (possible clock skew or cert mismatch).\n  Check the device clock: ssh wendy@<host> 'timedatectl status'\n  For full TLS details rerun with WENDY_TLS_DEBUG=1")
 			}
 		}
 	}
 	return grpcclient.Connect(ctx, plaintextAddr)
+}
+
+// isCertRejectionError reports whether a gRPC probe error is a server-sent TLS
+// alert rejecting the client certificate, as distinct from the client failing to
+// complete the handshake because the server isn't a TLS endpoint at all.
+// Matches "remote error: tls:" (server sent an alert) and other cert-specific
+// signals; deliberately excludes "tls: first record does not look like a TLS
+// handshake" (plaintext server probed with TLS) and plain transport errors.
+func isCertRejectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "tls: first record does not look like a TLS handshake") {
+		return false
+	}
+	return strings.Contains(msg, "remote error: tls:") ||
+		strings.Contains(msg, "authentication handshake failed") ||
+		strings.Contains(msg, "certificate required")
 }
 
 // provisionedAgentAdvertisedMTLS takes a short pre-connection LAN discovery
@@ -1322,6 +1374,7 @@ func pickDevice(ctx context.Context, excludeProviders map[string]bool, excludeBl
 								OSVersion:    devices[i].OSVersion,
 								DedupKey:     devices[i].DisplayName,
 								SortKey:      externalProviderSortKey(prov.Key(), devices[i].DisplayName),
+								Hint:         externalProviderPickerHint(prov.Key()),
 								Value:        &pickerEntry{externalDevice: &devices[i], provider: prov},
 							})
 						}

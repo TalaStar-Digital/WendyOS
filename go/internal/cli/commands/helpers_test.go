@@ -6,11 +6,13 @@ import (
 	"net"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
+	"github.com/wendylabsinc/wendy/go/internal/cli/providers"
 	"github.com/wendylabsinc/wendy/go/internal/shared/config"
 	"github.com/wendylabsinc/wendy/go/internal/shared/models"
 	"github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
@@ -73,6 +75,45 @@ func TestLANAgentAddressesPrefersIPAddress(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("lanAgentAddresses() = %v, want %v", got, want)
+	}
+}
+
+func TestExternalProviderPickerHint(t *testing.T) {
+	tests := []struct {
+		name        string
+		providerKey string
+		want        string
+	}{
+		{
+			name:        "docker",
+			providerKey: providers.ProviderKeyDocker,
+			want:        "Docker Desktop",
+		},
+		{
+			name:        "local",
+			providerKey: providers.ProviderKeyLocal,
+			want:        "Local Machine",
+		},
+		{
+			name:        "other",
+			providerKey: "wendy-lite",
+			want:        "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := externalProviderPickerHint(tt.providerKey)
+			if tt.want == "" {
+				if got != "" {
+					t.Fatalf("hint = %q, want empty", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("hint = %q, want it to mention %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -179,6 +220,22 @@ func TestLANAgentAddressesFallsBackToDefaultPort(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("lanAgentAddresses() = %v, want %v", got, want)
+	}
+}
+
+func TestIsCertRejectionErrorIgnoresPlaintextTLSProbe(t *testing.T) {
+	err := errors.New(`rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: tls: first record does not look like a TLS handshake"`)
+
+	if isCertRejectionError(err) {
+		t.Fatal("isCertRejectionError() = true, want false for plaintext TLS probe")
+	}
+}
+
+func TestIsCertRejectionErrorDetectsTLSAlert(t *testing.T) {
+	err := errors.New("rpc error: code = Unavailable desc = remote error: tls: bad certificate")
+
+	if !isCertRejectionError(err) {
+		t.Fatal("isCertRejectionError() = false, want true for TLS alert")
 	}
 }
 

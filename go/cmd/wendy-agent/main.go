@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/asn1"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
@@ -191,7 +194,7 @@ func main() {
 
 	// Returns nil if the PEM data is invalid, which causes the registry to stay HTTP.
 	registryTLSConfig := func(certPEM, chainPEM, keyPEM string) *tls.Config {
-		tlsConfig, err := mtls.NewTLSConfig(certPEM, chainPEM, keyPEM)
+		tlsConfig, err := mtls.NewTLSConfig(certPEM, chainPEM, keyPEM, nil)
 		if err != nil {
 			logger.Error("Failed to build registry TLS config", zap.Error(err))
 			return nil
@@ -366,7 +369,12 @@ func main() {
 			return
 		}
 
-		srv, err := mtls.NewServer(certPEM, chainPEM, keyPEM,
+		// Warn if the device clock appears to predate the provisioning cert.
+		// This almost always means an unsynchronized RTC, which causes every
+		// client cert to appear "not yet valid" from the device's perspective.
+		warnClockSkewIfNeeded(logger, certPEM)
+
+		srv, err := mtls.NewServer(certPEM, chainPEM, keyPEM, logger,
 			grpc.UnaryInterceptor(interceptor.UnaryErrorInterceptor(logger)),
 			grpc.StreamInterceptor(interceptor.StreamErrorInterceptor(logger)),
 		)
@@ -406,7 +414,7 @@ func main() {
 
 	// Only called after provisioning so the cert is available.
 	startBLEPeripheral := func(certPEM, chainPEM, keyPEM string) {
-		tlsConfig, err := mtls.NewTLSConfig(certPEM, chainPEM, keyPEM)
+		tlsConfig, err := mtls.NewTLSConfig(certPEM, chainPEM, keyPEM, logger)
 		if err != nil {
 			logger.Error("Failed to build BLE TLS config", zap.Error(err))
 			return
@@ -570,6 +578,41 @@ func main() {
 	wg.Wait()
 
 	logger.Info("wendy-agent stopped")
+}
+
+// warnClockSkewIfNeeded parses the device's own provisioning cert and logs a
+// warning if the system clock predates the cert's NotBefore. A clock that is
+// behind the cert's issuance time will reject every legitimate client cert
+// ("not yet valid"), making the mTLS port effectively unusable — but silently.
+func warnClockSkewIfNeeded(logger *zap.Logger, certPEM string) {
+	if certPEM == "" {
+		return
+	}
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return
+	}
+	// ML-DSA certs from pki-core have trailing ASN.1 bytes that cause
+	// x509.ParseCertificate to fail. Strip them with the same fallback
+	// used elsewhere in this repo (e.g. internal/agent/mtls/mldsa_verify.go).
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		var raw asn1.RawValue
+		if _, asn1Err := asn1.Unmarshal(block.Bytes, &raw); asn1Err == nil {
+			cert, err = x509.ParseCertificate(raw.FullBytes)
+		}
+	}
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	if now.Before(cert.NotBefore) {
+		logger.Warn("Device clock appears to predate the provisioning certificate — mTLS client cert verification will fail until NTP synchronizes the clock",
+			zap.Time("deviceClock", now),
+			zap.Time("certNotBefore", cert.NotBefore),
+			zap.Duration("clockBehindBy", cert.NotBefore.Sub(now)),
+		)
+	}
 }
 
 func brokerURLForCloudHost(cloudHost string) string {

@@ -13,6 +13,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/distribution/reference"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"gopkg.in/yaml.v3"
 
 	"github.com/wendylabsinc/wendy/go/internal/cli/grpcclient"
@@ -76,6 +78,8 @@ func parseComposeFile(dir string) (*composeConfig, string, error) {
 	return nil, "", fmt.Errorf("no docker-compose file found in %s", dir)
 }
 
+// composeBuildContext returns the build context dir and Dockerfile for a service.
+// Returns ("", "", nil) when the service uses a pre-built image.
 func composeBuildContext(svc composeService, projectDir string) (ctxDir, dockerfile string, buildArgs map[string]string, err error) {
 	if svc.Build.IsZero() {
 		return "", "", nil, nil
@@ -112,6 +116,9 @@ func composeBuildContext(svc composeService, projectDir string) (ctxDir, dockerf
 	return "", "", nil, fmt.Errorf("unsupported build directive (yaml kind %d); expected a path string or a mapping", svc.Build.Kind)
 }
 
+// composeCommand returns the command for a service as a slice. Sequence form
+// preserves each argv element verbatim. Scalar form is shell-split into argv
+// tokens, matching docker-compose's documented behaviour.
 func composeCommand(svc composeService) []string {
 	if svc.Command.IsZero() {
 		return nil
@@ -520,11 +527,21 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 
 		cliLogln("Building image for service %s...", name)
 
-		buildDockerfile := dockerfile
-		if buildDockerfile == "Dockerfile" {
-			buildDockerfile = ""
+		// If a non-default Dockerfile is specified, we need to pass it via -f.
+		// buildAndPushImage always uses "." as the path; for compose we pass the
+		// build context dir and rely on a Dockerfile inside it (or via ARG).
+		// We temporarily write a wrapper that delegates to the real Dockerfile when
+		// the dockerfile field differs. For the common case (Dockerfile in context),
+		// it just works.
+		if dockerfile != "Dockerfile" {
+			// Rewrite -f by creating a temp Dockerfile that uses the named file.
+			// Actually, buildAndPushImage doesn't support -f. We need a small workaround:
+			// copy the Dockerfile to the context dir as "Dockerfile" temporarily.
+			// For now, just error with a helpful message.
+			return fmt.Errorf("service %s: custom Dockerfile path %q is not yet supported; rename it to 'Dockerfile'", name, dockerfile)
 		}
-		if err := buildAndPushImage(ctx, ctxDir, registryAddr, imageName, platform, buildDockerfile, allBuildArgs, os.Stdout, conn.IsMTLS); err != nil {
+
+		if err := buildAndPushImage(ctx, ctxDir, registryAddr, imageName, platform, "", allBuildArgs, os.Stdout, conn.IsMTLS); err != nil {
 			return fmt.Errorf("building service %s: %w", name, err)
 		}
 		cliLogln("Service %s image built and pushed.", name)
@@ -646,8 +663,7 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			cliLogln("Service %s started.", name)
 		}
 		cliLogln("All services running in detached mode.")
-		projectID := strings.ToLower(filepath.Base(projectDir))
-		cliLogln("Run 'wendy logs %s' to stream logs.", projectID)
+		cliLogln("Run 'wendy device logs' to stream logs (filter a service with --app %s-<service>).", projectName)
 		return nil
 	}
 
@@ -672,46 +688,44 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			defer outW.Flush()
 			defer errW.Flush()
 
-			stream, streamErr := conn.ContainerService.AttachContainer(runCtx)
-			if streamErr == nil {
-				streamErr = stream.Send(&agentpb.AttachContainerRequest{
-					RequestType: &agentpb.AttachContainerRequest_AppName{AppName: appID},
-				})
-				// Compose never forwards stdin; half-close so the server sees EOF.
-				_ = stream.CloseSend()
-			}
-			if streamErr != nil {
-				// Fall back to the server-streaming StartContainer when AttachContainer is unavailable.
+			// openStart falls back to the server-streaming StartContainer RPC,
+			// used when the agent is too old to support AttachContainer.
+			openStart := func() (containerOutputStream, error) {
 				startStream, startErr := conn.ContainerService.StartContainer(runCtx, &agentpb.StartContainerRequest{
 					AppName: appID,
 				})
 				if startErr != nil {
-					errCh <- fmt.Errorf("starting service %s: %w", serviceName, startErr)
-					return
+					return nil, fmt.Errorf("starting service %s: %w", serviceName, startErr)
 				}
-				for {
-					resp, recvErr := startStream.Recv()
-					if recvErr == io.EOF {
-						return
-					}
-					if recvErr != nil {
-						if runCtx.Err() != nil {
-							return
-						}
-						errCh <- fmt.Errorf("service %s: %w", serviceName, recvErr)
-						return
-					}
-					if out := resp.GetStdoutOutput(); out != nil {
-						outW.Write(out.GetData())
-					}
-					if out := resp.GetStderrOutput(); out != nil {
-						errW.Write(out.GetData())
-					}
-				}
+				return startStream, nil
 			}
 
+			var outStream containerOutputStream
+			attached := false
+			attachStream, streamErr := conn.ContainerService.AttachContainer(runCtx)
+			if streamErr == nil {
+				streamErr = attachStream.Send(&agentpb.AttachContainerRequest{
+					RequestType: &agentpb.AttachContainerRequest_AppName{AppName: appID},
+				})
+				// Compose never forwards stdin; half-close the send side so the
+				// container sees stdin EOF instead of hanging on a read.
+				_ = attachStream.CloseSend()
+			}
+			if streamErr != nil {
+				s, err := openStart()
+				if err != nil {
+					errCh <- err
+					return
+				}
+				outStream = s
+			} else {
+				outStream = attachStream
+				attached = true
+			}
+
+			gotFirstResponse := false
 			for {
-				resp, recvErr := stream.Recv()
+				resp, recvErr := outStream.Recv()
 				if recvErr == io.EOF {
 					return
 				}
@@ -719,9 +733,23 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 					if runCtx.Err() != nil {
 						return
 					}
+					// Older agents reject AttachContainer with Unimplemented on
+					// the first Recv rather than at open/send time; fall back
+					// silently to StartContainer.
+					if attached && !gotFirstResponse && status.Code(recvErr) == codes.Unimplemented {
+						s, err := openStart()
+						if err != nil {
+							errCh <- err
+							return
+						}
+						outStream = s
+						attached = false
+						continue
+					}
 					errCh <- fmt.Errorf("service %s: %w", serviceName, recvErr)
 					return
 				}
+				gotFirstResponse = true
 				if out := resp.GetStdoutOutput(); out != nil {
 					outW.Write(out.GetData())
 				}

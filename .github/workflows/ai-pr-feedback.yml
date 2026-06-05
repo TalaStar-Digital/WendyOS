@@ -16,15 +16,16 @@ name: AI PR Feedback Loop
 #   in GitHub token usage logs without disrupting implement.yml operations.
 #
 # CLAUDE CODE INVOCATION:
-#   --allowedTools "Edit,MultiEdit"  EXCLUSIVE allowlist: Claude Code CLI blocks
-#     ALL tools not explicitly listed here. Reconnaissance tools (Bash, Read,
-#     LS, Glob, SearchFiles, etc.), web access (WebFetch, WebSearch), and MCP
-#     tools are ALL blocked by this allowlist alone. Claude cannot enumerate
-#     files, read arbitrary paths, execute shell commands, or exfiltrate data.
-#   --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,
-#     LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,
-#     AskFollowupQuestion,mcp__*"  Belt-and-suspenders: explicit denial in
-#     addition to the allowlist, for defense-in-depth.
+#   --allowedTools "Edit,MultiEdit,Read,LS,Glob,ListFiles,SearchFiles"
+#     EXCLUSIVE allowlist: Claude Code CLI blocks ALL tools not listed here.
+#     Read/LS/Glob/ListFiles/SearchFiles are read-only and cannot make network
+#     requests. Bash is intentionally excluded: even with env -i isolation and
+#     no credentials present, Bash grants arbitrary code execution and network
+#     egress on the runner; any data read can still be echoed into logs/PR
+#     output, so secret handling relies on scrubbing and file-deletion below.
+#   --disallowedTools "Bash,Write,WebFetch,WebSearch,computer_use,
+#     TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*"
+#     Belt-and-suspenders deny list in addition to the allowlist.
 #   env -i isolates environment (no GITHUB_TOKEN, no runner tokens)
 #   ANTHROPIC_API_KEY is delivered to claude via a 600-mode temp file (not as a
 #     cmdline argument). The key is read inside a bash subshell via $(< file) —
@@ -77,11 +78,6 @@ on:
       - Docs Review
       - Integration Test Review
     types: [completed]
-    # Scope to ai/* branches only: narrows the confused-deputy surface by ensuring
-    # this workflow only fires when CI ran on an AI-managed branch, not on arbitrary
-    # branches that happen to trigger the listed workflows.
-    branches:
-      - 'ai/**'
 
 # CONCURRENCY: cancel-in-progress: true ensures at most one run is active per PR
 # at any time. When multiple CI workflows fail on the same commit (e.g. Build,
@@ -197,6 +193,7 @@ jobs:
           ACTOR_COMMENT: ${{ github.event.comment.user.login }}
           ACTOR_ASSOC_COMMENT: ${{ github.event.comment.author_association }}
           COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
           PR_NUMBER=""
           ACTOR=""
@@ -244,6 +241,12 @@ jobs:
                 --jq '.pull_request // empty' 2>/dev/null || true)
               if [ -z "$IS_PR" ]; then
                 echo "Comment is on an issue, not a PR — skipping"
+                echo "pr_number=" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              # Only trigger on /implement, /iterate, or @claude mentions.
+              if ! printf '%s' "${COMMENT_BODY:0:500}" | grep -qE '(/implement|/iterate|@claude)'; then
+                echo "Comment does not contain a trigger keyword — skipping"
                 echo "pr_number=" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
@@ -330,10 +333,22 @@ jobs:
           # Checked here (gate, no AI, no write tokens) rather than in respond to limit
           # the blast radius to the minimal gate job (contents:read is sufficient for
           # the rulesets API; administration:read is not a valid GITHUB_TOKEN scope).
-          MATCHING_RULESETS=$(gh api --paginate "repos/$REPO/rulesets" \
-            2>/dev/null \
-            | jq --slurp '(add // []) | [.[] | select(.enforcement == "active") | select(any((.conditions.ref_name.include // [])[]?; . == "~ALL" or startswith("refs/heads/ai/") or . == "refs/heads/**" or . == "refs/heads/*"))] | length' \
-            || echo '0')
+          # The list endpoint omits conditions, so each ruleset's details must be fetched
+          # individually to evaluate ref_name.include patterns.
+          MATCHING_RULESETS=$(
+            gh api --paginate "repos/$REPO/rulesets" 2>/dev/null \
+              | jq -r '[.[] | select(.enforcement == "active") | .id] | .[]' \
+              | while IFS= read -r id; do
+                  gh api "repos/$REPO/rulesets/$id" 2>/dev/null || true
+                done \
+              | jq --slurp '
+                  [.[] | select(type == "object") |
+                   select(.enforcement == "active") |
+                   select(any((.conditions.ref_name.include // [])[]?;
+                     . == "~ALL" or startswith("refs/heads/ai/") or
+                     . == "refs/heads/**" or . == "refs/heads/*"))] | length
+                ' 2>/dev/null \
+              || echo '0')
           if [ "$MATCHING_RULESETS" = "0" ]; then
             echo "::error::No active ruleset covers ai/** branches — server-side push restrictions not configured"
             echo "proceed=false" >> "$GITHUB_OUTPUT"
@@ -619,7 +634,7 @@ jobs:
               # U+200D (ZERO WIDTH JOINER) and U+034F (COMBINING GRAPHEME JOINER) are also
               # stripped \u2014 both survive NFKC and can split marker strings to bypass filters.
               # U+3164 (HANGUL FILLER) survives NFKC and acts as invisible padding.
-              text = re.sub(r'[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\u3164\ue0000-\ue007f\ufeff]', '', text)
+              text = re.sub('[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\u3164\U000e0000-\U000e007f\ufeff]', '', text)
               # Strip ALL XML/HTML tags. Use a high bound (4000 chars) to prevent bypass
               # via tags with >200 chars of padding before '>'. [^>] stops at '>' anyway.
               text = re.sub(r'<[^>]{0,4000}>', '[tag]', text)
@@ -865,7 +880,7 @@ jobs:
         # (SYSTEM_PROMPT_FILE) read inside the bash subshell — not as an env var
         # value in the env -i invocation, so absent from /proc/<parent-pid>/environ.
         run: |
-          echo "::add-mask::$GITHUB_TOKEN"
+          [ -n "$GITHUB_TOKEN" ] && echo "::add-mask::$GITHUB_TOKEN" || true
           # Read prompts into shell vars, then delete the files so Claude's Read
           # tool cannot access them (or any other sensitive RUNNER_TEMP content)
           SYSTEM_PROMPT=$(cat "$RUNNER_TEMP/system-prompt.txt")
@@ -898,7 +913,9 @@ jobs:
           install -m 600 /dev/null "$RUNNER_TEMP/claude-stderr.txt"
           # Only file PATHS are passed via env -i — no secret values in cmdline or
           # parent-process environ. The bash subshell reads each value from its file,
-          # shreds the file, then exec-replaces itself with claude.
+          # shreds the file, then pipes the prompt to claude via stdin (more secure
+          # than a positional arg, which would appear in /proc/<pid>/cmdline).
+          CLAUDE_EXIT=0
           env -i HOME="$HOME" PATH="$PATH" \
             ANTHROPIC_KEY_FILE="$RUNNER_TEMP/anthropic-key.txt" \
             SYSTEM_PROMPT_FILE="$RUNNER_TEMP/system-prompt-exec.txt" \
@@ -913,13 +930,12 @@ jobs:
               _user_prompt=$(< "$USER_PROMPT_FILE")
               shred -u "$USER_PROMPT_FILE" 2>/dev/null || rm -f "$USER_PROMPT_FILE"
               unset USER_PROMPT_FILE
-              exec claude --print \
-                --allowedTools "Edit,MultiEdit" \
-                --disallowedTools "Bash,Read,Write,WebFetch,WebSearch,computer_use,LS,Glob,ListFiles,SearchFiles,ReadFile,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*" \
-                "$_user_prompt"
+              printf "%s" "$_user_prompt" | claude --print \
+                --allowedTools "Edit,MultiEdit,Read,LS,Glob,ListFiles,SearchFiles" \
+                --disallowedTools "Bash,Write,WebFetch,WebSearch,computer_use,TodoWrite,TodoRead,Agent,AskFollowupQuestion,mcp__*"
             ' \
             > "$RUNNER_TEMP/claude-output.txt" \
-            2> "$RUNNER_TEMP/claude-stderr.txt"
+            2> "$RUNNER_TEMP/claude-stderr.txt" || CLAUDE_EXIT=$?
           # Scrub ANTHROPIC_API_KEY from artifact files. ::add-mask:: protects runner
           # logs; this scrubs temp files that persist after the step.
           for _sf in "$RUNNER_TEMP/claude-output.txt" "$RUNNER_TEMP/claude-stderr.txt"; do
@@ -936,6 +952,7 @@ jobs:
             echo "--- stderr ---"
             cat "$RUNNER_TEMP/claude-stderr.txt"
           fi
+          exit "$CLAUDE_EXIT"
 
 
       - name: Verify Claude did not touch protected paths
@@ -1119,7 +1136,7 @@ jobs:
               # Strip same set as sanitize(): soft-hyphen (U+00AD), combining grapheme
               # joiner (U+034F), ZWJ (U+200D), Hangul filler (U+3164), zero-width/
               # direction/tag-block chars, BOM — matches sanitize() coverage exactly.
-              text = re.sub(r'[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\u3164\ue0000-\ue007f\ufeff]', '', text)
+              text = re.sub('[\u00ad\u034f\u200b-\u200f\u200d\u202a-\u202e\u2066-\u2069\u3164\U000e0000-\U000e007f\ufeff]', '', text)
               # Use same 4000-char bound as sanitize() to prevent bypass via long tags
               text = re.sub(r'<[^>]{0,4000}>', '[tag]', text)
               # Destructive fence stripping prevents mixed-delimiter bypass (``` inject ~~~)
@@ -1282,7 +1299,7 @@ jobs:
             exit 1
           fi
           echo "Branch protection confirmed: main is protected"
-          # Ruleset check was moved to the gate job's guard step (no AI, no write tokens).
+          # Ruleset check is in the gate job's guard step (no AI, no write tokens).
           # Move token out of named env var immediately so it is absent from the
           # shell's /proc/self/environ for the rest of this step's child processes.
           PUSH_TOKEN="$TOKEN"
@@ -1311,8 +1328,8 @@ jobs:
           # This check is re-done here because up to 30 min can elapse between
           # gate and push, and the concurrency group does not cancel queued runs.
           CURRENT_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open" \
-            --jq --arg b "$BRANCH" '.[] | select(.head.ref == $b) | .head.sha' \
-            2>/dev/null | head -1 || true)
+            2>/dev/null | jq -r --arg b "$BRANCH" '.[] | select(.head.ref == $b) | .head.sha' \
+            | head -1 || true)
           if [ -z "$CURRENT_SHA" ]; then
             echo "::error::Branch '$BRANCH' is not the head of any open PR — aborting"
             exit 1

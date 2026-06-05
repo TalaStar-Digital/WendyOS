@@ -331,6 +331,13 @@ func toCreateContainerProgress(progress UnpackProgress) *agentpb.CreateContainer
 			Phase:       agentpb.CreateContainerProgress_UNPACKING,
 			TotalLayers: int32(progress.TotalLayers),
 		}
+	case "layer-start":
+		return &agentpb.CreateContainerProgress{
+			Phase:       agentpb.CreateContainerProgress_UNPACKING,
+			LayerIndex:  int32(progress.LayerIndex),
+			TotalLayers: int32(progress.TotalLayers),
+			LayerSize:   progress.LayerSize,
+		}
 	case "layer":
 		return &agentpb.CreateContainerProgress{
 			Phase:          agentpb.CreateContainerProgress_APPLYING_LAYER,

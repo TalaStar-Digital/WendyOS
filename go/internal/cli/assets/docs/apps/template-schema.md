@@ -145,7 +145,18 @@ Human-readable question text shown in the interactive prompt.
 
 #### `options`
 
-Array of `{ "value": "...", "label": "..." }` objects. Required for `radio` and `checkbox`. Ignored for `input`.
+Array of option objects. Required for `radio` and `checkbox`. Ignored for `input`.
+
+| Field | Description |
+|-------|-------------|
+| `value` | The value stored when selected |
+| `label` | Human-readable display text |
+| `description` | Optional secondary description (shown in picker) |
+| `size` | Optional metadata column (e.g., model size) |
+| `parameters` | Optional metadata column (e.g., parameter count) |
+| `comments` | Optional metadata column (e.g., additional notes) |
+
+When `size`, `parameters`, or `comments` are present, the picker displays a multi-column table view instead of a simple list.
 
 #### `required`
 

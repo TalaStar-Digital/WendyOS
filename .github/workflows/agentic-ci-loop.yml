@@ -1,7 +1,7 @@
 name: Agentic CI Loop
 
-# Triggered whenever a CI workflow finishes.
-# Checks whether the PR has failing CI or unresolved bot review comments.
+# Triggered whenever a CI workflow finishes, or when a maintainer comments on a PR.
+# Checks whether the PR has failing CI, unresolved bot review comments, or human instructions.
 # If so, runs Claude to apply fixes and commits them, which re-triggers CI.
 # Stops automatically once all checks pass and no bot comments remain open.
 
@@ -15,19 +15,24 @@ on:
       - Docs Review
       - Integration Test Review
     types: [completed]
+  issue_comment:
+    types: [created]
 
 concurrency:
-  group: agentic-ci-loop-${{ github.event.workflow_run.head_sha }}
+  group: agentic-ci-loop-${{ github.event.workflow_run.head_sha || github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:
   iterate:
     name: Fix failing CI and resolve bot review comments
-    # Only act on internal pushes by org members; skip if the triggering run itself was this workflow.
     if: >
-      github.repository_owner == 'wendylabsinc' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.name != 'Agentic CI Loop'
+      (github.event_name == 'workflow_run' &&
+       github.repository_owner == 'wendylabsinc' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.name != 'Agentic CI Loop') ||
+      (github.event_name == 'issue_comment' &&
+       (github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -41,35 +46,85 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ASSOC: ${{ github.event.comment.author_association }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
-          PR_NUMBER=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
-            --jq '.[0].number // empty' 2>/dev/null || true)
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No PR found — skipping"
-            echo "pr_number=" >> "$GITHUB_OUTPUT"
-          else
+          if [ "$EVENT_NAME" = "issue_comment" ]; then
+            # Verify the comment is on a PR, not a plain issue.
+            IS_PR=$(gh api "repos/$REPO/issues/$ISSUE_NUMBER" \
+              --jq '.pull_request // empty' 2>/dev/null || true)
+            if [ -z "$IS_PR" ]; then
+              echo "Comment is on an issue, not a PR — skipping"
+              echo "pr_number=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # Belt-and-suspenders re-check of job-level if:.
+            case "$COMMENT_ASSOC" in
+              MEMBER|OWNER) ;;
+              *)
+                echo "Commenter is not a member — skipping"
+                echo "pr_number=" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+            # Only trigger on /implement, /iterate, or @claude mentions.
+            if ! printf '%s' "${COMMENT_BODY:0:500}" | grep -qE '(/implement|/iterate|@claude)'; then
+              echo "Comment does not contain a trigger keyword — skipping"
+              echo "pr_number=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            PR_NUMBER="$ISSUE_NUMBER"
             PR_DATA=$(gh api "repos/$REPO/pulls/$PR_NUMBER" 2>/dev/null || echo '{}')
-            AUTHOR_ASSOC=$(printf '%s' "$PR_DATA" | jq -r '.author_association // "NONE"')
-            # ai/* branch PRs are handled by ai-pr-feedback.yml — skip here to avoid two
-            # automation loops racing to commit to the same branch simultaneously.
-            # Use branch pattern (not ai-generated label) as the routing signal:
-            # labels are weak trust signals; branch names require push access.
+            # Fork guard: refuse to check out or push code from a forked repository.
+            # A maintainer commenting on a fork PR must not trigger a privileged checkout.
+            HEAD_REPO=$(printf '%s' "$PR_DATA" | jq -r '.head.repo.full_name // ""')
+            if [ -z "$HEAD_REPO" ] || [ "$HEAD_REPO" != "$REPO" ]; then
+              echo "PR head is from a fork ($HEAD_REPO) — skipping"
+              echo "pr_number=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             PR_HEAD_BRANCH=$(printf '%s' "$PR_DATA" | jq -r '.head.ref // ""')
             if printf '%s' "$PR_HEAD_BRANCH" | grep -qE '^ai/'; then
               echo "PR head is ai/ branch — handled by ai-pr-feedback.yml, skipping"
               echo "pr_number=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            HEAD_SHA=$(printf '%s' "$PR_DATA" | jq -r '.head.sha // ""')
+            echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          else
+            PR_NUMBER=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+              --jq '.[0].number // empty' 2>/dev/null || true)
+            if [ -z "$PR_NUMBER" ]; then
+              echo "No PR found — skipping"
+              echo "pr_number=" >> "$GITHUB_OUTPUT"
             else
-              # COLLABORATOR excluded — same policy as ai-pr-feedback.yml to maintain
-              # a consistent authorization boundary across all AI automation workflows.
-              case "$AUTHOR_ASSOC" in
-                MEMBER|OWNER)
-                  echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-                  ;;
-                *)
-                  echo "PR author is not a wendylabsinc member (association: $AUTHOR_ASSOC) — skipping"
-                  echo "pr_number=" >> "$GITHUB_OUTPUT"
-                  ;;
-              esac
+              PR_DATA=$(gh api "repos/$REPO/pulls/$PR_NUMBER" 2>/dev/null || echo '{}')
+              AUTHOR_ASSOC=$(printf '%s' "$PR_DATA" | jq -r '.author_association // "NONE"')
+              # ai/* branch PRs are handled by ai-pr-feedback.yml — skip here to avoid two
+              # automation loops racing to commit to the same branch simultaneously.
+              # Use branch pattern (not ai-generated label) as the routing signal:
+              # labels are weak trust signals; branch names require push access.
+              PR_HEAD_BRANCH=$(printf '%s' "$PR_DATA" | jq -r '.head.ref // ""')
+              if printf '%s' "$PR_HEAD_BRANCH" | grep -qE '^ai/'; then
+                echo "PR head is ai/ branch — handled by ai-pr-feedback.yml, skipping"
+                echo "pr_number=" >> "$GITHUB_OUTPUT"
+              else
+                # COLLABORATOR excluded — same policy as ai-pr-feedback.yml to maintain
+                # a consistent authorization boundary across all AI automation workflows.
+                case "$AUTHOR_ASSOC" in
+                  MEMBER|OWNER)
+                    echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+                    echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+                    ;;
+                  *)
+                    echo "PR author is not a wendylabsinc member (association: $AUTHOR_ASSOC) — skipping"
+                    echo "pr_number=" >> "$GITHUB_OUTPUT"
+                    ;;
+                esac
+              fi
             fi
           fi
 
@@ -79,11 +134,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ steps.find-pr.outputs.head_sha }}
           PR_NUMBER: ${{ steps.find-pr.outputs.pr_number }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          # --paginate merges all pages; each page wraps check_runs in an object so
-          # jq --slurp collects those objects and we flatten the inner arrays.
+          # Circuit-breaker: count consecutive agentic commits regardless of trigger.
+          AGENTIC_STREAK=$(gh api "repos/$REPO/pulls/$PR_NUMBER/commits" \
+            --jq '[.[] | select(.commit.author.name == "github-actions[bot]")] | length' \
+            2>/dev/null || echo "0")
+          [[ "$AGENTIC_STREAK" =~ ^[0-9]+$ ]] || AGENTIC_STREAK=0
+          if [ "$AGENTIC_STREAK" -ge 5 ]; then
+            echo "needs_work=false" >> "$GITHUB_OUTPUT"
+            echo "Circuit-breaker: $AGENTIC_STREAK consecutive agentic commits — halting to avoid runaway loop"
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = "issue_comment" ]; then
+            # Human asked for iteration directly — proceed regardless of CI state.
+            echo "needs_work=true" >> "$GITHUB_OUTPUT"
+            echo "failing_checks=" >> "$GITHUB_OUTPUT"
+            echo "bot_comments=0" >> "$GITHUB_OUTPUT"
+            echo "Triggered by human comment — iterating (agentic streak: $AGENTIC_STREAK / 5)"
+            exit 0
+          fi
+
           CHECK_RUNS=$(gh api --paginate "repos/$REPO/commits/$HEAD_SHA/check-runs" \
             2>/dev/null \
             | jq --slurp '{check_runs: [(.[].check_runs // [])[]]}' \
@@ -129,26 +203,17 @@ jobs:
             echo "needs_work=false" >> "$GITHUB_OUTPUT"
             echo "All checks pass and no bot comments — nothing to do"
           else
-            # Circuit-breaker: count consecutive agentic commits (no human commit in between).
-            AGENTIC_STREAK=$(gh api "repos/$REPO/pulls/$PR_NUMBER/commits" \
-              --jq '[.[] | select(.commit.author.name == "github-actions[bot]")] | length' \
-              2>/dev/null || echo "0")
-            if [ "$AGENTIC_STREAK" -ge 5 ]; then
-              echo "needs_work=false" >> "$GITHUB_OUTPUT"
-              echo "Circuit-breaker: $AGENTIC_STREAK consecutive agentic commits — halting to avoid runaway loop"
-            else
-              echo "needs_work=true" >> "$GITHUB_OUTPUT"
-              echo "Failing checks: ${FAILING:-none}"
-              echo "Open bot comments: $BOT_COMMENTS"
-              echo "Agentic commits so far: $AGENTIC_STREAK / 5"
-            fi
+            echo "needs_work=true" >> "$GITHUB_OUTPUT"
+            echo "Failing checks: ${FAILING:-none}"
+            echo "Open bot comments: $BOT_COMMENTS"
+            echo "Agentic commits so far: $AGENTIC_STREAK / 5"
           fi
 
       - name: Check out repository
         if: steps.check-status.outputs.needs_work == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ steps.find-pr.outputs.head_sha }}
           token: ${{ secrets.WENDY_TEMPLATE_SYNC_TOKEN }}
           fetch-depth: 0
 
@@ -158,11 +223,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.find-pr.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.find-pr.outputs.head_sha }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
           gh pr diff "$PR_NUMBER" --repo "$REPO" > "$RUNNER_TEMP/pr.diff" 2>/dev/null || touch "$RUNNER_TEMP/pr.diff"
 
           gh run list --repo "$REPO" \
-            --commit "${{ github.event.workflow_run.head_sha }}" \
+            --commit "$HEAD_SHA" \
             --status failure --limit 5 --json databaseId -q '.[].databaseId' 2>/dev/null \
             | while read -r run_id; do
                 printf '=== Run %s ===\n' "$run_id" >> "$RUNNER_TEMP/ci-logs.txt"
@@ -179,9 +246,12 @@ jobs:
             --jq '[.[] | select(.user.login == "github-actions[bot]") | {id, path, body}]' \
             > "$RUNNER_TEMP/bot-comments.json" 2>/dev/null || echo "[]" > "$RUNNER_TEMP/bot-comments.json"
 
+          # Write comment body to file (truncated; never interpolated into shell).
+          printf '%s' "${COMMENT_BODY:0:2000}" > "$RUNNER_TEMP/comment.txt"
+
       - name: Set up Python
         if: steps.check-status.outputs.needs_work == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
@@ -210,11 +280,17 @@ jobs:
           ci_logs = pathlib.Path(runner_temp + '/ci-logs.txt').read_text()
           bot_reviews = json.loads(pathlib.Path(runner_temp + '/bot-reviews.json').read_text())
           bot_comments = json.loads(pathlib.Path(runner_temp + '/bot-comments.json').read_text())
+          comment_body = pathlib.Path(runner_temp + '/comment.txt').read_text().strip()
+
+          # Basic sanitization: strip control chars and common injection phrases.
+          comment_body = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', comment_body)
+          comment_body = re.sub(r'(?i)ignore\s+(all\s+)?previous\s+instructions?', '[filtered]', comment_body)
+          comment_body = re.sub(r'(?i)(disregard|forget|override)\s+(all\s+)?(previous\s+)?instructions?', '[filtered]', comment_body)
 
           failing_checks = os.environ.get('FAILING_CHECKS', '')
           pr_number = os.environ['PR_NUMBER']
 
-          if not failing_checks and not bot_reviews and not bot_comments:
+          if not failing_checks and not bot_reviews and not bot_comments and not comment_body:
               print('Nothing to fix')
               raise SystemExit(0)
 
@@ -229,10 +305,11 @@ jobs:
               max_tokens=16000,
               system=(
                   'You are an engineer working on WendyOS. '
-                  'Given failing CI logs and/or automated review comments, make the minimal code changes needed to:\n'
+                  'Given failing CI logs, automated review comments, and/or instructions from a maintainer, '
+                  'make the minimal code changes needed to:\n'
                   '1. Fix any failing CI checks.\n'
-                  '2. Apply or address suggestions from automated bot review comments '
-                  '(docs updates, integration test additions, etc.).\n\n'
+                  '2. Apply or address suggestions from automated bot review comments.\n'
+                  '3. Follow any instructions from the maintainer.\n\n'
                   'Rules:\n'
                   '- Make targeted, minimal changes. Do not refactor unrelated code.\n'
                   '- For docs suggestions: apply the suggested content unless it conflicts with the code.\n'
@@ -247,6 +324,7 @@ jobs:
                   'role': 'user',
                   'content': (
                       f'PR #{pr_number}\n\n'
+                      + (f'## Maintainer instructions\n{comment_body}\n\n' if comment_body else '')
                       + (f'## Failing CI checks\n{failing_checks}\n\n## CI logs\n```\n{ci_logs[:20000]}\n```\n\n' if failing_checks else '')
                       + (f'## Automated review comments to address\n{bot_feedback[:20000]}\n\n' if bot_feedback else '')
                       + f'## PR diff\n```diff\n{diff[:20000]}\n```'

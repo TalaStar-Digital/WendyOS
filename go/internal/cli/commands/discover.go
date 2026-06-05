@@ -1006,6 +1006,16 @@ func externalProviderSortKey(providerKey, name string) string {
 	return ""
 }
 
+func externalProviderPickerHint(providerKey string) string {
+	switch providerKey {
+	case providers.ProviderKeyDocker:
+		return "Hint: Use Docker Desktop for local container or Compose runs when you do not need WendyOS hardware."
+	case providers.ProviderKeyLocal:
+		return "Hint: Use Local Machine for native Swift, Go, or Python apps that should run directly on this computer."
+	}
+	return ""
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
