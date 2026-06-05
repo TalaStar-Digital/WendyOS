@@ -113,9 +113,6 @@ jobs:
     runs-on:
       group: wendy-developer
       labels: [self-hosted, macOS, ARM64]
-    concurrency:
-      group: device-pool-template-discover
-      cancel-in-progress: false
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.explicit.outputs.matrix || steps.scan.outputs.matrix || '[]' }}
@@ -190,6 +187,7 @@ jobs:
     concurrency:
       group: device-${{ matrix.hostname }}
       cancel-in-progress: false
+      queue: max
     timeout-minutes: 30
     strategy:
       fail-fast: false

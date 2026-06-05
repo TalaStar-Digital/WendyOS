@@ -48,9 +48,6 @@ jobs:
     runs-on:
       group: wendy-developer
       labels: [self-hosted, '${{ matrix.runner.os }}', '${{ matrix.runner.arch }}']
-    concurrency:
-      group: device-pool-discover-${{ matrix.runner.name }}
-      cancel-in-progress: false
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.explicit.outputs.matrix || steps.scan.outputs.matrix || '[]' }}
@@ -153,6 +150,7 @@ jobs:
     concurrency:
       group: device-${{ matrix.hostname }}
       cancel-in-progress: false
+      queue: max
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -258,6 +256,7 @@ jobs:
     concurrency:
       group: device-${{ matrix.hostname }}
       cancel-in-progress: false
+      queue: max
     timeout-minutes: 60
     strategy:
       fail-fast: false

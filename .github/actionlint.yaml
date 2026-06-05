@@ -10,7 +10,7 @@ self-hosted-runner:
 config-variables: null
 
 paths:
-  .github/workflows/swift-e2e-tests.yml:
+  .github/workflows/**/*.yml:
     ignore:
       # GitHub Actions supports this queue mode, but actionlint v1.7.12 only
       # recognizes the older concurrency.group/cancel-in-progress schema.
