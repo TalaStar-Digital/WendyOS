@@ -1,12 +1,6 @@
 name: Swift E2E Tests
 
 on:
-  pull_request:
-    paths:
-      - 'swift/**'
-      - 'Proto/**'
-      - '.github/actions/swift-e2e-run/**'
-      - '.github/workflows/swift-e2e-tests.yml'
   push:
     branches:
       - main
