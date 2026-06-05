@@ -105,7 +105,11 @@ type ServiceConfig struct {
 
 // AppConfig represents the wendy.json application configuration.
 type AppConfig struct {
-	AppID        string                    `json:"appId"`
+	AppID string `json:"appId"`
+	// ServiceName is set when this AppConfig describes a single service within
+	// a multi-service app.  When non-empty the agent uses the
+	// {appId}/{serviceName} container naming convention (WDY-878).
+	ServiceName  string                    `json:"serviceName,omitempty"`
 	Version      string                    `json:"version,omitempty"`
 	Platform     string                    `json:"platform,omitempty"`
 	Language     string                    `json:"language,omitempty"`

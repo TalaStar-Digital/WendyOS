@@ -51,6 +51,41 @@ const labelKeyGCRoot = "containerd.io/gc.root"
 // labelKeyWendyLayer marks a content blob as a Wendy-pushed layer.
 const labelKeyWendyLayer = "sh.wendy.layer"
 
+// labelKeyAppGroup labels a multi-service container with the app ID that owns it.
+// Only set when serviceName is non-empty.
+const labelKeyAppGroup = "sh.wendy/app.group"
+
+// labelKeyServiceName labels a multi-service container with its service name.
+// Only set when serviceName is non-empty.
+const labelKeyServiceName = "sh.wendy/service"
+
+// ContainerName returns the containerd container ID for the given appID and
+// optional serviceName.
+//
+//   - Single-container apps (serviceName == ""): returns appID unchanged,
+//     preserving backward-compatibility with all existing tooling.
+//   - Multi-service apps (serviceName != ""): returns "{appID}/{serviceName}".
+//     Containerd allows "/" in container names, so no escaping is needed.
+func ContainerName(appID, serviceName string) string {
+	if serviceName == "" {
+		return appID
+	}
+	return appID + "/" + serviceName
+}
+
+// SnapshotKey returns the containerd snapshot key for the given appID and
+// optional serviceName.  Snapshot keys must be filesystem-safe, so "/" is
+// replaced with "-".
+//
+//   - Single-container apps (serviceName == ""): "wendy-{appID}" (unchanged).
+//   - Multi-service apps (serviceName != ""): "wendy-{appID}-{serviceName}".
+func SnapshotKey(appID, serviceName string) string {
+	if serviceName == "" {
+		return "wendy-" + appID
+	}
+	return "wendy-" + appID + "-" + serviceName
+}
+
 // computeChainID computes the chain ID for a layer given its parent chain ID
 // and the layer's diff ID. The chain ID is defined recursively:
 //
@@ -98,9 +133,17 @@ func gcTimestamp() string {
 
 // wendyLabels builds the standard set of containerd labels for a Wendy-managed
 // container. These labels are used to identify, filter, and manage containers.
-func wendyLabels(appName, version string, restartPolicy *agentpb.RestartPolicy, entitlements []appconfig.Entitlement) map[string]string {
+//
+// When serviceName is non-empty (multi-service app), two additional labels are
+// set: labelKeyAppGroup ({appName}) and labelKeyServiceName ({serviceName}).
+func wendyLabels(appName, serviceName, version string, restartPolicy *agentpb.RestartPolicy, entitlements []appconfig.Entitlement) map[string]string {
 	labels := map[string]string{
 		labelKeyAppVersion: version,
+	}
+
+	if serviceName != "" {
+		labels[labelKeyAppGroup] = appName
+		labels[labelKeyServiceName] = serviceName
 	}
 
 	if restartPolicy != nil {

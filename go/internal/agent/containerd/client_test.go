@@ -87,7 +87,7 @@ func TestBuildContainerBaseEnvIncludesWendyHostname(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "wendyos-test-device.local" }
 
-	env := buildContainerBaseEnv("demo-app")
+	env := buildContainerBaseEnv("demo-app", "")
 
 	want := "WENDY_HOSTNAME=wendyos-test-device.local"
 	for _, kv := range env {
@@ -103,7 +103,7 @@ func TestBuildContainerBaseEnvOmitsWendyHostnameWhenUnavailable(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "" }
 
-	env := buildContainerBaseEnv("demo-app")
+	env := buildContainerBaseEnv("demo-app", "")
 
 	for _, kv := range env {
 		if len(kv) >= len("WENDY_HOSTNAME=") && kv[:len("WENDY_HOSTNAME=")] == "WENDY_HOSTNAME=" {
@@ -117,7 +117,7 @@ func TestBuildContainerBaseEnvIncludesAppID(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "" }
 
-	env := buildContainerBaseEnv("demo-app")
+	env := buildContainerBaseEnv("demo-app", "")
 
 	want := "WENDY_APP_ID=demo-app"
 	for _, kv := range env {
@@ -133,11 +133,58 @@ func TestBuildContainerBaseEnvOmitsAppIDWhenEmpty(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "" }
 
-	env := buildContainerBaseEnv("")
+	env := buildContainerBaseEnv("", "")
 
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "WENDY_APP_ID=") {
 			t.Errorf("env unexpectedly contains %q when appID is empty", kv)
+		}
+	}
+}
+
+func TestBuildContainerBaseEnvMultiServiceHostname(t *testing.T) {
+	old := deviceHostnameWithSuffix
+	t.Cleanup(func() { deviceHostnameWithSuffix = old })
+	deviceHostnameWithSuffix = func() string { return "wendyos-test-device.local" }
+
+	env := buildContainerBaseEnv("com.example.app", "api")
+
+	wantHostname := "WENDY_HOSTNAME=api.local"
+	wantGroup := "WENDY_APP_GROUP=com.example.app"
+	wantAppID := "WENDY_APP_ID=com.example.app"
+	foundHostname, foundGroup, foundAppID := false, false, false
+	for _, kv := range env {
+		switch kv {
+		case wantHostname:
+			foundHostname = true
+		case wantGroup:
+			foundGroup = true
+		case wantAppID:
+			foundAppID = true
+		}
+	}
+	if !foundHostname {
+		t.Errorf("env missing %q; got %v", wantHostname, env)
+	}
+	if !foundGroup {
+		t.Errorf("env missing %q; got %v", wantGroup, env)
+	}
+	if !foundAppID {
+		t.Errorf("env missing %q; got %v", wantAppID, env)
+	}
+}
+
+func TestBuildContainerBaseEnvMultiServiceNoDeviceHostname(t *testing.T) {
+	old := deviceHostnameWithSuffix
+	t.Cleanup(func() { deviceHostnameWithSuffix = old })
+	deviceHostnameWithSuffix = func() string { return "device.local" }
+
+	// For multi-service containers the device hostname must not appear.
+	env := buildContainerBaseEnv("com.example.app", "worker")
+
+	for _, kv := range env {
+		if kv == "WENDY_HOSTNAME=device.local" {
+			t.Errorf("multi-service env must not use device hostname; got %v", env)
 		}
 	}
 }

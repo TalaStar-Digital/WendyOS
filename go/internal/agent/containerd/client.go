@@ -356,7 +356,15 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	defer c.mu.Unlock()
 
 	ctx = c.withNamespace(ctx)
-	appName := req.GetAppName()
+
+	// Derive the container name and snapshot key from the app identity.
+	// When appCfg.ServiceName is set this is a multi-service app and we use the
+	// {appId}/{serviceName} convention; otherwise we fall back to the legacy flat
+	// name so single-container apps are unchanged.
+	appID := req.GetAppName()
+	serviceName := appCfg.ServiceName
+	containerName := ContainerName(appID, serviceName)
+
 	// Canonicalise the image reference so older CLIs sending Docker short
 	// names like "python:3.11-slim" still resolve correctly under containerd's
 	// strict parser, which would otherwise read "3.11-slim" as a port.
@@ -369,7 +377,7 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	}
 
 	c.logger.Info("Creating container",
-		zap.String("app_name", appName),
+		zap.String("container_name", containerName),
 		zap.String("image", imageName),
 	)
 
@@ -380,8 +388,8 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	}
 
 	// Delete any pre-existing container with the same name.
-	if existing, err := c.client.LoadContainer(ctx, appName); err == nil {
-		c.logger.Info("Removing existing container", zap.String("app_name", appName))
+	if existing, err := c.client.LoadContainer(ctx, containerName); err == nil {
+		c.logger.Info("Removing existing container", zap.String("container_name", containerName))
 		// Try to stop/kill the task first.
 		if task, taskErr := existing.Task(ctx, nil); taskErr == nil {
 			_ = task.Kill(ctx, syscall.SIGKILL)
@@ -389,12 +397,12 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 		} else {
 			// Task may be orphaned (shim crashed). Force-delete via the task
 			// service directly so the runtime clears the old task ID.
-			c.forceDeleteTask(ctx, appName)
+			c.forceDeleteTask(ctx, containerName)
 		}
 		_ = existing.Delete(ctx, containerd.WithSnapshotCleanup)
 		// Stop old D-Bus proxy if any.
 		if c.proxyManager != nil {
-			_ = c.proxyManager.Stop(appName)
+			_ = c.proxyManager.Stop(containerName)
 		}
 	}
 
@@ -426,13 +434,13 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	// Start D-Bus proxy if bluetooth entitlement is present.
 	var dbusProxyStarted bool
 	if c.proxyManager != nil && hasBluetooth(appCfg) {
-		if _, err := c.proxyManager.Start(ctx, appName); err != nil {
-			return fmt.Errorf("starting D-Bus proxy for %q: %w", appName, err)
+		if _, err := c.proxyManager.Start(ctx, containerName); err != nil {
+			return fmt.Errorf("starting D-Bus proxy for %q: %w", containerName, err)
 		}
 		dbusProxyStarted = true
 		defer func() {
 			if dbusProxyStarted {
-				_ = c.proxyManager.Stop(appName)
+				_ = c.proxyManager.Stop(containerName)
 			}
 		}()
 	}
@@ -490,7 +498,7 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	}
 
 	// Build environment variables: image env first, then our overrides.
-	env := buildContainerBaseEnv(appCfg.AppID)
+	env := buildContainerBaseEnv(appID, serviceName)
 	if specErr == nil {
 		env = append(imageSpec.Config.Env, env...)
 	}
@@ -503,7 +511,10 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	if spec.Linux == nil {
 		spec.Linux = &localoci.Linux{}
 	}
-	spec.Linux.CgroupsPath = fmt.Sprintf("system.slice:wendy-agent:%s", appName)
+	// Use the flat container name (appID or appID/serviceName) for the cgroup
+	// path, replacing "/" with "-" so it is safe as a cgroup slice component.
+	cgroupID := strings.ReplaceAll(containerName, "/", "-")
+	spec.Linux.CgroupsPath = fmt.Sprintf("system.slice:wendy-agent:%s", cgroupID)
 
 	// Apply the NVIDIA CDI spec before entitlements so that entitlements can
 	// override CDI-injected env vars (e.g. NVIDIA_VISIBLE_DEVICES=void → =all).
@@ -520,7 +531,7 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 
 	report(&agentpb.CreateContainerProgress{Phase: agentpb.CreateContainerProgress_CREATING_CONTAINER})
 
-	labels := wendyLabels(appName, version, req.GetRestartPolicy(), appCfg.Entitlements)
+	labels := wendyLabels(appID, serviceName, version, req.GetRestartPolicy(), appCfg.Entitlements)
 
 	// Serialize our custom OCI spec to JSON for WithSpecFromBytes.
 	specJSON, err := json.Marshal(spec)
@@ -529,8 +540,8 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	}
 
 	// Create the container with a new snapshot from the image.
-	snapshotKey := fmt.Sprintf("wendy-%s", appName)
-	_, err = c.client.NewContainer(ctx, appName,
+	snapshotKey := SnapshotKey(appID, serviceName)
+	_, err = c.client.NewContainer(ctx, containerName,
 		containerd.WithImage(image),
 		containerd.WithNewSnapshot(snapshotKey, image),
 		containerd.WithContainerLabels(labels),
@@ -539,7 +550,7 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 		),
 	)
 	if err != nil {
-		return fmt.Errorf("creating container %q: %w", appName, err)
+		return fmt.Errorf("creating container %q: %w", containerName, err)
 	}
 
 	// Container created successfully; keep the D-Bus proxy running.
@@ -548,7 +559,7 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	report(&agentpb.CreateContainerProgress{Phase: agentpb.CreateContainerProgress_COMPLETE})
 
 	c.logger.Info("Container created",
-		zap.String("app_name", appName),
+		zap.String("container_name", containerName),
 		zap.String("image", imageName),
 		zap.String("version", version),
 	)
@@ -748,13 +759,28 @@ var deviceHostnameWithSuffix = func() string {
 	return h + ".local"
 }
 
-func buildContainerBaseEnv(appID string) []string {
+// buildContainerBaseEnv builds the base environment variables for a container.
+//
+// For single-container apps (serviceName == ""):
+//   - WENDY_HOSTNAME is set to the device hostname (e.g. "device.local").
+//
+// For multi-service apps (serviceName != ""):
+//   - WENDY_HOSTNAME is set to "{serviceName}.local" so each service has a
+//     distinct hostname identity.
+//   - WENDY_APP_GROUP is set to appID so the service can discover its siblings.
+func buildContainerBaseEnv(appID, serviceName string) []string {
 	env := []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"TERM=xterm",
 	}
-	if h := deviceHostnameWithSuffix(); h != "" {
-		env = append(env, "WENDY_HOSTNAME="+h)
+	if serviceName != "" {
+		// Multi-service: hostname is the service name, not the device hostname.
+		env = append(env, "WENDY_HOSTNAME="+serviceName+".local")
+		env = append(env, "WENDY_APP_GROUP="+appID)
+	} else {
+		if h := deviceHostnameWithSuffix(); h != "" {
+			env = append(env, "WENDY_HOSTNAME="+h)
+		}
 	}
 	// WENDY_APP_ID is injected unconditionally (all network modes) so app code
 	// can always read its own identity. The OTel identity vars are injected only
@@ -947,7 +973,16 @@ func (c *Client) recreateContainer(ctx context.Context, ctr containerd.Container
 	}
 
 	// Recreate with the same configuration.
-	snapshotKey := fmt.Sprintf("wendy-%s", appName)
+	// Derive the snapshot key from the container name: for multi-service
+	// containers (appId/serviceName) convert "/" to "-" to get a filesystem-safe
+	// key; for single-container apps the name is already flat.
+	appID := appName
+	svcName := ""
+	if idx := strings.Index(appName, "/"); idx >= 0 {
+		appID = appName[:idx]
+		svcName = appName[idx+1:]
+	}
+	snapshotKey := SnapshotKey(appID, svcName)
 	_, err = c.client.NewContainer(ctx, appName,
 		containerd.WithImage(image),
 		containerd.WithNewSnapshot(snapshotKey, image),
