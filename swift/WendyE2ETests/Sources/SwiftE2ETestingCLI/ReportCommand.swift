@@ -1440,9 +1440,11 @@ private func renderTargetOverview(_ rows: [ReportTargetOverviewRow]) -> String {
 
     let tableRows = rows.map { row in
         let outcome = row.outcome
+        let escapedTarget = escapeHTML(row.target)
+        let route = renderTargetRoute(row.route, escapedTitle: escapedTarget)
         return """
             <tr>
-              <td><span class="target-overview-target">\(renderTargetRoute(row.route, title: row.target))<span>\(escapeHTML(row.target))</span></span></td>
+              <td><span class="target-overview-target">\(route)<span>\(escapedTarget)</span></span></td>
               <td><span class="badge \(outcome.statusClass)">\(outcome.statusText)</span></td>
               <td class="numeric">\(row.attempts)</td>
               <td class="numeric">\(row.tests)</td>
@@ -1515,9 +1517,10 @@ private func renderObservations(
     for observation in observations.sorted(by: observationSort) {
         let isFirstTargetRow = observation.target != previousTarget
         previousTarget = observation.target
-        let target = isFirstTargetRow ? escapeHTML(observation.target) : ""
+        let escapedTarget = isFirstTargetRow ? escapeHTML(observation.target) : ""
+        let target = escapedTarget
         let route =
-            isFirstTargetRow ? renderTargetRoute(observation.route, title: observation.target) : ""
+            isFirstTargetRow ? renderTargetRoute(observation.route, escapedTitle: escapedTarget) : ""
         let rowClass = isFirstTargetRow ? "observation-row" : "observation-row same-target"
         chunks.append(
             "<div class=\"\(rowClass)\"><span class=\"observation-route-cell\">\(route)</span><span class=\"observation-target\">\(target)</span><span class=\"observation-spacer\" aria-hidden=\"true\"></span>\(renderObservationLinks(observation))<span class=\"observation-attempt\">\(escapeHTML(observation.attempt))</span><span class=\"badge \(observation.status.statusClass)\">\(observation.status.statusText)</span>\(observationDurationBadge(observation.duration))</div>"
@@ -1543,13 +1546,15 @@ private func renderObservationLinks(_ observation: ReportTestObservation) -> Str
     return "<span class=\"observation-actions\">\(links.joined())</span>"
 }
 
-private func renderTargetRoute(_ route: TargetRoute, title: String) -> String {
+private func renderTargetRoute(_ route: TargetRoute, escapedTitle: String) -> String {
+    // Returns a trusted HTML fragment. Callers must pass an already-escaped title
+    // so untrusted target names are encoded before entering this fragment.
     let cli = "<span class=\"target-route-cli\">\(renderTargetLogo(route.cli))</span>"
     let arrow = "<span class=\"target-route-arrow\" aria-hidden=\"true\">›</span>"
     let agent =
         "<span class=\"target-route-agent\">\(route.agent.map(renderTargetLogo) ?? "")</span>"
     return
-        "<span class=\"target-route\" title=\"\(escapeHTML(title))\">\(cli)\(arrow)\(agent)</span>"
+        "<span class=\"target-route\" title=\"\(escapedTitle)\">\(cli)\(arrow)\(agent)</span>"
 }
 
 private func targetRoute(for target: String, attemptURL: URL) throws -> TargetRoute {
@@ -2184,4 +2189,5 @@ private func escapeHTML(_ value: String) -> String {
         .replacingOccurrences(of: "<", with: "&lt;")
         .replacingOccurrences(of: ">", with: "&gt;")
         .replacingOccurrences(of: "\"", with: "&quot;")
+        .replacingOccurrences(of: "'", with: "&#39;")
 }
