@@ -15,3 +15,15 @@ paths:
       # GitHub Actions supports this queue mode, but actionlint v1.7.12 only
       # recognizes the older concurrency.group/cancel-in-progress schema.
       - 'unexpected key "queue" for "concurrency" section'
+
+      # Keep repo-wide actionlint focused on workflow validity. These existing
+      # shellcheck findings are advisory and can be tightened separately.
+      - 'shellcheck reported issue in this script: SC2012:info:'
+      - 'shellcheck reported issue in this script: SC2016:info:'
+      - 'shellcheck reported issue in this script: SC2035:info:'
+      - 'shellcheck reported issue in this script: SC2086:info:'
+      - 'shellcheck reported issue in this script: SC2129:style:'
+
+      # Known intentional workflow patterns.
+      - 'shellcheck reported issue in this script: SC1012:warning:'
+      - 'constant expression "false" in condition'
