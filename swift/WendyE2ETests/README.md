@@ -178,8 +178,8 @@ directory:
 captured `sh()` calls in order for manual debugging.
 
 AI review files are Markdown. Top-level `review.md` is the compact aggregate
-that can be posted as a CI comment. Attempt and AI review JSON schemas live in
-`Support/Schemas/`.
+that can be posted as a CI comment. Attempt, overview, and AI review JSON
+schemas live in `Support/Schemas/`.
 
 ### Reference directory
 

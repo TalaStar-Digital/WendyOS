@@ -17,8 +17,10 @@ Guidelines:
 - Put evidence, reasoning, links to relevant suite/test details, and longer
   analysis under the review file's `## Details` heading.
 - Do not repeat or summarize suite/test reviews already covered at lower levels.
-- Do not restate obvious counts/statuses that the report already shows, such as
-  how many tests or attempts failed.
+- Use `overview.json` as the source of truth for target-level behavior. It is
+  available before the HTML report is rendered.
+- Do not merely restate obvious counts/statuses; synthesize what deterministic
+  failures, flakes, and target differences mean for the run.
 - Prefer concise synthesis over copying suite findings.
 - Use JSON `locations` only when the review is attributable to source lines.
 - Do not edit source code, tests, xUnit files, or recordings.

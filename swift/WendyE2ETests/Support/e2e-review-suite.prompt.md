@@ -22,7 +22,10 @@ Guidelines:
   plus the suggested action.
 - Put evidence, reasoning, and longer analysis under the review file's
   `## Details` heading.
+- Treat the generated `overview.json` failure/flake section as the source of
+  truth for run outcomes. Prioritize deterministic `FAILED` target outcomes,
+  then `FLAKED` target outcomes, then unresolved `UNKNOWN` outcomes.
 - Cite concrete evidence in details: source paths, target/attempt names, result
-  details, recording paths, and shell script paths.
+  details, recording paths, shell script paths, and `overview.json` outcome data.
 - Use JSON `locations` only when the review is attributable to source lines.
 - Do not edit source code, tests, xUnit files, or recordings.
