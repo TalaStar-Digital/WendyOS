@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -14,7 +15,6 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -279,7 +279,7 @@ func main() {
 		// goroutine that would immediately return on DPIA failure.
 		// Check both existence and non-empty content to mirror CollectDmesgLogs.
 		dpiaContent, dpiaErr := os.ReadFile(services.DmesgDPIAConfirmFile)
-		dpiaValid := dpiaErr == nil && len(strings.TrimSpace(string(dpiaContent))) > 0
+		dpiaValid := dpiaErr == nil && len(bytes.TrimSpace(dpiaContent)) > 0
 		for i := range dpiaContent {
 			dpiaContent[i] = 0
 		}

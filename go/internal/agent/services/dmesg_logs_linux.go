@@ -72,8 +72,8 @@ var piiPatterns = regexp.MustCompile(
 		`|/(?:home|Users|root)/[^\s/]+` +
 		// Kernel process name annotations (e.g. "comm=nginx")
 		`|comm=\S+` +
-		// Audit-log argument values (e.g. a0="bash" a1="-c" a2="/tmp/secret-token")
-		`|a\d+="[^"]*"` +
+		// Audit-log argument values — both quoted (a0="bash") and unquoted (a0=bash)
+		`|a\d+=(?:"[^"]*"|\S+)` +
 		// OOM/audit argv arrays (e.g. argv[0]=/usr/bin/nginx)
 		`|argv\[\d+\]=[^\s,]+` +
 		// Kernel audit UID/GID/PID fields (e.g. uid=1000 auid=1000 gid=100)
@@ -95,6 +95,8 @@ var piiPatterns = regexp.MustCompile(
 		`|key=\S+` +
 		// Kernel audit COMM field in quoted uppercase form (e.g. COMM="bash")
 		`|COMM="[^"]*"` +
+		// USB product/manufacturer strings (e.g. "usb 1-1: Product: Alice's iPhone")
+		`|(?:Product|Manufacturer):\s+[^\n]+` +
 		// Kernel audit path/context fields (e.g. name="/home/alice/.ssh", cwd="/root",
 		// subj=system_u:system_r:kernel_t:s0, proctitle=<hex-or-text>, tty=pts0)
 		`|(?:subj|name|cwd|path|proctitle|tty)=(?:"[^"]*"|\S+)` +
@@ -244,19 +246,18 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 			zap.String("redact", "partial"),
 			zap.Strings("redact_covered", []string{
 				"MAC-address", "IPv4-address", "IPv6-address-full-and-compressed",
-				"USB-SerialNumber", "ID_SERIAL",
+				"USB-SerialNumber", "ID_SERIAL", "USB-Product-string", "USB-Manufacturer-string",
 				"Bluetooth-bdaddr", "OOM-process-name+PID", "filesystem-home-paths",
-				"comm=", "COMM=quoted", "process-argv", "kernel-audit-uid-gid-pid",
-				"audit-exe", "audit-key", "wifi-ssid",
+				"comm=", "COMM=quoted", "process-argv-quoted-and-unquoted",
+				"kernel-audit-uid-gid-pid", "audit-exe", "audit-key", "wifi-ssid",
 				"kernel-pointer-addresses", "network-interface-names",
-				"block-device-paths", "hostname",
+				"block-device-paths", "hostname-exact", "hostname-FQDN-prefix",
 				"audit-subj=", "audit-name=", "audit-cwd=", "audit-path=",
 				"audit-proctitle=", "audit-tty=", "audit-ses=", "audit-msg-header",
 			}),
 			zap.Strings("redact_not_covered", []string{
 				"NFS-paths", "unlabelled-kernel-fields",
-				"hostname-FQDN-variants", "hostname-mDNS-aliases",
-				"usb-product-strings", "oom-cmdline", "custom-kernel-module-output",
+				"hostname-mDNS-aliases", "oom-cmdline", "custom-kernel-module-output",
 			}),
 			zap.String("dpia_file", DmesgDPIAConfirmFile),
 		)
@@ -395,27 +396,30 @@ func CollectDmesgLogs(ctx context.Context, logger *zap.Logger, broadcaster *Tele
 			message = message[:dmesgMaxMessageLen]
 		}
 		if atomic.LoadInt32(&redactAtomic) != 0 {
-			// Capture original text for gate checks BEFORE piiPatterns runs.
-			// After piiPatterns replaces values with "<redacted>", the resulting
-			// colons and "0x" substrings inside those tokens must not be used as
-			// gates — doing so causes the IPv6/pointer patterns to run against
-			// already-redacted text, missing content that appeared in the original.
-			rawMessage := message
-			message = piiPatterns.ReplaceAllString(message, "<redacted>")
-			// IPv6 and kernel-pointer patterns run only when the original message
-			// contained the necessary prefix, keeping per-message regex cost
-			// proportional to the original content rather than scanning artifact
-			// colons/hex inserted by earlier <redacted> substitutions.
-			if strings.ContainsRune(rawMessage, ':') {
+			// Save original for gate checks — gate conditions must use the pre-redaction
+			// text so that "<redacted>" tokens from earlier passes don't create false
+			// positives (e.g. "<redacted>" does not contain ":" or "0x").
+			originalMessage := message
+			// Run IPv6 and pointer patterns FIRST on the original message to prevent
+			// piiPatterns from partially consuming an IPv6 address (e.g. MAC sub-pattern
+			// matching a 2-hex-digit fragment of an IPv6 group and leaving a remainder
+			// that piiIPv6Pattern then fails to match). By redacting IPv6/pointers before
+			// piiPatterns, all downstream pattern passes operate on already-<redacted>
+			// tokens that cannot interfere with the remaining PII detection.
+			if strings.ContainsRune(originalMessage, ':') {
 				message = piiIPv6Pattern.ReplaceAllString(message, "<redacted>")
 			}
-			if strings.Contains(rawMessage, "0x") {
+			if strings.Contains(originalMessage, "0x") {
 				message = piiKernelPtrPattern.ReplaceAllString(message, "<redacted>")
 			}
-			// Redact exact hostname literal. Cached at startup; FQDN variants
-			// and mDNS names are not covered (see redact_not_covered in the
-			// startup warning).
+			// piiPatterns runs last; IPv6 and pointer values are already replaced
+			// so no cross-pattern fragmentation can occur.
+			message = piiPatterns.ReplaceAllString(message, "<redacted>")
+			// Hostname: redact FQDN prefix (e.g. hostname.corp.example.com) before
+			// the bare hostname, so the full FQDN is caught rather than leaving the
+			// domain suffix visible.
 			if hostname != "" {
+				message = strings.ReplaceAll(message, hostname+".", "<redacted>.")
 				message = strings.ReplaceAll(message, hostname, "<redacted>")
 			}
 		}
