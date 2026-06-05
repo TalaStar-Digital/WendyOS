@@ -61,7 +61,7 @@ jobs:
       group: wendy-developer
       labels: [self-hosted, macOS, ARM64]
     concurrency:
-      group: update-${{ matrix.hostname }}
+      group: device-${{ matrix.hostname }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
