@@ -291,6 +291,55 @@ private enum ReportTargetOutcome {
     case skipped
     case failed
     case unknown
+
+    var statusClass: String {
+        switch self {
+        case .passed:
+            return "pass"
+        case .flaked:
+            return "flaked"
+        case .skipped:
+            return "skipped"
+        case .failed:
+            return "fail"
+        case .unknown:
+            return "unknown"
+        }
+    }
+
+    var statusText: String {
+        switch self {
+        case .passed:
+            return "Passed"
+        case .flaked:
+            return "Flaked"
+        case .skipped:
+            return "Skipped"
+        case .failed:
+            return "Failed"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+}
+
+private struct ReportTargetOverviewRow {
+    var target: String
+    var route: TargetRoute
+    var attempts: Int
+    var tests: Int
+    var counts: ReportTargetOutcomeCounts
+
+    var outcome: ReportTargetOutcome {
+        targetOverviewOutcome(for: counts)
+    }
+}
+
+private struct ReportTargetOverviewAccumulator {
+    var route: TargetRoute?
+    var attempts: Set<String> = []
+    var tests = 0
+    var counts = ReportTargetOutcomeCounts()
 }
 
 private struct ReportTestCase {
@@ -561,9 +610,20 @@ private func runObservationStatus(
     }
 
     let results = try parseXUnitResults(at: resultURL)
-    return results.first { key, _ in
+    if let status = results.first(where: { key, _ in
         slug(key.suite) == suiteKey && slug(key.name) == testKey
-    }?.value ?? .unknown
+    })?.value {
+        return status
+    }
+
+    let matchingTestNames = results.filter { key, _ in
+        slug(key.name) == testKey
+    }
+    if matchingTestNames.count == 1, let status = matchingTestNames.first?.value {
+        return status
+    }
+
+    return .unknown
 }
 
 private func observationSort(_ lhs: ReportTestObservation, _ rhs: ReportTestObservation) -> Bool {
@@ -633,6 +693,15 @@ private func targetOutcome(for statuses: [ReportTestStatus]) -> ReportTargetOutc
     if failed && !passed && !skipped && !unknown {
         return .failed
     }
+    return .unknown
+}
+
+private func targetOverviewOutcome(for counts: ReportTargetOutcomeCounts) -> ReportTargetOutcome {
+    if counts.failed > 0 { return .failed }
+    if counts.unknown > 0 { return .unknown }
+    if counts.flaked > 0 { return .flaked }
+    if counts.passed > 0 { return .passed }
+    if counts.skipped > 0 { return .skipped }
     return .unknown
 }
 
@@ -1000,6 +1069,33 @@ private func extractAIItems(from lines: [String]) -> [String] {
     return items
 }
 
+private func buildTargetOverview(files: [ReportTestFile]) -> [ReportTargetOverviewRow] {
+    var rowsByTarget: [String: ReportTargetOverviewAccumulator] = [:]
+
+    for test in files.flatMap(\.tests) {
+        let observationsByTarget = Dictionary(grouping: test.observations, by: \.target)
+        for (target, observations) in observationsByTarget {
+            var row = rowsByTarget[target] ?? ReportTargetOverviewAccumulator()
+            row.route = row.route ?? observations.first?.route
+            row.attempts.formUnion(observations.map(\.attempt))
+            row.tests += 1
+            row.counts.add(targetOutcome(for: observations.map(\.status)))
+            rowsByTarget[target] = row
+        }
+    }
+
+    return rowsByTarget.map { target, row in
+        ReportTargetOverviewRow(
+            target: target,
+            route: row.route ?? TargetRoute(cli: .unknown, agent: nil),
+            attempts: row.attempts.count,
+            tests: row.tests,
+            counts: row.counts
+        )
+    }
+    .sorted { $0.target < $1.target }
+}
+
 private func renderReport(
     templateURL: URL,
     runURL: URL,
@@ -1037,6 +1133,7 @@ private func renderReport(
     try renderReviewAggregateHTMLIfPresent(runURL: runURL)
 
     let reviewHTML = renderRunAIReview(aiReviews.root)
+    let targetOverview = renderTargetOverview(buildTargetOverview(files: files))
     let testCards = renderCards(files: files)
 
     template.replaceSubrange(
@@ -1051,6 +1148,7 @@ private func renderReport(
             "Generated from Swift E2E run results, Swift Testing results, and captured command recordings.",
         "{{RUN_ID}}": runID(outputURL: outputURL),
         "{{REVIEW_AGGREGATE_LINK}}": renderReviewAggregateLink(runURL: runURL),
+        "{{TARGET_OVERVIEW}}": targetOverview,
         "{{TESTS_PASSED_COUNT}}": String(passed),
         "{{TESTS_FLAKED_COUNT}}": String(flaked),
         "{{TESTS_SKIPPED_COUNT}}": String(skipped),
@@ -1072,6 +1170,7 @@ private func renderReport(
         "{{VISIBLE_TEST_COUNT}}",
         "{{TOTAL_TEST_COUNT}}",
         "{{REVIEW_AGGREGATE_LINK}}",
+        "{{TARGET_OVERVIEW}}",
     ]
 
     for (placeholder, value) in replacements {
@@ -1334,6 +1433,56 @@ private func displayOutcomeCounts(for test: ReportTestCase) -> ReportTargetOutco
     test.targetOutcomes.isEmpty ? .fallback(for: test.status) : test.targetOutcomes
 }
 
+private func renderTargetOverview(_ rows: [ReportTargetOverviewRow]) -> String {
+    guard !rows.isEmpty else {
+        return ""
+    }
+
+    let tableRows = rows.map { row in
+        let outcome = row.outcome
+        let escapedTarget = escapeHTML(row.target)
+        let route = renderTargetRoute(row.route, escapedTitle: escapedTarget)
+        return """
+            <tr>
+              <td><span class="target-overview-target">\(route)<span>\(escapedTarget)</span></span></td>
+              <td><span class="badge \(outcome.statusClass)">\(outcome.statusText)</span></td>
+              <td class="numeric">\(row.attempts)</td>
+              <td class="numeric">\(row.tests)</td>
+              <td class="numeric">\(row.counts.passed)</td>
+              <td class="numeric">\(row.counts.flaked)</td>
+              <td class="numeric">\(row.counts.failed)</td>
+              <td class="numeric">\(row.counts.skipped)</td>
+              <td class="numeric">\(row.counts.unknown)</td>
+            </tr>
+            """
+    }.joined(separator: "\n")
+
+    return """
+        <section class="target-overview" aria-label="CLI to Agent run overview">
+          <div class="target-overview-table-wrapper">
+            <table class="target-overview-table">
+              <thead>
+                <tr>
+                  <th scope="col" aria-label="CLI to Agent"></th>
+                  <th scope="col" aria-label="Outcome"></th>
+                  <th class="numeric" scope="col">Attempts</th>
+                  <th class="numeric" scope="col">Tests</th>
+                  <th class="numeric" scope="col">Passed</th>
+                  <th class="numeric" scope="col">Flaked</th>
+                  <th class="numeric" scope="col">Failed</th>
+                  <th class="numeric" scope="col">Skipped</th>
+                  <th class="numeric" scope="col">Unknown</th>
+                </tr>
+              </thead>
+              <tbody>
+        \(tableRows)
+              </tbody>
+            </table>
+          </div>
+        </section>
+        """
+}
+
 private func renderTargetOutcomeBadges(_ counts: ReportTargetOutcomeCounts) -> String {
     let buckets: [(className: String, label: String, count: Int)] = [
         ("pass", "Passed", counts.passed),
@@ -1368,9 +1517,10 @@ private func renderObservations(
     for observation in observations.sorted(by: observationSort) {
         let isFirstTargetRow = observation.target != previousTarget
         previousTarget = observation.target
-        let target = isFirstTargetRow ? escapeHTML(observation.target) : ""
+        let escapedTarget = isFirstTargetRow ? escapeHTML(observation.target) : ""
+        let target = escapedTarget
         let route =
-            isFirstTargetRow ? renderTargetRoute(observation.route, title: observation.target) : ""
+            isFirstTargetRow ? renderTargetRoute(observation.route, escapedTitle: escapedTarget) : ""
         let rowClass = isFirstTargetRow ? "observation-row" : "observation-row same-target"
         chunks.append(
             "<div class=\"\(rowClass)\"><span class=\"observation-route-cell\">\(route)</span><span class=\"observation-target\">\(target)</span><span class=\"observation-spacer\" aria-hidden=\"true\"></span>\(renderObservationLinks(observation))<span class=\"observation-attempt\">\(escapeHTML(observation.attempt))</span><span class=\"badge \(observation.status.statusClass)\">\(observation.status.statusText)</span>\(observationDurationBadge(observation.duration))</div>"
@@ -1396,13 +1546,15 @@ private func renderObservationLinks(_ observation: ReportTestObservation) -> Str
     return "<span class=\"observation-actions\">\(links.joined())</span>"
 }
 
-private func renderTargetRoute(_ route: TargetRoute, title: String) -> String {
+private func renderTargetRoute(_ route: TargetRoute, escapedTitle: String) -> String {
+    // Returns a trusted HTML fragment. Callers must pass an already-escaped title
+    // so untrusted target names are encoded before entering this fragment.
     let cli = "<span class=\"target-route-cli\">\(renderTargetLogo(route.cli))</span>"
     let arrow = "<span class=\"target-route-arrow\" aria-hidden=\"true\">›</span>"
     let agent =
         "<span class=\"target-route-agent\">\(route.agent.map(renderTargetLogo) ?? "")</span>"
     return
-        "<span class=\"target-route\" title=\"\(escapeHTML(title))\">\(cli)\(arrow)\(agent)</span>"
+        "<span class=\"target-route\" title=\"\(escapedTitle)\">\(cli)\(arrow)\(agent)</span>"
 }
 
 private func targetRoute(for target: String, attemptURL: URL) throws -> TargetRoute {
@@ -2037,4 +2189,5 @@ private func escapeHTML(_ value: String) -> String {
         .replacingOccurrences(of: "<", with: "&lt;")
         .replacingOccurrences(of: ">", with: "&gt;")
         .replacingOccurrences(of: "\"", with: "&quot;")
+        .replacingOccurrences(of: "'", with: "&#39;")
 }
