@@ -291,6 +291,55 @@ private enum ReportTargetOutcome {
     case skipped
     case failed
     case unknown
+
+    var statusClass: String {
+        switch self {
+        case .passed:
+            return "pass"
+        case .flaked:
+            return "flaked"
+        case .skipped:
+            return "skipped"
+        case .failed:
+            return "fail"
+        case .unknown:
+            return "unknown"
+        }
+    }
+
+    var statusText: String {
+        switch self {
+        case .passed:
+            return "Passed"
+        case .flaked:
+            return "Flaked"
+        case .skipped:
+            return "Skipped"
+        case .failed:
+            return "Failed"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+}
+
+private struct ReportTargetOverviewRow {
+    var target: String
+    var route: TargetRoute
+    var attempts: Int
+    var tests: Int
+    var counts: ReportTargetOutcomeCounts
+
+    var outcome: ReportTargetOutcome {
+        targetOverviewOutcome(for: counts)
+    }
+}
+
+private struct ReportTargetOverviewAccumulator {
+    var route: TargetRoute?
+    var attempts: Set<String> = []
+    var tests = 0
+    var counts = ReportTargetOutcomeCounts()
 }
 
 private struct ReportTestCase {
@@ -633,6 +682,15 @@ private func targetOutcome(for statuses: [ReportTestStatus]) -> ReportTargetOutc
     if failed && !passed && !skipped && !unknown {
         return .failed
     }
+    return .unknown
+}
+
+private func targetOverviewOutcome(for counts: ReportTargetOutcomeCounts) -> ReportTargetOutcome {
+    if counts.failed > 0 { return .failed }
+    if counts.unknown > 0 { return .unknown }
+    if counts.flaked > 0 { return .flaked }
+    if counts.passed > 0 { return .passed }
+    if counts.skipped > 0 { return .skipped }
     return .unknown
 }
 
@@ -1000,6 +1058,33 @@ private func extractAIItems(from lines: [String]) -> [String] {
     return items
 }
 
+private func buildTargetOverview(files: [ReportTestFile]) -> [ReportTargetOverviewRow] {
+    var rowsByTarget: [String: ReportTargetOverviewAccumulator] = [:]
+
+    for test in files.flatMap(\.tests) {
+        let observationsByTarget = Dictionary(grouping: test.observations, by: \.target)
+        for (target, observations) in observationsByTarget {
+            var row = rowsByTarget[target] ?? ReportTargetOverviewAccumulator()
+            row.route = row.route ?? observations.first?.route
+            row.attempts.formUnion(observations.map(\.attempt))
+            row.tests += 1
+            row.counts.add(targetOutcome(for: observations.map(\.status)))
+            rowsByTarget[target] = row
+        }
+    }
+
+    return rowsByTarget.map { target, row in
+        ReportTargetOverviewRow(
+            target: target,
+            route: row.route ?? TargetRoute(cli: .unknown, agent: nil),
+            attempts: row.attempts.count,
+            tests: row.tests,
+            counts: row.counts
+        )
+    }
+    .sorted { $0.target < $1.target }
+}
+
 private func renderReport(
     templateURL: URL,
     runURL: URL,
@@ -1037,6 +1122,7 @@ private func renderReport(
     try renderReviewAggregateHTMLIfPresent(runURL: runURL)
 
     let reviewHTML = renderRunAIReview(aiReviews.root)
+    let targetOverview = renderTargetOverview(buildTargetOverview(files: files))
     let testCards = renderCards(files: files)
 
     template.replaceSubrange(
@@ -1051,6 +1137,7 @@ private func renderReport(
             "Generated from Swift E2E run results, Swift Testing results, and captured command recordings.",
         "{{RUN_ID}}": runID(outputURL: outputURL),
         "{{REVIEW_AGGREGATE_LINK}}": renderReviewAggregateLink(runURL: runURL),
+        "{{TARGET_OVERVIEW}}": targetOverview,
         "{{TESTS_PASSED_COUNT}}": String(passed),
         "{{TESTS_FLAKED_COUNT}}": String(flaked),
         "{{TESTS_SKIPPED_COUNT}}": String(skipped),
@@ -1072,6 +1159,7 @@ private func renderReport(
         "{{VISIBLE_TEST_COUNT}}",
         "{{TOTAL_TEST_COUNT}}",
         "{{REVIEW_AGGREGATE_LINK}}",
+        "{{TARGET_OVERVIEW}}",
     ]
 
     for (placeholder, value) in replacements {
@@ -1332,6 +1420,58 @@ private func renderCards(files: [ReportTestFile]) -> String {
 
 private func displayOutcomeCounts(for test: ReportTestCase) -> ReportTargetOutcomeCounts {
     test.targetOutcomes.isEmpty ? .fallback(for: test.status) : test.targetOutcomes
+}
+
+private func renderTargetOverview(_ rows: [ReportTargetOverviewRow]) -> String {
+    guard !rows.isEmpty else {
+        return ""
+    }
+
+    let tableRows = rows.map { row in
+        let outcome = row.outcome
+        return """
+            <tr>
+              <td><span class="target-overview-target">\(renderTargetRoute(row.route, title: row.target))<span>\(escapeHTML(row.target))</span></span></td>
+              <td><span class="badge \(outcome.statusClass)">\(outcome.statusText)</span></td>
+              <td class="numeric">\(row.attempts)</td>
+              <td class="numeric">\(row.tests)</td>
+              <td class="numeric">\(row.counts.passed)</td>
+              <td class="numeric">\(row.counts.flaked)</td>
+              <td class="numeric">\(row.counts.failed)</td>
+              <td class="numeric">\(row.counts.skipped)</td>
+              <td class="numeric">\(row.counts.unknown)</td>
+            </tr>
+            """
+    }.joined(separator: "\n")
+
+    return """
+        <section class="target-overview" aria-labelledby="target-overview-heading">
+          <div class="target-overview-header">
+            <h2 id="target-overview-heading">CLI → Agent run overview</h2>
+            <p>Target outcome is aggregated across all attempts for each CLI/agent combination. Individual test badges below keep their per-test semantics.</p>
+          </div>
+          <div class="target-overview-table-wrapper">
+            <table class="target-overview-table">
+              <thead>
+                <tr>
+                  <th scope="col">CLI → Agent</th>
+                  <th scope="col">Outcome</th>
+                  <th class="numeric" scope="col">Attempts</th>
+                  <th class="numeric" scope="col">Tests</th>
+                  <th class="numeric" scope="col">Passed</th>
+                  <th class="numeric" scope="col">Flaked</th>
+                  <th class="numeric" scope="col">Failed</th>
+                  <th class="numeric" scope="col">Skipped</th>
+                  <th class="numeric" scope="col">Unknown</th>
+                </tr>
+              </thead>
+              <tbody>
+        \(tableRows)
+              </tbody>
+            </table>
+          </div>
+        </section>
+        """
 }
 
 private func renderTargetOutcomeBadges(_ counts: ReportTargetOutcomeCounts) -> String {
