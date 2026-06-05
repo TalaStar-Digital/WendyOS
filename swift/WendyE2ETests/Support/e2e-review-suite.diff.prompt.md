@@ -23,9 +23,15 @@ Guidelines:
   tied to the diff plus the suggested action.
 - Put evidence, reasoning, targeted diff references, and longer analysis under
   the review file's `## Details` heading.
+- Treat the generated `overview.json` failure/flake section as the source of
+  truth for run outcomes. Every diff-related deterministic `FAILED` target
+  outcome must get an AI review explaining the likely root cause and what to do
+  next. Every diff-related `FLAKED` target outcome must get an AI review
+  explaining why it may have flaked and how to investigate or stabilize it. Then
+  consider unresolved `UNKNOWN` outcomes.
 - Cite concrete evidence in details: source paths, target/attempt names, result
-  details, recording paths, shell script paths, and the targeted diff files or
-  hunks you inspected.
+  details, recording paths, shell script paths, `overview.json` outcome data,
+  and the targeted diff files or hunks you inspected.
 - Use JSON `locations` only when the review is attributable to source lines.
 - Do not edit source code, tests, xUnit files, recordings, or the run's
   top-level `git-diff-*.txt` files.
