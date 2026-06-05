@@ -730,6 +730,17 @@ func TestBuildSourceElement_NilAvailableMapTreatedAsLibcamerasrcAbsent(t *testin
 	}
 }
 
+// A libcamera id that could inject extra pipeline elements (spaces, '!', '=')
+// must not reach the pipeline: buildSourceElement falls back to plain
+// libcamerasrc auto-select instead of interpolating camera-name=<hostile>.
+func TestBuildSourceElement_RejectsInjectableLibcameraID(t *testing.T) {
+	hostile := "/cam ! filesink location=/etc/passwd"
+	src := buildSourceElement("/dev/video0", camera.TransportCSI, hostile, defaultElements())
+	if src != "libcamerasrc" {
+		t.Errorf("hostile libcamera id must degrade to plain libcamerasrc, got %q", src)
+	}
+}
+
 func TestBuildArgusGStreamerArgs_NVV4L2DirectNVMM(t *testing.T) {
 	args := buildArgusGStreamerArgs("gst", &agentpb.StreamVideoRequest{}, 0, "nvv4l2h264enc", true,
 		map[string]bool{"nvarguscamerasrc": true, "nvv4l2h264enc": true})

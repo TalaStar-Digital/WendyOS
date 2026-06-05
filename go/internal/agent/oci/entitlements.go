@@ -360,13 +360,20 @@ var boardDetect = board.Detect
 func applyCamera(spec *Spec) {
 	spec.Process.User.AdditionalGids = appendUnique(spec.Process.User.AdditionalGids, videoGroupGID)
 
-	// Allow video4linux devices (major 81).
+	// Allow video4linux devices (major 81). Access is "rw", not "rwm": the
+	// container opens device nodes that the host kernel creates and that the
+	// /dev bind mount below surfaces live — it never needs to *create* device
+	// nodes itself, so withholding the mknod bit removes a container-escape
+	// primitive without affecting camera capture. The major is intentionally
+	// left minor-unrestricted: USB webcam hotplug recreates /dev/videoN under a
+	// new minor, and pinning a minor discovered at apply time would deny the
+	// device after a replug (see the /dev bind-mount rationale below).
 	major := v4l2Major
 	spec.Linux.Resources.Devices = append(spec.Linux.Resources.Devices, LinuxDeviceCgroup{
 		Allow:  true,
 		Type:   "c",
 		Major:  &major,
-		Access: "rwm",
+		Access: "rw",
 	})
 
 	// Replace the isolated /dev tmpfs with a live bind mount of the host /dev
@@ -432,11 +439,14 @@ func allowMajorsFromGlob(spec *Spec, glob string) {
 		}
 		seen[major] = true
 		m := major
+		// "rw", not "rwm": these auxiliary media/dma-heap/v4l-subdev (and Jetson
+		// nvhost/nvmap) nodes are opened by the container, never created by it,
+		// so the mknod bit is unnecessary and is withheld as least privilege.
 		spec.Linux.Resources.Devices = append(spec.Linux.Resources.Devices, LinuxDeviceCgroup{
 			Allow:  true,
 			Type:   "c",
 			Major:  &m,
-			Access: "rwm",
+			Access: "rw",
 		})
 	}
 }

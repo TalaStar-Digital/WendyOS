@@ -584,7 +584,12 @@ func (s *VideoService) streamGStreamer(ctx context.Context, stream grpc.ServerSt
 	var args []string
 	if useArgusSource(transport, s.hostIsJetson(), available) {
 		// Argus indexes sensors by sensor-id; /dev/videoN maps to sensor-id N
-		// for the common single-CSI-camera case.
+		// for the common single-CSI-camera case. sensor-id is derived from the
+		// client-supplied device id, but the os.Stat(path) gate above already
+		// rejected ids that do not name an existing /dev/videoN node, and camera
+		// access is authorized at the entitlement level (one camera entitlement
+		// grants all cameras — see oci.applyCamera), not per-device. There is no
+		// per-camera authorization here for a crafted id to bypass.
 		sensorID := int(req.GetDeviceId())
 		s.logger.Info("CSI camera on Jetson — capturing via nvarguscamerasrc (Argus)",
 			zap.Int("sensor_id", sensorID), zap.String("encoder", enc.element))
@@ -608,13 +613,30 @@ func (s *VideoService) streamGStreamer(ctx context.Context, stream grpc.ServerSt
 		cmd.Process.Kill()          //nolint:errcheck
 		io.Copy(io.Discard, stdout) // drain so Wait's internal goroutine can exit
 		waitErr := cmd.Wait()
+		msg := strings.TrimSpace(stderrBuf.String())
+		// Fields that pin down which pipeline failed, for security monitoring:
+		// a device-access denial (e.g. cgroup/permission) surfaces here as
+		// GStreamer stderr, and without logging it the stream would tear down
+		// with no host-side trace.
+		fields := []zap.Field{
+			zap.String("device", path),
+			zap.String("encoder", enc.element),
+			zap.String("transport", transport.String()),
+		}
 		if runErr == nil {
-			msg := strings.TrimSpace(stderrBuf.String())
+			// The pipeline died on its own (not a client disconnect): a genuine
+			// failure worth an Error-level record.
 			if msg != "" {
+				s.logger.Error("GStreamer pipeline exited with error", append(fields, zap.String("stderr", msg))...)
 				runErr = status.Errorf(codes.Internal, "gstreamer exited with error: %s", msg)
 			} else if waitErr != nil {
+				s.logger.Error("GStreamer process exited abnormally", append(fields, zap.Error(waitErr))...)
 				runErr = status.Errorf(codes.Internal, "gstreamer exited with error: %v", waitErr)
 			}
+		} else if msg != "" {
+			// Teardown path (client disconnect / context cancel). Keep any stderr
+			// inspectable at Debug without alarming on every normal disconnect.
+			s.logger.Debug("GStreamer stderr on teardown", append(fields, zap.String("stderr", msg))...)
 		}
 	}()
 
@@ -884,9 +906,16 @@ func useArgusSource(transport camera.Transport, isJetson bool, available map[str
 
 // buildSourceElement chooses the capture source element for the GStreamer
 // pipeline. See buildGStreamerArgs for the selection rules.
+//
+// libcameraID originates from `cam --list` output and is the one externally
+// sourced string interpolated into the pipeline, which is later split with
+// strings.Fields — so it is validated here as a defense-in-depth check at the
+// injection sink. An ID that fails validation is dropped and libcamerasrc
+// auto-selects instead. (devicePath is always "/dev/video%d" formatted from a
+// uint32 device id, so it cannot contain whitespace or pipeline separators.)
 func buildSourceElement(devicePath string, transport camera.Transport, libcameraID string, available map[string]bool) string {
 	if transport == camera.TransportCSI && available != nil && available["libcamerasrc"] {
-		if libcameraID != "" {
+		if camera.IsValidLibcameraID(libcameraID) {
 			return fmt.Sprintf("libcamerasrc camera-name=%s", libcameraID)
 		}
 		return "libcamerasrc"

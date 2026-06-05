@@ -483,6 +483,9 @@ func assertCameraEntitlement(t *testing.T, spec *Spec, entType string) {
 	for _, d := range spec.Linux.Resources.Devices {
 		if d.Major != nil && *d.Major == 81 && d.Allow {
 			foundV4L2Rule = true
+			if strings.Contains(d.Access, "m") {
+				t.Errorf("%s entitlement V4L2 rule must not grant mknod, got Access=%q", entType, d.Access)
+			}
 			break
 		}
 	}
@@ -952,6 +955,17 @@ func countMajorRule(spec *Spec, want int64) int {
 	return n
 }
 
+// majorRuleAccess returns the Access mask of the first allow rule for the given
+// major, and whether such a rule exists.
+func majorRuleAccess(spec *Spec, want int64) (string, bool) {
+	for _, d := range spec.Linux.Resources.Devices {
+		if d.Allow && d.Major != nil && *d.Major == want {
+			return d.Access, true
+		}
+	}
+	return "", false
+}
+
 func TestApplyCamera_AddsMediaMajor(t *testing.T) {
 	installFakeCameraGlobs(t, map[string]int64{
 		"media0": 234,
@@ -1048,5 +1062,41 @@ func TestApplyCamera_NonJetsonOmitsNvhost(t *testing.T) {
 	}
 	if hasMajorRule(spec, 230) {
 		t.Errorf("nvhost major 230 must not be allowed on non-Jetson hosts")
+	}
+}
+
+// TestApplyCamera_DeviceRulesOmitMknod locks in least privilege: every cgroup
+// device rule the camera entitlement adds — the static v4l2 major and every
+// dynamically-discovered media/dma-heap/v4l-subdev/nvhost/nvmap major — must
+// grant "rw" only. The mknod ('m') bit is withheld because the container opens
+// host-created, bind-mounted device nodes and never needs to create its own.
+func TestApplyCamera_DeviceRulesOmitMknod(t *testing.T) {
+	installFakeCameraGlobs(t, map[string]int64{
+		"media0":          234,
+		"v4l-subdev0":     235,
+		"dma_heap/system": 236,
+		"nvhost-ctrl":     230,
+		"nvmap":           242,
+	})
+	boardDetect = func() board.Info { return board.Info{Kind: board.Jetson} }
+
+	spec := DefaultSpec("/rootfs", []string{"/bin/sh"})
+	cfg := &appconfig.AppConfig{AppID: "test", Entitlements: []appconfig.Entitlement{{Type: appconfig.EntitlementCamera}}}
+	if err := ApplyEntitlements(spec, cfg, ApplyOptions{}); err != nil {
+		t.Fatalf("ApplyEntitlements: %v", err)
+	}
+
+	for _, major := range []int64{81, 234, 235, 236, 230, 242} {
+		acc, ok := majorRuleAccess(spec, major)
+		if !ok {
+			t.Errorf("expected an allow rule for camera major %d", major)
+			continue
+		}
+		if strings.Contains(acc, "m") {
+			t.Errorf("camera major %d must not grant mknod, got Access=%q", major, acc)
+		}
+		if acc != "rw" {
+			t.Errorf("camera major %d Access = %q, want %q", major, acc, "rw")
+		}
 	}
 }

@@ -158,6 +158,29 @@ func EnumerateLibcamera(ctx context.Context) (map[string]string, error) {
 // var so tests can shorten it.
 var libcameraTimeout = time.Second
 
+// IsValidLibcameraID reports whether id is safe to interpolate into a
+// GStreamer pipeline as `libcamerasrc camera-name=<id>`. A libcamera ID is a
+// device-tree-style path (e.g. "/base/soc/i2c0mux/i2c@1/imx477@1a"), so the
+// allowlist is restricted to path, alphanumeric and a small set of punctuation
+// characters. Anything containing whitespace or GStreamer control characters
+// (notably ' ', '!', '=') is rejected, so a malformed or hostile ID can never
+// inject additional pipeline elements once the pipeline string is split with
+// strings.Fields downstream.
+func IsValidLibcameraID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '/' || r == '@' || r == ':' || r == '.' || r == '_' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // parseCamList extracts (id, hint) pairs from `cam --list` output.
 // Sample line shape:
 //
@@ -165,6 +188,11 @@ var libcameraTimeout = time.Second
 //
 // The parser keys only on the structural separators "'", ":" and "(", ")".
 // It never matches on sensor model strings, so it works for any sensor.
+//
+// IDs that fail IsValidLibcameraID are dropped: a libcamera-name that cannot be
+// safely interpolated into a GStreamer pipeline is useless to us (we'd fall back
+// to auto-select anyway) and keeping it out of the map keeps every downstream
+// consumer — `device camera list` surfacing and the capture pipeline — clean.
 func parseCamList(out string) map[string]string {
 	result := map[string]string{}
 	scanner := bufio.NewScanner(strings.NewReader(out))
@@ -176,7 +204,7 @@ func parseCamList(out string) map[string]string {
 			continue
 		}
 		id := line[open+1 : close]
-		if id == "" {
+		if !IsValidLibcameraID(id) {
 			continue
 		}
 		hint := strings.TrimSpace(line[:open])

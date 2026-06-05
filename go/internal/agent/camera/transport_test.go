@@ -204,6 +204,48 @@ func TestParseCamList_IgnoresMalformed(t *testing.T) {
 	}
 }
 
+func TestIsValidLibcameraID(t *testing.T) {
+	valid := []string{
+		"/base/soc/i2c0mux/i2c@1/imx477@1a",
+		"/base/cam@1a",
+		"imx219",
+		"a.b_c-d:e/f@g",
+	}
+	for _, id := range valid {
+		if !IsValidLibcameraID(id) {
+			t.Errorf("IsValidLibcameraID(%q) = false, want true", id)
+		}
+	}
+
+	invalid := []string{
+		"",                            // empty
+		"/base/cam id with spaces",    // whitespace splits under strings.Fields
+		"/cam ! filesink location=/x", // injects extra pipeline elements
+		"cam\tname",                   // tab is whitespace
+		"cam=value",                   // '=' is a gst property separator
+		"/cam'quoted",                 // quote not in allowlist
+	}
+	for _, id := range invalid {
+		if IsValidLibcameraID(id) {
+			t.Errorf("IsValidLibcameraID(%q) = true, want false", id)
+		}
+	}
+}
+
+// A camera-name that would inject extra GStreamer pipeline elements (spaces,
+// '!', '=') once the pipeline is split with strings.Fields must be dropped, not
+// surfaced to callers.
+func TestParseCamList_DropsInjectableID(t *testing.T) {
+	out := "0: 'Evil' (/cam ! filesink location=/etc/passwd)\n1: 'Good' (/base/cam@1a)\n"
+	got := parseCamList(out)
+	if len(got) != 1 {
+		t.Fatalf("expected only the safe id to survive, got %d: %v", len(got), got)
+	}
+	if _, ok := got["/base/cam@1a"]; !ok {
+		t.Errorf("expected the safe id to be kept, got %v", got)
+	}
+}
+
 // Sanity: confirm Classify works for a non-existent /sys path (real-world
 // host-test fallback before fakes are installed in TestMain).
 func TestClassify_DefaultsAreSafe(t *testing.T) {

@@ -43,9 +43,8 @@ var (
 	socFamilyPath       = "/sys/devices/soc0/family"
 	deviceTreeModelPath = "/proc/device-tree/model"
 
-	cached   Info
-	cachedOk bool
-	once     sync.Once
+	cached Info
+	once   sync.Once
 )
 
 // Detect returns the host board info. The first call probes the filesystem;
@@ -54,16 +53,17 @@ var (
 func Detect() Info {
 	once.Do(func() {
 		cached = detect()
-		cachedOk = true
 	})
 	return cached
 }
 
-// resetForTest clears the cache. Test-only; not exported.
+// resetForTest clears the cache. Test-only; not exported. Tests that call this
+// must not run Detect() concurrently with the reset: replacing once is not
+// synchronized, by design — detection is a cheap, deterministic filesystem
+// probe, so tests reset-then-detect sequentially.
 func resetForTest() {
 	once = sync.Once{}
 	cached = Info{}
-	cachedOk = false
 }
 
 func detect() Info {
