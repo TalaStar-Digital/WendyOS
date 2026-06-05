@@ -325,7 +325,9 @@ func main() {
 		}
 
 		floor := certNotBeforeFloor(certPEM)
-		if now := time.Now(); !floor.IsZero() && now.Before(floor) {
+		if floor.IsZero() && certPEM != "" {
+			logger.Warn("Could not extract NotBefore from provisioning cert — NTP clock skew protection is disabled")
+		} else if now := time.Now(); !floor.IsZero() && now.Before(floor) {
 			logger.Warn("Device clock predates provisioning cert — using cert NotBefore as mTLS time floor; clock will sync when network is available",
 				zap.Time("deviceClock", now),
 				zap.Time("floor", floor),

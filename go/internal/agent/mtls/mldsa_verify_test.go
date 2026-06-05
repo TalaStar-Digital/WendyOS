@@ -119,7 +119,9 @@ func buildMLDSACACert(t *testing.T, subject pkix.Name, withCertSign bool) (*x509
 		Signature:    algID{Algorithm: oidMLDSA65},
 		Issuer:       asn1.RawValue{FullBytes: subjectRDN},
 		Validity: validity{
-			NotBefore: now.Add(-time.Hour),
+			// Use a far-past NotBefore so that tests simulating a stale device
+			// clock (e.g. now-25h) still pass the CA NotBefore check.
+			NotBefore: now.Add(-7 * 24 * time.Hour),
 			NotAfter:  now.Add(24 * time.Hour),
 		},
 		Subject:              asn1.RawValue{FullBytes: subjectRDN},
@@ -438,7 +440,8 @@ func TestVerifyMLDSAClientCert_MultipleCAsSameSubject_SecondCASucceeds(t *testin
 	// Trusted pool has CA1 first, CA2 second.
 	trustedCAs := []*x509.Certificate{ca1, ca2}
 
-	err := verifyMLDSAClientCert(leaf, trustedCAs, time.Now())
+	now := time.Now()
+	err := verifyMLDSAClientCert(leaf, trustedCAs, now, now)
 	if err != nil {
 		t.Errorf("verifyMLDSAClientCert() = %v; want nil (second CA should succeed)", err)
 	}
@@ -477,7 +480,8 @@ func TestVerifyMLDSAClientCert_MultipleCAsSameSubject_AllFail(t *testing.T) {
 
 	trustedCAs := []*x509.Certificate{ca1, ca2}
 
-	err := verifyMLDSAClientCert(leaf, trustedCAs, time.Now())
+	now := time.Now()
+	err := verifyMLDSAClientCert(leaf, trustedCAs, now, now)
 	if err == nil {
 		t.Fatal("verifyMLDSAClientCert() = nil; want an error when all CAs fail")
 	}
@@ -513,14 +517,15 @@ func TestVerifyMLDSAClientCert_NotBeforeFloor(t *testing.T) {
 	staleNow := leaf.NotBefore.Add(-24 * time.Hour)
 	trustedCAs := []*x509.Certificate{ca}
 
-	if err := verifyMLDSAClientCert(leaf, trustedCAs, staleNow); err == nil {
+	if err := verifyMLDSAClientCert(leaf, trustedCAs, staleNow, staleNow); err == nil {
 		t.Fatal("expected error with stale clock, got nil")
 	}
 
-	// With floor = leaf.NotBefore, the same call must succeed.
+	// With effectiveNow = floor = leaf.NotBefore, the leaf's NotBefore check passes
+	// while realNow (the stale clock) is still used for expiry and CA validity.
 	floor := leaf.NotBefore
-	if err := verifyMLDSAClientCert(leaf, trustedCAs, floor); err != nil {
-		t.Errorf("verifyMLDSAClientCert() with floor = %v; error = %v", floor, err)
+	if err := verifyMLDSAClientCert(leaf, trustedCAs, staleNow, floor); err != nil {
+		t.Errorf("verifyMLDSAClientCert() with staleNow=%v floor=%v; error = %v", staleNow, floor, err)
 	}
 }
 
@@ -538,8 +543,9 @@ func TestVerifyMLDSAClientCert_NotAfterUsesRealClock(t *testing.T) {
 	// effectiveNow is set two days in the future — past the leaf's NotAfter.
 	// With the old code (effectiveNow.After(NotAfter)) this would have rejected
 	// an otherwise valid cert. With the fix (time.Now().After(NotAfter)) it passes.
-	futureFloor := time.Now().Add(48 * time.Hour)
-	if err := verifyMLDSAClientCert(leaf, trustedCAs, futureFloor); err != nil {
+	realNow := time.Now()
+	futureFloor := realNow.Add(48 * time.Hour)
+	if err := verifyMLDSAClientCert(leaf, trustedCAs, realNow, futureFloor); err != nil {
 		t.Errorf("verifyMLDSAClientCert() with futureFloor=%v: %v; want nil (expiry must use real clock)", futureFloor, err)
 	}
 }
@@ -561,7 +567,8 @@ func TestVerifyMLDSAClientCert_IssuerNotFound(t *testing.T) {
 	fakeCA, _ := buildMLDSACACert(t, differentSubject, true)
 	trustedCAs := []*x509.Certificate{fakeCA}
 
-	err := verifyMLDSAClientCert(leaf, trustedCAs, time.Now())
+	now := time.Now()
+	err := verifyMLDSAClientCert(leaf, trustedCAs, now, now)
 	if err == nil {
 		t.Fatal("verifyMLDSAClientCert() = nil; want an error when issuer is not found")
 	}
