@@ -1095,31 +1095,21 @@ private func appendRunOverviewSuiteFocus(
     )
     lines.append("")
 
-    guard let suite = overview.suites.first(where: { $0.key == suiteKey }) else {
-        lines.append("- No suite entry was found in `\(e2eRunOverviewFileName)` for `\(suiteKey)`.")
-        lines.append("")
-        return
-    }
-
-    var wrote = false
-    for test in suite.tests {
-        let notableOutcomes = test.targetOutcomes.filter { outcome in
-            outcome.outcome == .failed || outcome.outcome == .flaked || outcome.outcome == .unknown
-        }
-        guard !notableOutcomes.isEmpty else { continue }
-
-        wrote = true
-        lines.append("### `\(suite.key)/\(test.key)`")
-        for outcome in notableOutcomes {
-            appendRunOverviewTestTargetOutcome(outcome, prefix: "-", to: &lines)
-        }
-        lines.append("")
-    }
-
-    if !wrote {
-        lines.append("- No deterministic failures, flakes, or unknown target outcomes were recorded for this suite.")
-        lines.append("")
-    }
+    appendRunOverviewIssues(
+        title: "Deterministic failures",
+        issues: overview.noteworthy.deterministicFailures.filter { $0.suite == suiteKey },
+        to: &lines
+    )
+    appendRunOverviewIssues(
+        title: "Flakes",
+        issues: overview.noteworthy.flakes.filter { $0.suite == suiteKey },
+        to: &lines
+    )
+    appendRunOverviewIssues(
+        title: "Unknown outcomes",
+        issues: overview.noteworthy.unknowns.filter { $0.suite == suiteKey },
+        to: &lines
+    )
 }
 
 private func appendRunOverviewReportFocus(
@@ -1184,38 +1174,15 @@ private func appendRunOverviewIssues(
     lines.append("")
 }
 
-private func appendRunOverviewTestTargetOutcome(
-    _ outcome: E2ERunOverviewTestTargetOutcome,
-    prefix: String,
-    to lines: inout [String]
-) {
-    lines.append(
-        "\(prefix) target=`\(outcome.target)` outcome=`\(outcome.outcome.rawValue)` attempts=\(runOverviewObservationSummary(outcome.attempts))"
-    )
-    for attempt in outcome.attempts where attempt.status != .passed || outcome.outcome == .flaked {
-        appendRunOverviewObservation(attempt, prefix: "  ", to: &lines)
-    }
-}
-
-private func appendRunOverviewObservation(
-    _ observation: E2ERunOverviewObservation,
-    prefix: String,
-    to lines: inout [String]
-) {
-    let duration = observation.durationSeconds.map(formatSeconds) ?? "unknown"
-    lines.append(
-        "\(prefix)- attempt=`\(observation.attempt)` status=`\(observation.status.rawValue)` duration=`\(duration)`"
-    )
-    appendRunOverviewDetail(observation.detail, prefix: "\(prefix)  ", to: &lines)
-    appendRunOverviewArtifacts(observation.artifacts, prefix: "\(prefix)  ", to: &lines)
-}
-
 private func appendRunOverviewIssueAttempt(
     _ attempt: E2ERunOverviewIssueAttempt,
     prefix: String,
     to lines: inout [String]
 ) {
-    lines.append("\(prefix)- attempt=`\(attempt.attempt)` status=`\(attempt.status.rawValue)`")
+    let duration = attempt.durationSeconds.map(formatSeconds) ?? "unknown"
+    lines.append(
+        "\(prefix)- attempt=`\(attempt.attempt)` status=`\(attempt.status.rawValue)` duration=`\(duration)`"
+    )
     appendRunOverviewDetail(attempt.detail, prefix: "\(prefix)  ", to: &lines)
     appendRunOverviewArtifacts(attempt.artifacts, prefix: "\(prefix)  ", to: &lines)
 }
@@ -1243,10 +1210,6 @@ private func appendRunOverviewArtifacts(
     if let testResults = artifacts.testResults {
         lines.append("\(prefix)xunit: `\(testResults)`")
     }
-}
-
-private func runOverviewObservationSummary(_ observations: [E2ERunOverviewObservation]) -> String {
-    observations.map { "\($0.attempt):\($0.status.rawValue)" }.joined(separator: ",")
 }
 
 private func runOverviewIssueAttemptSummary(_ attempts: [E2ERunOverviewIssueAttempt]) -> String {

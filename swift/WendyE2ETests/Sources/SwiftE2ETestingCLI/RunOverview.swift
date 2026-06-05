@@ -13,7 +13,6 @@ struct E2ERunOverview: Codable, Sendable {
     var generatedAt: String
     var summary: E2ERunOverviewSummary
     var targets: [E2ERunOverviewTarget]
-    var suites: [E2ERunOverviewSuite]
     var noteworthy: E2ERunOverviewNoteworthy
 }
 
@@ -41,30 +40,6 @@ struct E2ERunOverviewTarget: Codable, Sendable {
     var unknown: Int
 }
 
-struct E2ERunOverviewSuite: Codable, Sendable {
-    var key: String
-    var tests: [E2ERunOverviewTest]
-}
-
-struct E2ERunOverviewTest: Codable, Sendable {
-    var key: String
-    var targetOutcomes: [E2ERunOverviewTestTargetOutcome]
-}
-
-struct E2ERunOverviewTestTargetOutcome: Codable, Sendable {
-    var target: String
-    var outcome: E2ERunOverviewOutcome
-    var attempts: [E2ERunOverviewObservation]
-}
-
-struct E2ERunOverviewObservation: Codable, Sendable {
-    var attempt: String
-    var status: E2ERunOverviewStatus
-    var durationSeconds: Double?
-    var detail: String?
-    var artifacts: E2ERunOverviewArtifacts
-}
-
 struct E2ERunOverviewArtifacts: Codable, Sendable {
     var recording: String?
     var shell: String?
@@ -88,6 +63,7 @@ struct E2ERunOverviewIssue: Codable, Sendable {
 struct E2ERunOverviewIssueAttempt: Codable, Sendable {
     var attempt: String
     var status: E2ERunOverviewStatus
+    var durationSeconds: Double?
     var detail: String?
     var artifacts: E2ERunOverviewArtifacts
 }
@@ -183,7 +159,6 @@ private struct OverviewTargetAccumulator {
 }
 
 private func makeRunOverview(in runURL: URL) throws -> E2ERunOverview {
-    var suites: [E2ERunOverviewSuite] = []
     var targetAccumulators: [String: OverviewTargetAccumulator] = [:]
     var summaryCounts = OverviewOutcomeCounts()
     var uniqueTests = Set<String>()
@@ -197,17 +172,16 @@ private func makeRunOverview(in runURL: URL) throws -> E2ERunOverview {
     for suiteURL in try overviewDirectoryChildren(of: runURL) {
         let suiteKey = suiteURL.lastPathComponent
         guard !isE2EReviewDirectoryName(suiteKey) else { continue }
-        var tests: [E2ERunOverviewTest] = []
 
         for testURL in try overviewDirectoryChildren(of: suiteURL) {
             let testKey = testURL.lastPathComponent
             guard !isE2EReviewDirectoryName(testKey) else { continue }
-            var targetOutcomes: [E2ERunOverviewTestTargetOutcome] = []
+            var hasTargetOutcome = false
 
             for targetURL in try overviewDirectoryChildren(of: testURL) {
                 let targetName = targetURL.lastPathComponent
                 guard !isE2EReviewDirectoryName(targetName) else { continue }
-                var observations: [E2ERunOverviewObservation] = []
+                var attempts: [E2ERunOverviewIssueAttempt] = []
 
                 for attemptURL in try overviewDirectoryChildren(of: targetURL) {
                     let attemptName = attemptURL.lastPathComponent
@@ -218,8 +192,8 @@ private func makeRunOverview(in runURL: URL) throws -> E2ERunOverview {
                         attemptURL: attemptURL
                     )
                     let artifacts = overviewArtifacts(attemptURL: attemptURL, runURL: runURL)
-                    observations.append(
-                        E2ERunOverviewObservation(
+                    attempts.append(
+                        E2ERunOverviewIssueAttempt(
                             attempt: attemptName,
                             status: result.status,
                             durationSeconds: result.durationSeconds,
@@ -231,36 +205,27 @@ private func makeRunOverview(in runURL: URL) throws -> E2ERunOverview {
                     commandCount += try overviewCommandCount(attemptURL: attemptURL)
                 }
 
-                observations.sort { $0.attempt < $1.attempt }
-                let outcome = overviewOutcome(for: observations.map(\.status))
-                targetOutcomes.append(
-                    E2ERunOverviewTestTargetOutcome(
-                        target: targetName,
-                        outcome: outcome,
-                        attempts: observations
-                    )
-                )
+                attempts.sort { $0.attempt < $1.attempt }
+                let outcome = overviewOutcome(for: attempts.map(\.status))
+                hasTargetOutcome = true
 
                 testTargetCount += 1
                 summaryCounts.add(outcome)
-                targetAccumulators[targetName, default: OverviewTargetAccumulator()].attempts
-                    .formUnion(observations.map(\.attempt))
-                targetAccumulators[targetName, default: OverviewTargetAccumulator()].tests += 1
-                targetAccumulators[targetName, default: OverviewTargetAccumulator()].counts.add(outcome)
+                var targetAccumulator = targetAccumulators[
+                    targetName,
+                    default: OverviewTargetAccumulator()
+                ]
+                targetAccumulator.attempts.formUnion(attempts.map(\.attempt))
+                targetAccumulator.tests += 1
+                targetAccumulator.counts.add(outcome)
+                targetAccumulators[targetName] = targetAccumulator
 
                 let issue = E2ERunOverviewIssue(
                     suite: suiteKey,
                     test: testKey,
                     target: targetName,
                     outcome: outcome,
-                    attempts: observations.map {
-                        E2ERunOverviewIssueAttempt(
-                            attempt: $0.attempt,
-                            status: $0.status,
-                            detail: $0.detail,
-                            artifacts: $0.artifacts
-                        )
-                    }
+                    attempts: attempts
                 )
                 switch outcome {
                 case .failed:
@@ -274,18 +239,11 @@ private func makeRunOverview(in runURL: URL) throws -> E2ERunOverview {
                 }
             }
 
-            targetOutcomes.sort { $0.target < $1.target }
-            guard !targetOutcomes.isEmpty else { continue }
-            uniqueTests.insert("\(suiteKey)/\(testKey)")
-            tests.append(E2ERunOverviewTest(key: testKey, targetOutcomes: targetOutcomes))
+            if hasTargetOutcome {
+                uniqueTests.insert("\(suiteKey)/\(testKey)")
+            }
         }
-
-        tests.sort { $0.key < $1.key }
-        guard !tests.isEmpty else { continue }
-        suites.append(E2ERunOverviewSuite(key: suiteKey, tests: tests))
     }
-
-    suites.sort { $0.key < $1.key }
 
     let targets = targetAccumulators.map { targetName, accumulator in
         E2ERunOverviewTarget(
@@ -316,7 +274,6 @@ private func makeRunOverview(in runURL: URL) throws -> E2ERunOverview {
             unknown: summaryCounts.unknown
         ),
         targets: targets,
-        suites: suites,
         noteworthy: E2ERunOverviewNoteworthy(
             deterministicFailures: deterministicFailures.sorted(by: overviewIssueSort),
             flakes: flakes.sorted(by: overviewIssueSort),

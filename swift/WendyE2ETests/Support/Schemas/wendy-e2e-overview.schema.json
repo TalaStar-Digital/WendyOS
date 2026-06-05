@@ -4,7 +4,7 @@
   "title": "Wendy E2E Run Overview",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "generatedAt", "summary", "targets", "suites", "noteworthy"],
+  "required": ["schema", "generatedAt", "summary", "targets", "noteworthy"],
   "properties": {
     "schema": { "const": "wendy.e2e.overview.v1" },
     "generatedAt": { "type": "string", "format": "date-time" },
@@ -12,10 +12,6 @@
     "targets": {
       "type": "array",
       "items": { "$ref": "#/$defs/target" }
-    },
-    "suites": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/suite" }
     },
     "noteworthy": { "$ref": "#/$defs/noteworthy" }
   },
@@ -80,55 +76,6 @@
         "unknown": { "type": "integer", "minimum": 0 }
       }
     },
-    "suite": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["key", "tests"],
-      "properties": {
-        "key": { "$ref": "#/$defs/pathKey" },
-        "tests": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/test" }
-        }
-      }
-    },
-    "test": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["key", "targetOutcomes"],
-      "properties": {
-        "key": { "$ref": "#/$defs/pathKey" },
-        "targetOutcomes": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/testTargetOutcome" }
-        }
-      }
-    },
-    "testTargetOutcome": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["target", "outcome", "attempts"],
-      "properties": {
-        "target": { "type": "string", "minLength": 1 },
-        "outcome": { "$ref": "#/$defs/outcome" },
-        "attempts": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/observation" }
-        }
-      }
-    },
-    "observation": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["attempt", "status", "artifacts"],
-      "properties": {
-        "attempt": { "$ref": "#/$defs/attemptKey" },
-        "status": { "$ref": "#/$defs/status" },
-        "durationSeconds": { "type": "number", "minimum": 0 },
-        "detail": { "type": "string" },
-        "artifacts": { "$ref": "#/$defs/artifacts" }
-      }
-    },
     "artifacts": {
       "type": "object",
       "additionalProperties": false,
@@ -179,6 +126,7 @@
       "properties": {
         "attempt": { "$ref": "#/$defs/attemptKey" },
         "status": { "$ref": "#/$defs/status" },
+        "durationSeconds": { "type": "number", "minimum": 0 },
         "detail": { "type": "string" },
         "artifacts": { "$ref": "#/$defs/artifacts" }
       }
