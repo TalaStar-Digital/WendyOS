@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1120,14 +1121,42 @@ func (c *Client) streamOutput(
 	outputCh <- services.ContainerOutput{Done: true}
 }
 
-// StopContainer sends SIGTERM to the container's task, waits briefly, then
-// sends SIGKILL if the task is still running, and finally deletes the task.
-func (c *Client) StopContainer(ctx context.Context, appName string) error {
-	ctx = c.withNamespace(ctx)
-
-	container, err := c.client.LoadContainer(ctx, appName)
+// containersForApp returns all Wendy-managed containers whose labelKeyAppID
+// label equals appID. Both single-container apps (one container) and
+// multi-service apps (one container per service) are found this way, with no
+// dependency on container-name conventions.
+// ctx must already have the containerd namespace set.
+func (c *Client) containersForApp(ctx context.Context, appID string) ([]containerd.Container, error) {
+	ctrs, err := c.client.Containers(ctx, fmt.Sprintf("labels.%q==%q", labelKeyAppID, appID))
 	if err != nil {
-		return fmt.Errorf("loading container %q: %w", appName, err)
+		return nil, fmt.Errorf("listing containers for app %q: %w", appID, err)
+	}
+	return ctrs, nil
+}
+
+// ContainerIDsForApp returns the containerd container IDs for all services
+// belonging to appID. Single-container apps return one ID; multi-service apps
+// return one ID per service. The service layer uses this to mark each
+// container in the monitor before issuing a stop or delete.
+func (c *Client) ContainerIDsForApp(ctx context.Context, appID string) ([]string, error) {
+	ctx = c.withNamespace(ctx)
+	ctrs, err := c.containersForApp(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(ctrs))
+	for i, ctr := range ctrs {
+		ids[i] = ctr.ID()
+	}
+	return ids, nil
+}
+
+// stopOne stops the task for a single container.
+// ctx must already have the containerd namespace set.
+func (c *Client) stopOne(ctx context.Context, containerID string) error {
+	container, err := c.client.LoadContainer(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("loading container %q: %w", containerID, err)
 	}
 
 	task, err := container.Task(ctx, nil)
@@ -1135,14 +1164,14 @@ func (c *Client) StopContainer(ctx context.Context, appName string) error {
 		if errdefs.IsNotFound(err) {
 			return nil // No task running.
 		}
-		return fmt.Errorf("getting task for %q: %w", appName, err)
+		return fmt.Errorf("getting task for %q: %w", containerID, err)
 	}
 
 	// Send SIGTERM first for graceful shutdown.
 	if err := task.Kill(ctx, syscall.SIGTERM); err != nil {
 		if !errdefs.IsNotFound(err) {
 			c.logger.Warn("Failed to send SIGTERM",
-				zap.String("app_name", appName),
+				zap.String("container_id", containerID),
 				zap.Error(err),
 			)
 		}
@@ -1152,22 +1181,20 @@ func (c *Client) StopContainer(ctx context.Context, appName string) error {
 	waitCh, err := task.Wait(ctx)
 	if err != nil {
 		c.logger.Warn("Failed to wait on task, sending SIGKILL",
-			zap.String("app_name", appName),
+			zap.String("container_id", containerID),
 			zap.Error(err),
 		)
 	} else {
 		select {
 		case <-waitCh:
-			// Task exited gracefully.
-			c.logger.Info("Container stopped gracefully", zap.String("app_name", appName))
+			c.logger.Info("Container stopped gracefully", zap.String("container_id", containerID))
 		case <-time.After(10 * time.Second):
-			// Force kill.
 			c.logger.Warn("Container did not stop within 10s, sending SIGKILL",
-				zap.String("app_name", appName),
+				zap.String("container_id", containerID),
 			)
 			if err := task.Kill(ctx, syscall.SIGKILL); err != nil && !errdefs.IsNotFound(err) {
 				c.logger.Error("Failed to send SIGKILL",
-					zap.String("app_name", appName),
+					zap.String("container_id", containerID),
 					zap.Error(err),
 				)
 			}
@@ -1178,112 +1205,133 @@ func (c *Client) StopContainer(ctx context.Context, appName string) error {
 	// Delete the task.
 	_, err = task.Delete(ctx, containerd.WithProcessKill)
 	if err != nil && !errdefs.IsNotFound(err) {
-		return fmt.Errorf("deleting task for %q: %w", appName, err)
+		return fmt.Errorf("deleting task for %q: %w", containerID, err)
 	}
 
-	// Stop D-Bus proxy if running.
 	if c.proxyManager != nil {
-		_ = c.proxyManager.Stop(appName)
+		_ = c.proxyManager.Stop(containerID)
 	}
 
-	c.logger.Info("Container stopped", zap.String("app_name", appName))
+	c.logger.Info("Container stopped", zap.String("container_id", containerID))
 	return nil
 }
 
-func (c *Client) DeleteContainer(ctx context.Context, appName string, deleteImage bool) error {
+// StopContainer stops all containers belonging to appID. For single-container
+// apps this is one container; for multi-service apps it stops every service.
+func (c *Client) StopContainer(ctx context.Context, appID string) error {
+	ctx = c.withNamespace(ctx)
+	ctrs, err := c.containersForApp(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if len(ctrs) == 0 {
+		return fmt.Errorf("no containers found for app %q", appID)
+	}
+	var errs []error
+	for _, ctr := range ctrs {
+		if err := c.stopOne(ctx, ctr.ID()); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// deleteOne kills any running task, deletes a single container and its
+// snapshot, and stops the D-Bus proxy. It returns the image name so the caller
+// can batch image deletions across services. ctx must have the namespace set
+// and the caller must hold c.mu.
+func (c *Client) deleteOne(ctx context.Context, ctr containerd.Container, wantImg bool) (imgName string, err error) {
+	if task, taskErr := ctr.Task(ctx, nil); taskErr == nil {
+		_ = task.Kill(ctx, syscall.SIGKILL)
+		_, _ = task.Delete(ctx, containerd.WithProcessKill)
+	}
+	if wantImg {
+		if img, imgErr := ctr.Image(ctx); imgErr == nil {
+			imgName = img.Name()
+		}
+	}
+	if err := ctr.Delete(ctx, containerd.WithSnapshotCleanup); err != nil {
+		return "", fmt.Errorf("deleting container %q: %w", ctr.ID(), err)
+	}
+	if c.proxyManager != nil {
+		_ = c.proxyManager.Stop(ctr.ID())
+	}
+	c.logger.Info("Container deleted", zap.String("container_id", ctr.ID()))
+	return imgName, nil
+}
+
+// DeleteContainer deletes all containers belonging to appID. For multi-service
+// apps all service containers are removed. When deleteImage is true, each
+// distinct image is deleted once (services sharing an image are handled safely).
+func (c *Client) DeleteContainer(ctx context.Context, appID string, deleteImage bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	ctx = c.withNamespace(ctx)
-
-	container, err := c.client.LoadContainer(ctx, appName)
+	ctrs, err := c.containersForApp(ctx, appID)
 	if err != nil {
-		if errdefs.IsNotFound(err) {
-			return nil // Already gone.
+		return err
+	}
+	if len(ctrs) == 0 {
+		return nil // Already gone.
+	}
+
+	seen := make(map[string]bool)
+	var errs []error
+	for _, ctr := range ctrs {
+		imgName, delErr := c.deleteOne(ctx, ctr, deleteImage)
+		if delErr != nil {
+			errs = append(errs, delErr)
+			continue
 		}
-		return fmt.Errorf("loading container %q: %w", appName, err)
-	}
-
-	// Stop the task if running.
-	if task, taskErr := container.Task(ctx, nil); taskErr == nil {
-		_ = task.Kill(ctx, syscall.SIGKILL)
-		_, _ = task.Delete(ctx, containerd.WithProcessKill)
-	}
-
-	// Get the image name before deleting the container.
-	var imgName string
-	if deleteImage {
-		if img, imgErr := container.Image(ctx); imgErr == nil {
-			imgName = img.Name()
-		}
-	}
-
-	// Delete the container and its snapshot.
-	if err := container.Delete(ctx, containerd.WithSnapshotCleanup); err != nil {
-		return fmt.Errorf("deleting container %q: %w", appName, err)
-	}
-
-	// Stop D-Bus proxy if running.
-	if c.proxyManager != nil {
-		_ = c.proxyManager.Stop(appName)
-	}
-
-	c.logger.Info("Container deleted", zap.String("app_name", appName))
-
-	// Optionally delete the image.
-	if deleteImage && imgName != "" {
-		imgService := c.client.ImageService()
-		if err := imgService.Delete(ctx, imgName); err != nil && !errdefs.IsNotFound(err) {
-			c.logger.Warn("Failed to delete image",
-				zap.String("image", imgName),
-				zap.Error(err),
-			)
-		} else {
-			c.logger.Info("Image deleted", zap.String("image", imgName))
+		if imgName != "" && !seen[imgName] {
+			seen[imgName] = true
+			imgSvc := c.client.ImageService()
+			if err := imgSvc.Delete(ctx, imgName); err != nil && !errdefs.IsNotFound(err) {
+				c.logger.Warn("Failed to delete image", zap.String("image", imgName), zap.Error(err))
+			} else {
+				c.logger.Info("Image deleted", zap.String("image", imgName))
+			}
 		}
 	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
-// ListContainers lists all containers managed by Wendy (those with the
-// sh.wendy/app.version label) and returns their status.
+// ListContainers lists all Wendy-managed apps. Multi-service apps (whose
+// container IDs follow the {appID}/{serviceName} convention) are grouped under
+// their bare appID: the entry is RUNNING if any service is running, and the
+// version is taken from the first service encountered. This ensures that
+// stop/start/remove — which address by appID — operate on the same granularity
+// shown in the list and picker.
 func (c *Client) ListContainers(ctx context.Context) ([]*agentpb.AppContainer, error) {
 	ctx = c.withNamespace(ctx)
 
-	containers, err := c.client.Containers(ctx, fmt.Sprintf("labels.%q", labelKeyAppVersion))
+	ctrs, err := c.client.Containers(ctx, fmt.Sprintf("labels.%q", labelKeyAppVersion))
 	if err != nil {
 		return nil, fmt.Errorf("listing containers: %w", err)
 	}
 
-	var result []*agentpb.AppContainer
-	for _, ctr := range containers {
+	type entry struct {
+		version      string
+		runningState agentpb.AppRunningState
+		mcpPort      uint32
+	}
+	grouped := make(map[string]*entry)
+	var order []string
+
+	for _, ctr := range ctrs {
 		info, err := ctr.Info(ctx)
 		if err != nil {
-			c.logger.Warn("Failed to get container info",
-				zap.String("id", ctr.ID()),
-				zap.Error(err),
-			)
+			c.logger.Warn("Failed to get container info", zap.String("id", ctr.ID()), zap.Error(err))
 			continue
 		}
 
 		appVersion := info.Labels[labelKeyAppVersion]
 		runningState := agentpb.AppRunningState_STOPPED
-		var failureCount uint32
-
-		// Check if a task is running.
-		task, err := ctr.Task(ctx, nil)
-		if err == nil {
-			status, statusErr := task.Status(ctx)
-			if statusErr == nil && status.Status == containerd.Running {
+		if task, err := ctr.Task(ctx, nil); err == nil {
+			if st, err := task.Status(ctx); err == nil && st.Status == containerd.Running {
 				runningState = agentpb.AppRunningState_RUNNING
 			}
-		}
-
-		// Parse failure count from restart policy label if present.
-		if policyLabel, ok := info.Labels[labelKeyRestartPolicy]; ok {
-			_, maxRetries := parseRestartPolicyLabel(policyLabel)
-			_ = maxRetries
 		}
 
 		var mcpPort uint32
@@ -1293,15 +1341,36 @@ func (c *Client) ListContainers(ctx context.Context) ([]*agentpb.AppContainer, e
 			}
 		}
 
-		result = append(result, &agentpb.AppContainer{
-			AppName:      ctr.ID(),
-			AppVersion:   appVersion,
-			RunningState: runningState,
-			FailureCount: failureCount,
-			McpPort:      mcpPort,
-		})
+		// The labelKeyAppID label is always set by wendyLabels; fall back to the
+		// container ID for containers created before this label was introduced.
+		appID := info.Labels[labelKeyAppID]
+		if appID == "" {
+			appID = ctr.ID()
+		}
+
+		if e, ok := grouped[appID]; !ok {
+			order = append(order, appID)
+			grouped[appID] = &entry{version: appVersion, runningState: runningState, mcpPort: mcpPort}
+		} else {
+			if runningState == agentpb.AppRunningState_RUNNING {
+				e.runningState = agentpb.AppRunningState_RUNNING
+			}
+			if mcpPort != 0 && e.mcpPort == 0 {
+				e.mcpPort = mcpPort
+			}
+		}
 	}
 
+	result := make([]*agentpb.AppContainer, 0, len(grouped))
+	for _, appID := range order {
+		e := grouped[appID]
+		result = append(result, &agentpb.AppContainer{
+			AppName:      appID,
+			AppVersion:   e.version,
+			RunningState: e.runningState,
+			McpPort:      e.mcpPort,
+		})
+	}
 	return result, nil
 }
 

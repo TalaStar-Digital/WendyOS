@@ -110,6 +110,10 @@ func (m *mockContainerdClient) GetContainerRestartPolicyLabel(_ context.Context,
 	return m.restartPolicyLabel, m.restartPolicyLabelErr
 }
 
+func (m *mockContainerdClient) ContainerIDsForApp(_ context.Context, appID string) ([]string, error) {
+	return []string{appID}, nil
+}
+
 // attachTestMock embeds mockContainerdClient and overrides StartContainerWithStdin
 // so tests can capture the appName and stdin reader passed by AttachContainer.
 type attachTestMock struct {

@@ -49,6 +49,11 @@ type ContainerdClient interface {
 	StartContainerWithStdin(ctx context.Context, appName string, stdin io.Reader, postStartAgentCommand string, restartPolicy *agentpb.RestartPolicy) (<-chan ContainerOutput, error)
 	StopContainer(ctx context.Context, appName string) error
 	DeleteContainer(ctx context.Context, appName string, deleteImage bool) error
+	// ContainerIDsForApp returns the containerd container IDs for all services
+	// belonging to appID (one for single-container, one per service for
+	// multi-service apps). Used by the service layer to mark every container in
+	// the monitor before issuing a stop or delete.
+	ContainerIDsForApp(ctx context.Context, appID string) ([]string, error)
 	ListContainers(ctx context.Context) ([]*agentpb.AppContainer, error)
 	GetContainerStats(ctx context.Context) ([]*agentpb.ContainerStats, error)
 	GetContainerMetrics(ctx context.Context, appName string) (ContainerMetrics, error)

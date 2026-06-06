@@ -513,46 +513,69 @@ func (s *ContainerService) AttachContainer(stream grpc.BidiStreamingServer[agent
 
 func (s *ContainerService) StopContainer(ctx context.Context, req *agentpb.StopContainerRequest) (*agentpb.StopContainerResponse, error) {
 	appName := req.GetAppName()
-	// Mark the container as explicitly stopped BEFORE issuing the stop so that
-	// the monitor cannot observe the container exit and restart it in the window
-	// between StopContainer returning and MarkExplicitStop being called.
-	// If the stop fails we revert the mark via ClearExplicitStop.
+
+	// Resolve every container ID that belongs to this app (one for
+	// single-container apps, one per service for multi-service apps) so the
+	// monitor can mark each before any stop is issued. Marking only the bare
+	// appName would miss {appID}/{serviceName} entries registered by the monitor.
+	ids, err := s.containerd.ContainerIDsForApp(ctx, appName)
+	if err != nil || len(ids) == 0 {
+		ids = []string{appName}
+	}
+
+	// Mark BEFORE stop so the monitor cannot observe the exit and restart in
+	// the window between StopContainer returning and MarkExplicitStop being
+	// called. Revert all marks if the stop ultimately fails.
 	if s.monitor != nil {
-		s.monitor.MarkExplicitStop(appName)
+		for _, id := range ids {
+			s.monitor.MarkExplicitStop(id)
+		}
 	}
 	if err := s.containerd.StopContainer(ctx, appName); err != nil {
-		// Revert the explicit-stop mark so future restarts are not suppressed.
 		if s.monitor != nil {
-			s.monitor.ClearExplicitStop(appName)
+			for _, id := range ids {
+				s.monitor.ClearExplicitStop(id)
+			}
 		}
 		return nil, status.Errorf(codes.Internal, "failed to stop container: %v", err)
 	}
-	s.logger.Info("Container stopped", zap.String("app_name", appName))
+	s.logger.Info("App stopped", zap.String("app_name", appName), zap.Int("service_count", len(ids)))
 	return &agentpb.StopContainerResponse{}, nil
 }
 
 func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.DeleteContainerRequest) (*agentpb.DeleteContainerResponse, error) {
-	// Unregister from the monitor BEFORE deletion to close the window where the
-	// monitor could attempt a restart while the container is being removed.
-	// MarkExplicitStop prevents a spurious restart attempt if the monitor fires
-	// between the two calls. Safe to call even if the app was never registered.
-	// If DeleteContainer subsequently fails, the container is left unregistered —
-	// that is acceptable: the caller will retry deletion.
-	if s.monitor != nil {
-		s.monitor.MarkExplicitStop(req.GetAppName())
-		s.monitor.Unregister(req.GetAppName())
+	appName := req.GetAppName()
+
+	// Resolve all container IDs before deletion so the monitor can unregister
+	// each one. Unregistering only the bare appName would leave
+	// {appID}/{serviceName} monitor entries alive and potentially trigger
+	// spurious restart attempts while the container is being removed.
+	ids, err := s.containerd.ContainerIDsForApp(ctx, appName)
+	if err != nil || len(ids) == 0 {
+		ids = []string{appName}
 	}
 
-	if err := s.containerd.DeleteContainer(ctx, req.GetAppName(), req.GetDeleteImage()); err != nil {
+	// Unregister from the monitor BEFORE deletion to close the window where the
+	// monitor could attempt a restart while containers are being removed.
+	if s.monitor != nil {
+		for _, id := range ids {
+			s.monitor.MarkExplicitStop(id)
+			s.monitor.Unregister(id)
+		}
+	}
+
+	if err := s.containerd.DeleteContainer(ctx, appName, req.GetDeleteImage()); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to delete container: %v", err)
 	}
 
 	if req.GetDeleteVolumes() {
-		s.deleteVolumes(req.GetAppName())
+		for _, id := range ids {
+			s.deleteVolumes(id)
+		}
 	}
 
-	s.logger.Info("Container deleted",
-		zap.String("app_name", req.GetAppName()),
+	s.logger.Info("App deleted",
+		zap.String("app_name", appName),
 		zap.Bool("delete_image", req.GetDeleteImage()),
 		zap.Bool("delete_volumes", req.GetDeleteVolumes()),
 	)

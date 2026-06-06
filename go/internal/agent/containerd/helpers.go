@@ -51,12 +51,18 @@ const labelKeyGCRoot = "containerd.io/gc.root"
 // labelKeyWendyLayer marks a content blob as a Wendy-pushed layer.
 const labelKeyWendyLayer = "sh.wendy.layer"
 
+// labelKeyAppID is the app identity (appId from wendy.json) for every
+// Wendy-managed container. Always set, regardless of whether the app uses
+// multi-service naming. Used to find all containers belonging to an app without
+// relying on container-name conventions.
+const labelKeyAppID = "sh.wendy/app.id"
+
 // labelKeyAppGroup labels a multi-service container with the app ID that owns it.
 // Only set when serviceName is non-empty.
 const labelKeyAppGroup = "sh.wendy/app.group"
 
-// labelKeyServiceName labels a multi-service container with its service name.
-// Only set when serviceName is non-empty.
+// labelKeyServiceName is the service name for a multi-service container.
+// Set whenever appCfg.ServiceName is non-empty.
 const labelKeyServiceName = "sh.wendy/service"
 
 // ContainerName returns the containerd container ID for the given appID and
@@ -190,6 +196,7 @@ func sanitizeForLog(s string, maxLen int) string {
 func wendyLabels(appName, serviceName, version string, restartPolicy *agentpb.RestartPolicy, entitlements []appconfig.Entitlement) map[string]string {
 	labels := map[string]string{
 		labelKeyAppVersion: version,
+		labelKeyAppID:      appName,
 	}
 
 	if serviceName != "" {
