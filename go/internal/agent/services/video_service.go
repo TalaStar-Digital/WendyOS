@@ -445,8 +445,12 @@ func (s *VideoService) runProducer(ctx context.Context, h *deviceHub, path strin
 }
 
 // maxVideoDeviceID is the upper bound for accepted device IDs.
-// Linux supports at most 64 video devices (video0–video63) in practice.
-const maxVideoDeviceID = 63
+// Linux's VIDEO_NUM_DEVICES kernel constant (v4l2-dev.h) allows video0–video255.
+const maxVideoDeviceID = 255
+
+// v4l2MajorDevice is the Linux character device major number for V4L2 devices
+// (documented in Documentation/admin-guide/devices.txt as major 81).
+const v4l2MajorDevice = 81
 
 // validateStreamParams checks width, height, and framerate against known-safe values
 // before constructing GStreamer pipeline arguments. Zero means "device default" and is
@@ -487,6 +491,17 @@ func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.
 		return err
 	}
 	path := fmt.Sprintf("/dev/video%d", devID)
+
+	// Use Lstat to validate the path before any open: ensures it is a character
+	// device with V4L2 major number 81 and is not a symlink. This prevents any
+	// symlink-based traversal even before O_NOFOLLOW is applied at open() time.
+	var stat unix.Stat_t
+	if err := unix.Lstat(path, &stat); err != nil {
+		return status.Errorf(codes.NotFound, "video device not found")
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFCHR || unix.Major(uint64(stat.Rdev)) != v4l2MajorDevice {
+		return status.Errorf(codes.InvalidArgument, "path is not a V4L2 video device")
+	}
 
 	if !s.hasVideoCapture(path) {
 		return status.Errorf(codes.NotFound, "video device not found or not a capture device")

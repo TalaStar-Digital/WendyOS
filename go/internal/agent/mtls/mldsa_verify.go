@@ -2,10 +2,14 @@ package mtls
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"math/big"
+	"net/http"
 	"time"
 
 	circlSign "github.com/cloudflare/circl/sign"
@@ -13,6 +17,89 @@ import (
 	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
 	"go.uber.org/zap"
 )
+
+// maxCertLifetime is the maximum accepted certificate validity window when no
+// CRL distribution point is present. Certificates valid for longer than this
+// cannot be promptly revoked without CRL/OCSP support; rejecting them enforces
+// the use of short-lived credentials as a compensating control.
+const maxCertLifetime = 25 * time.Hour
+
+// crlFetchTimeout limits the time spent fetching a CRL during the TLS handshake.
+const crlFetchTimeout = 5 * time.Second
+
+// checkRevocation verifies that leaf has not been revoked. When CRL distribution
+// points are embedded in the certificate, each CRL is fetched and the serial
+// number is checked against the revocation list. When no distribution points are
+// present, the certificate lifetime is checked against maxCertLifetime: a cert
+// with a validity window longer than that cannot be promptly revoked without
+// CRL/OCSP, so it is rejected as a compensating control.
+func checkRevocation(leaf *x509.Certificate) error {
+	if len(leaf.CRLDistributionPoints) == 0 {
+		// No CRL DP: fall back to cert lifetime enforcement.
+		lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
+		if lifetime > maxCertLifetime {
+			return fmt.Errorf("certificate lifetime %v exceeds maximum %v (no CRL distribution point; use short-lived certificates)", lifetime, maxCertLifetime)
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), crlFetchTimeout)
+	defer cancel()
+
+	for _, dp := range leaf.CRLDistributionPoints {
+		crl, err := fetchCRL(ctx, dp)
+		if err != nil {
+			// Log-and-continue: a single unreachable DP should not block auth if
+			// other DPs are available or if the cert lifetime is within bounds.
+			continue
+		}
+		if isRevoked(crl, leaf.SerialNumber) {
+			return fmt.Errorf("certificate serial %s is revoked", leaf.SerialNumber)
+		}
+		// The first successfully fetched CRL is authoritative; stop here.
+		return nil
+	}
+
+	// All DP fetches failed — fall back to cert lifetime check so a transient
+	// network outage does not become a denial-of-service for legitimate clients.
+	lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
+	if lifetime > maxCertLifetime {
+		return fmt.Errorf("certificate lifetime %v exceeds maximum %v (CRL unreachable; use short-lived certificates)", lifetime, maxCertLifetime)
+	}
+	return nil
+}
+
+// fetchCRL retrieves and parses a CRL from the given URL.
+func fetchCRL(ctx context.Context, url string) (*x509.RevocationList, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building CRL request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching CRL from %s: %w", url, err)
+	}
+	defer resp.Body.Close()                                         //nolint:errcheck
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024)) // 4 MiB cap
+	if err != nil {
+		return nil, fmt.Errorf("reading CRL body: %w", err)
+	}
+	crl, err := x509.ParseRevocationList(body)
+	if err != nil {
+		return nil, fmt.Errorf("parsing CRL: %w", err)
+	}
+	return crl, nil
+}
+
+// isRevoked reports whether serial appears in the CRL's revoked certificate list.
+func isRevoked(crl *x509.RevocationList, serial *big.Int) bool {
+	for i := range crl.RevokedCertificateEntries {
+		if crl.RevokedCertificateEntries[i].SerialNumber.Cmp(serial) == 0 {
+			return true
+		}
+	}
+	return false
+}
 
 var (
 	oidMLDSA65 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 3, 18}
@@ -185,6 +272,10 @@ func buildVerifyPeerCertificate(caPool *x509.CertPool, caCerts []*x509.Certifica
 		}
 		stdErr := func() error { _, e := leaf.Verify(opts); return e }()
 		if stdErr == nil {
+			if revErr := checkRevocation(leaf); revErr != nil {
+				logCertRejection(logger, leaf, revErr, effectiveNow)
+				return revErr
+			}
 			return nil
 		}
 
@@ -203,8 +294,13 @@ func buildVerifyPeerCertificate(caPool *x509.CertPool, caCerts []*x509.Certifica
 		mldsaErr := verifyMLDSAClientCert(leaf, caCerts, realNow, effectiveNow)
 		if mldsaErr != nil {
 			logCertRejection(logger, leaf, mldsaErr, effectiveNow)
+			return mldsaErr
 		}
-		return mldsaErr
+		if revErr := checkRevocation(leaf); revErr != nil {
+			logCertRejection(logger, leaf, revErr, effectiveNow)
+			return revErr
+		}
+		return nil
 	}
 }
 

@@ -24,12 +24,11 @@ func peerAddr(ctx context.Context) string {
 // that do not satisfy this requirement. Call this from RPC handlers that require
 // explicit per-handler auth enforcement in addition to the server-level interceptor.
 //
-// LIMITATION: Go's crypto/tls does not perform CRL or OCSP revocation checks.
-// A revoked client certificate that has a valid chain will still produce a
-// non-empty VerifiedChains slice and will be accepted by this function until
-// the server is restarted with an updated CA bundle. Mitigations: use short-lived
-// certificates (e.g. ≤24 h) issued by an internal CA, or add CRL checking via
-// a custom tls.Config.VerifyPeerCertificate hook before this code is reached.
+// Certificate revocation is handled at the TLS layer by the VerifyPeerCertificate
+// hook in mtls.NewTLSConfig: it checks CRL distribution points when present and
+// enforces a maximum certificate lifetime (25 h) as a compensating control when
+// none are available. By the time this function runs the handshake has already
+// applied that policy, so no duplicate revocation check is needed here.
 func CheckMTLS(ctx context.Context, logger *zap.Logger) error {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p.AuthInfo == nil {
