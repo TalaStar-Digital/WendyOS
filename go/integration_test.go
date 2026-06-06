@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -210,6 +211,19 @@ func (s *statefulContainerdClient) GetContainerMCPPort(_ context.Context, _ stri
 
 func (m *statefulContainerdClient) GetContainerRestartPolicyLabel(_ context.Context, _ string) (string, error) {
 	return "", nil
+}
+
+func (m *statefulContainerdClient) ContainerIDsForApp(_ context.Context, appID string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var ids []string
+	prefix := appID + "/"
+	for name := range m.containers {
+		if name == appID || strings.HasPrefix(name, prefix) {
+			ids = append(ids, name)
+		}
+	}
+	return ids, nil
 }
 
 // getLayerData returns the data stored for a given digest, for test assertions.
