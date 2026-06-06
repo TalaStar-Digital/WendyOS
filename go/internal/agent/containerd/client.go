@@ -357,19 +357,16 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 
 	ctx = c.withNamespace(ctx)
 
-	// Derive the container name and snapshot key from the app identity.
-	// When appCfg.ServiceName is set this is a multi-service app and we use the
-	// {appId}/{serviceName} convention; otherwise we fall back to the legacy flat
-	// name so single-container apps are unchanged.
-	//
-	// Prefer appCfg.AppID (the authoritative identity from the parsed AppConfig)
-	// over req.GetAppName() so that single-container behaviour is preserved when
-	// appCfg.AppID is set. Fall back to req.GetAppName() only when appCfg.AppID
-	// is empty (e.g. a raw RPC call without a parsed config).
-	appID := appCfg.AppID
-	if appID == "" {
-		appID = req.GetAppName()
+	// Normalise the app identity so all downstream uses (container name,
+	// snapshot key, WENDY_APP_ID env var, OTEL injection) are consistent.
+	// appCfg.AppID is the authoritative source; req.GetAppName() is the
+	// fallback for raw RPC calls that arrive without a parsed AppConfig.
+	// Mutating appCfg.AppID here means injectOTELEnvIfNeeded and
+	// buildContainerBaseEnv see the same value without extra plumbing.
+	if appCfg.AppID == "" {
+		appCfg.AppID = req.GetAppName()
 	}
+	appID := appCfg.AppID
 	serviceName := appCfg.ServiceName
 	containerName := ContainerName(appID, serviceName)
 
