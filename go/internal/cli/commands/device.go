@@ -30,10 +30,8 @@ import (
 	otelpb "github.com/wendylabsinc/wendy/go/proto/gen/otelpb"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/status"
 )
 
 func newDeviceCmd() *cobra.Command {
@@ -645,6 +643,11 @@ func newDeviceLogsCmd() *cobra.Command {
 		Short: "Stream logs from containers on the device",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			conn, err := connectToAgent(ctx)
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
 
 			// --level takes precedence over --min-severity when both are set.
 			if level != "" {
@@ -673,82 +676,56 @@ func newDeviceLogsCmd() *cobra.Command {
 			if tail > 0 {
 				req.LastN = &tail
 			}
+			stream, err := conn.TelemetryService.StreamLogs(ctx, req)
+			if err != nil {
+				return fmt.Errorf("starting log stream: %w", err)
+			}
 
 			liveSeparatorPrinted := tail == 0
 			seenHistory := false
 
 			for {
-				if ctx.Err() != nil {
-					return nil
+				resp, err := stream.Recv()
+				if err == io.EOF {
+					break
 				}
-
-				conn, err := connectToAgent(ctx)
 				if err != nil {
-					return err
+					return fmt.Errorf("receiving logs: %w", err)
 				}
 
-				stream, err := conn.TelemetryService.StreamLogs(ctx, req)
-				if err != nil {
-					conn.Close()
-					return fmt.Errorf("starting log stream: %w", err)
+				logs := resp.GetLogs()
+				if logs == nil {
+					continue
 				}
 
-				streamErr := func() error {
-					defer conn.Close()
-					for {
-						resp, err := stream.Recv()
-						if err == io.EOF {
-							return nil
-						}
-						if err != nil {
-							return err
-						}
+				// Track whether any history was received.
+				if resp.IsHistory {
+					seenHistory = true
+				}
 
-						logs := resp.GetLogs()
-						if logs == nil {
-							continue
-						}
+				// Print separator only when transitioning from actual history to live.
+				if !liveSeparatorPrinted && seenHistory && !resp.IsHistory {
+					liveSeparatorPrinted = true
+					if !jsonOutput {
+						fmt.Println(logMetaStyle.Render("── live ──────────────────────"))
+					}
+				}
 
-						if resp.IsHistory {
-							seenHistory = true
-						}
-						if !liveSeparatorPrinted && seenHistory && !resp.IsHistory {
-							liveSeparatorPrinted = true
-							if !jsonOutput {
-								fmt.Println(logMetaStyle.Render("── live ──────────────────────"))
-							}
-						}
-
-						for _, rl := range logs.GetResourceLogs() {
-							svcName := resourceServiceName(rl.GetResource())
-							for _, sl := range rl.GetScopeLogs() {
-								for _, lr := range sl.GetLogRecords() {
-									if jsonOutput {
-										printLogRecordJSON(svcName, lr)
-									} else {
-										printLogRecord(svcName, lr)
-									}
-								}
+				for _, rl := range logs.GetResourceLogs() {
+					svcName := resourceServiceName(rl.GetResource())
+					for _, sl := range rl.GetScopeLogs() {
+						for _, lr := range sl.GetLogRecords() {
+							if jsonOutput {
+								printLogRecordJSON(svcName, lr)
+							} else {
+								printLogRecord(svcName, lr)
 							}
 						}
 					}
-				}()
-
-				if streamErr == nil || ctx.Err() != nil {
-					return nil
-				}
-				st, _ := status.FromError(streamErr)
-				if st.Code() != codes.Unavailable {
-					return streamErr
-				}
-
-				fmt.Fprintf(os.Stderr, "Connection lost (%v), reconnecting...\n", streamErr)
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-time.After(2 * time.Second):
 				}
 			}
+
+			return nil
 		},
 	}
 
