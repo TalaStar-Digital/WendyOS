@@ -363,29 +363,33 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	// back to req.GetAppName() for raw RPC calls that arrive without a parsed
 	// AppConfig. We use a local variable (not a struct mutation) so the caller's
 	// AppConfig is unchanged and concurrent/retry uses see a stable value.
-	appID := appCfg.AppID
-	if appID == "" {
-		appID = req.GetAppName()
+	//
+	// Validate before assigning to the named variables so that no unvalidated
+	// RPC-controlled value ever reaches downstream helpers, even if future
+	// refactors reorder code below this block (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+	rawAppID := appCfg.AppID
+	if rawAppID == "" {
+		rawAppID = req.GetAppName()
 	}
-	serviceName := appCfg.ServiceName
+	rawServiceName := appCfg.ServiceName
 
-	// Validate app identity at the RPC entry point so downstream helpers can
-	// assume inputs are well-formed (defence-in-depth). Log rejections so
-	// invalid requests are visible in operational logs (SOC2-CC7, ISO27001-A.12).
-	if err := appconfig.ValidateAppID(appID); err != nil {
+	if err := appconfig.ValidateAppID(rawAppID); err != nil {
 		c.logger.Warn("CreateContainer rejected: invalid app ID",
-			zap.String("app_id", sanitizeForLog(appID, 253)), zap.Error(err))
+			zap.String("app_id", sanitizeForLog(rawAppID, 253)), zap.Error(err))
 		return fmt.Errorf("invalid app ID: %w", err)
 	}
-	if serviceName != "" {
-		if err := appconfig.ValidateServiceName(serviceName); err != nil {
+	if rawServiceName != "" {
+		if err := appconfig.ValidateServiceName(rawServiceName); err != nil {
 			c.logger.Warn("CreateContainer rejected: invalid service name",
-				zap.String("app_id", sanitizeForLog(appID, 253)),
-				zap.String("service_name", sanitizeForLog(serviceName, 57)),
+				zap.String("app_id", sanitizeForLog(rawAppID, 253)),
+				zap.String("service_name", sanitizeForLog(rawServiceName, 57)),
 				zap.Error(err))
 			return fmt.Errorf("invalid service name: %w", err)
 		}
 	}
+
+	// Both values are now validated; promote to short names for readability.
+	appID, serviceName := rawAppID, rawServiceName
 
 	containerName := ContainerName(appID, serviceName)
 
@@ -817,6 +821,21 @@ var deviceHostnameWithSuffix = func() string {
 //     distinct hostname identity.
 //   - WENDY_APP_GROUP is set to appID so the service can discover its siblings.
 func buildContainerBaseEnv(appID, serviceName string) []string {
+	// Defence-in-depth: reject non-empty inputs that fail validation at the
+	// injection site, so callers can't accidentally inject control characters
+	// into OCI env vars (SOC2-CC6, ISO27001-A.8, NIST-SI-10). Empty values are
+	// allowed; they simply skip the corresponding env var (see guards below).
+	if appID != "" {
+		if err := appconfig.ValidateAppID(appID); err != nil {
+			panic(fmt.Sprintf("buildContainerBaseEnv: invalid appID %q: %v", appID, err))
+		}
+	}
+	if serviceName != "" {
+		if err := appconfig.ValidateServiceName(serviceName); err != nil {
+			panic(fmt.Sprintf("buildContainerBaseEnv: invalid serviceName %q: %v", serviceName, err))
+		}
+	}
+
 	env := []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"TERM=xterm",
