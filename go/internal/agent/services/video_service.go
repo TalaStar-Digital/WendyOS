@@ -19,10 +19,9 @@ import (
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/wendylabsinc/wendy/go/internal/agent/interceptor"
 	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
@@ -237,7 +236,7 @@ func NewVideoService(ctx context.Context, logger *zap.Logger) *VideoService {
 			return strings.TrimSpace(string(b)), err
 		},
 		hasVideoCapture: func(path string) bool {
-			fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC, 0)
+			fd, err := unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 			if err != nil {
 				return false
 			}
@@ -440,13 +439,6 @@ func (s *VideoService) runProducer(ctx context.Context, h *deviceHub, path strin
 // Linux supports at most 64 video devices (video0–video63) in practice.
 const maxVideoDeviceID = 63
 
-func peerStr(p *peer.Peer) string {
-	if p == nil || p.Addr == nil {
-		return "unknown"
-	}
-	return p.Addr.String()
-}
-
 // validateStreamParams checks width, height, and framerate against known-safe values
 // before constructing GStreamer pipeline arguments. Zero means "device default" and is
 // always accepted. This prevents unexpected pipeline behaviour from extreme values.
@@ -478,17 +470,12 @@ func validateStreamParams(req *agentpb.StreamVideoRequest) error {
 // Multiple concurrent callers for the same device share one producer via a deviceHub.
 func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.ServerStreamingServer[agentpb.VideoFrame]) error {
 	ctx := stream.Context()
-	// Enforce mTLS: the server-level StreamMTLSInterceptor checks this for all
-	// RPCs, but we verify again here so that the camera streaming path is
-	// explicitly protected even if a future refactor bypasses the interceptor.
-	p, ok := peer.FromContext(ctx)
-	if !ok || p.AuthInfo == nil {
-		s.logger.Warn("StreamVideo: rejected unauthenticated caller", zap.String("remote", peerStr(p)))
-		return status.Errorf(codes.Unauthenticated, "missing peer credentials")
-	}
-	if _, ok := p.AuthInfo.(credentials.TLSInfo); !ok {
-		s.logger.Warn("StreamVideo: rejected non-mTLS caller", zap.String("remote", peerStr(p)))
-		return status.Errorf(codes.Unauthenticated, "mTLS authentication required")
+	// Per-handler mTLS check using the shared interceptor helper: verifies the
+	// caller has a TLS peer with a verified certificate chain. The server-level
+	// StreamMTLSInterceptor runs the same check before this handler is reached,
+	// so this is defence-in-depth if the interceptor chain is ever misconfigured.
+	if err := interceptor.CheckMTLS(ctx, s.logger); err != nil {
+		return err
 	}
 	devID := req.GetDeviceId()
 	if devID > maxVideoDeviceID {
@@ -545,7 +532,7 @@ func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.
 // false the loop exits cleanly (no subscribers remain).
 // Returns nativeH264NotSupported if the device rejects the H.264 pixel format.
 func (s *VideoService) streamV4L2Native(ctx context.Context, broadcast func([]byte, uint64, agentpb.VideoCodec) bool, path string, req *agentpb.StreamVideoRequest) error {
-	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC, 0)
+	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		s.logger.Error("failed to open video device", zap.String("device", path), zap.Error(err))
 		return status.Errorf(codes.Internal, "failed to open video device")
