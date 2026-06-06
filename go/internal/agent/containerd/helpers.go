@@ -86,7 +86,7 @@ func ContainerName(appID, serviceName string) string {
 //   - Multi-service apps (serviceName != ""): "wendy-{appID}@{serviceName}".
 //
 // "@" is used as the separator because it cannot appear in a valid appID
-// ([a-zA-Z0-9._-]) or a valid serviceName ([a-z][a-z0-9-]{0,56}), making
+// ([a-zA-Z0-9._-]) or a valid serviceName ([a-z]([a-z0-9-]{0,55}[a-z0-9])?), making
 // the key unambiguous and free of collisions (e.g. SnapshotKey("foo-bar","baz")
 // vs SnapshotKey("foo","bar-baz") produce distinct keys).
 // Note: the key is not path-sanitised; "@" is safe for overlayfs snapshot
