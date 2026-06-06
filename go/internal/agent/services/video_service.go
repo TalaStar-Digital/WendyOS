@@ -190,6 +190,17 @@ func (h *deviceHub) unsubscribe(id int) {
 	h.mu.Unlock()
 }
 
+// terminalErr returns the error recorded by runProducer under h.mu.
+// Reading h.err must always go through this method: StreamVideo reads h.err
+// after receiving from a closed channel, but the close/write ordering in
+// runProducer does not provide a happens-before edge visible to the reader
+// without an explicit mutex acquisition on the reader side.
+func (h *deviceHub) terminalErr() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.err
+}
+
 // maxFrameBytes is the maximum accepted size of a single encoded video frame.
 // Frames larger than this are dropped before distribution to prevent a
 // malfunctioning or compromised device from triggering memory exhaustion.
@@ -458,9 +469,8 @@ func (s *VideoService) runProducer(ctx context.Context, h *deviceHub, path strin
 	s.mu.Unlock()
 
 	// Store the terminal error (if any) and close all subscriber channels so
-	// their loops unblock. The error is written before closing so subscribers
-	// can read h.err safely after their channel receive returns (the channel
-	// close provides the happens-before edge).
+	// their loops unblock. Both happen under h.mu. Readers call terminalErr()
+	// which acquires h.mu, establishing the required happens-before edge.
 	h.mu.Lock()
 	if err != nil && ctx.Err() == nil {
 		h.err = err
@@ -551,8 +561,8 @@ func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.
 		case frame, ok := <-ch:
 			if !ok {
 				// Producer exited. Return the original error if one was recorded.
-				if h.err != nil {
-					return h.err
+				if err := h.terminalErr(); err != nil {
+					return err
 				}
 				// If the hub context was cancelled (e.g. service shutdown), propagate that.
 				if err := h.ctx.Err(); err != nil {
