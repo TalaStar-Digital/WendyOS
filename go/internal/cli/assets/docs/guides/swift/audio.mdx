@@ -82,7 +82,7 @@ The backend uses [Hummingbird](https://hummingbird.codes) for the HTTP/WebSocket
 
 ### 1. Package Dependencies
 
-The generated `Package.swift` pins Swift 6.3 and includes the GStreamer Swift wrapper alongside Hummingbird and its WebSocket support:
+The generated `Package.swift` declares a minimum `swift-tools-version` of 6.2 (the project still builds with the Swift 6.3 toolchain in the Dockerfile) and includes the GStreamer Swift wrapper alongside Hummingbird and its WebSocket support:
 
 ```swift
 // swift-tools-version: 6.2

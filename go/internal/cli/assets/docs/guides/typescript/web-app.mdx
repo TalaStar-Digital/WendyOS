@@ -193,6 +193,7 @@ The built frontend (`frontend/dist`) is copied into the backend image as `./stat
 
     ```typescript
     import express, { Request, Response } from "express";
+    import { createServer } from "http";
     import Database from "better-sqlite3";
 
     const PORT = 8000;
@@ -227,6 +228,10 @@ The built frontend (`frontend/dist`) is copied into the backend image as `./stat
     });
 
     // ...more routes, plus static serving + SPA fallback...
+
+    // Wrap the Express app in an HTTP server so the camera/audio
+    // WebSocket streams can share the same port.
+    const server = createServer(app);
 
     server.listen(PORT, () => {
         console.log(`Server running on http://${WENDY_HOSTNAME}:${PORT}`);
