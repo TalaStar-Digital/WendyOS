@@ -2,6 +2,7 @@ package interceptor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func isCanceled(err error) bool {
-	if err == context.Canceled {
+	if errors.Is(err, context.Canceled) {
 		return true
 	}
 	s, ok := status.FromError(err)

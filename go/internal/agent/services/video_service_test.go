@@ -14,6 +14,7 @@ import (
 )
 
 // newTestVideoService creates a VideoService with injectable filesystem functions.
+// hasVideoCapture defaults to always returning true so tests are not gated on real V4L2 devices.
 func newTestVideoService(glob func() ([]string, error), readName func(string) (string, error)) *VideoService {
 	svc := NewVideoService(zap.NewNop())
 	if glob != nil {
@@ -22,6 +23,7 @@ func newTestVideoService(glob func() ([]string, error), readName func(string) (s
 	if readName != nil {
 		svc.readDeviceName = readName
 	}
+	svc.hasVideoCapture = func(string) bool { return true }
 	return svc
 }
 

@@ -30,8 +30,10 @@ import (
 	otelpb "github.com/wendylabsinc/wendy/proto/gen/otelpb"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func newDeviceCmd() *cobra.Command {
@@ -719,6 +721,10 @@ func newDeviceLogsCmd() *cobra.Command {
 
 				if streamErr == nil || ctx.Err() != nil {
 					return nil
+				}
+				st, _ := status.FromError(streamErr)
+				if st.Code() != codes.Unavailable {
+					return streamErr
 				}
 
 				fmt.Fprintf(os.Stderr, "Connection lost (%v), reconnecting...\n", streamErr)

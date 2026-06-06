@@ -123,6 +123,9 @@ type deviceHub struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{} // closed by runProducer after the device fd is released
+	// req is the StreamVideoRequest that started this hub's producer.
+	// Subsequent callers whose request differs are rejected with InvalidArgument.
+	req *agentpb.StreamVideoRequest
 }
 
 // subscribe adds a new subscriber and returns its channel and integer ID.
@@ -190,7 +193,7 @@ func NewVideoService(logger *zap.Logger) *VideoService {
 			return strings.TrimSpace(string(b)), err
 		},
 		hasVideoCapture: func(path string) bool {
-			fd, err := unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC, 0)
+			fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC, 0)
 			if err != nil {
 				return false
 			}
@@ -243,7 +246,8 @@ func (s *VideoService) ListVideoDevices(ctx context.Context, _ *agentpb.ListVide
 
 // getOrCreateHub returns the existing hub for path, or starts a new producer and hub.
 // The caller receives a hub with at least one subscriber already registered (the returned id/ch).
-func (s *VideoService) getOrCreateHub(path string, req *agentpb.StreamVideoRequest) (h *deviceHub, id int, ch chan videoFrame) {
+// Returns an error if a hub already exists with different stream parameters.
+func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *agentpb.StreamVideoRequest) (h *deviceHub, id int, ch chan videoFrame, err error) {
 	for {
 		s.mu.Lock()
 		h, exists := s.hubs[path]
@@ -251,9 +255,15 @@ func (s *VideoService) getOrCreateHub(path string, req *agentpb.StreamVideoReque
 			break
 		}
 		if h.ctx.Err() == nil {
+			if h.req.GetWidth() != req.GetWidth() || h.req.GetHeight() != req.GetHeight() || h.req.GetFramerate() != req.GetFramerate() {
+				s.mu.Unlock()
+				return nil, 0, nil, status.Errorf(codes.InvalidArgument,
+					"device %s already streaming at %dx%d@%dfps; disconnect other clients first or match their parameters",
+					path, h.req.GetWidth(), h.req.GetHeight(), h.req.GetFramerate())
+			}
 			id, ch = h.subscribe()
 			s.mu.Unlock()
-			return h, id, ch
+			return h, id, ch, nil
 		}
 		// Hub is cancelling. Evict it and wait for the producer to release
 		// the device fd before opening a new one — otherwise VIDIOC_S_FMT
@@ -261,23 +271,28 @@ func (s *VideoService) getOrCreateHub(path string, req *agentpb.StreamVideoReque
 		delete(s.hubs, path)
 		done := h.done
 		s.mu.Unlock()
-		<-done
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return nil, 0, nil, ctx.Err()
+		}
 	}
 	// s.mu is held here (broke out of loop with no hub in map).
 
-	ctx, cancel := context.WithCancel(context.Background())
+	hctx, cancel := context.WithCancel(context.Background())
 	h = &deviceHub{
 		subs:   make(map[int]chan videoFrame),
-		ctx:    ctx,
+		ctx:    hctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
+		req:    req,
 	}
 	id, ch = h.subscribe()
 	s.hubs[path] = h
 	s.mu.Unlock()
 
-	go s.runProducer(ctx, h, path, req)
-	return h, id, ch
+	go s.runProducer(hctx, h, path, req)
+	return h, id, ch, nil
 }
 
 // runProducer drives the capture loop for a single device hub.
@@ -326,7 +341,10 @@ func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.
 		return status.Errorf(codes.NotFound, "video device %s not found", path)
 	}
 
-	h, id, ch := s.getOrCreateHub(path, req)
+	h, id, ch, err := s.getOrCreateHub(ctx, path, req)
+	if err != nil {
+		return err
+	}
 	defer h.unsubscribe(id)
 
 	for {
@@ -751,17 +769,8 @@ const h264ByteStream = " ! h264parse config-interval=-1 ! video/x-h264,stream-fo
 // VideoToolbox and most hardware decoders reject. This input cap does not by itself
 // enforce a specific H.264 output profile; explicit profile caps are added only where needed
 // (for example, v4l2h264enc is capped to baseline below).
-func encoderSegment(encoder string) string {
-	switch encoder {
-	case "v4l2h264enc":
-		return "videoconvert ! video/x-raw,format=I420 ! v4l2h264enc ! video/x-h264,profile=baseline"
-	case "x264enc":
-		return "videoconvert ! video/x-raw,format=I420 ! x264enc tune=zerolatency"
-	case "openh264enc":
-		return "videoconvert ! video/x-raw,format=I420 ! openh264enc"
-	case "avenc_h264":
-		return "videoconvert ! video/x-raw,format=I420 ! avenc_h264"
-	case "vp8enc":
+func encoderSegment(encoder string, hasH264Parse bool) string {
+	if encoder == "vp8enc" {
 		// webmmux streamable=true writes headers that matroskademux can parse from a pipe.
 		return "videoconvert ! vp8enc deadline=1 ! webmmux streamable=true"
 	}
