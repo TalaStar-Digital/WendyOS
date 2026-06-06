@@ -9,8 +9,8 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
-	cloudpb "github.com/wendylabsinc/wendy/proto/gen/cloudpb"
-	otelpb "github.com/wendylabsinc/wendy/proto/gen/otelpb"
+	cloudpb "github.com/wendylabsinc/wendy/go/proto/gen/cloudpb"
+	otelpb "github.com/wendylabsinc/wendy/go/proto/gen/otelpb"
 )
 
 // fakeRemoteLogging implements cloudpb.RemoteLoggingServiceClient for testing.
