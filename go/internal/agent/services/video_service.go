@@ -19,6 +19,8 @@ import (
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
@@ -293,7 +295,12 @@ func (s *VideoService) ListVideoDevices(ctx context.Context, _ *agentpb.ListVide
 // maxHubRetries is the maximum number of times getOrCreateHub will retry after
 // observing a race between subscribe() and the last subscriber's cancel() call.
 // Exceeding this indicates pathological churn and we return Unavailable.
-const maxHubRetries = 10
+// hubTeardownTimeout caps how long each retry waits for a dying hub to release
+// the device fd, bounding the worst-case total wait to maxHubRetries * timeout.
+const (
+	maxHubRetries      = 10
+	hubTeardownTimeout = 2 * time.Second
+)
 
 // getOrCreateHub returns the existing hub for path, or starts a new producer and hub.
 // The caller receives a hub with at least one subscriber already registered (the returned id/ch).
@@ -326,11 +333,17 @@ func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *age
 			// about to stop.
 			if h.ctx.Err() != nil {
 				h.unsubscribe(id)
+				waitCtx, waitCancel := context.WithTimeout(ctx, hubTeardownTimeout)
 				select {
 				case <-h.done:
-				case <-ctx.Done():
-					return nil, 0, nil, ctx.Err()
+				case <-waitCtx.Done():
+					waitCancel()
+					if ctx.Err() != nil {
+						return nil, 0, nil, ctx.Err()
+					}
+					s.logger.Warn("timed out waiting for hub teardown", zap.String("device", path))
 				}
+				waitCancel()
 				// Defensively evict the stale hub if runProducer hasn't
 				// already done so — prevents the next iteration from seeing
 				// the same dying hub if it lost its s.mu window.
@@ -349,11 +362,17 @@ func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *age
 		delete(s.hubs, path)
 		done := h.done
 		s.mu.Unlock()
+		waitCtx, waitCancel := context.WithTimeout(ctx, hubTeardownTimeout)
 		select {
 		case <-done:
-		case <-ctx.Done():
-			return nil, 0, nil, ctx.Err()
+		case <-waitCtx.Done():
+			waitCancel()
+			if ctx.Err() != nil {
+				return nil, 0, nil, ctx.Err()
+			}
+			s.logger.Warn("timed out waiting for hub teardown", zap.String("device", path))
 		}
+		waitCancel()
 	}
 	// s.mu is held here (broke out of loop with no hub in map).
 
@@ -425,6 +444,15 @@ const maxVideoDeviceID = 63
 // Multiple concurrent callers for the same device share one producer via a deviceHub.
 func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.ServerStreamingServer[agentpb.VideoFrame]) error {
 	ctx := stream.Context()
+	// Defense-in-depth: verify the caller arrived over an mTLS connection.
+	// The server transport enforces RequireAnyClientCert, so this check
+	// should never fail in production — it guards against future transport
+	// misconfigurations or test harness misconfiguration.
+	if p, ok := peer.FromContext(ctx); !ok || p.AuthInfo == nil {
+		return status.Errorf(codes.Unauthenticated, "missing peer credentials")
+	} else if _, ok := p.AuthInfo.(credentials.TLSInfo); !ok {
+		return status.Errorf(codes.Unauthenticated, "mTLS authentication required")
+	}
 	devID := req.GetDeviceId()
 	if devID > maxVideoDeviceID {
 		return status.Errorf(codes.InvalidArgument, "device ID %d out of range [0, %d]", devID, maxVideoDeviceID)
