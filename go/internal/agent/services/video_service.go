@@ -21,7 +21,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/wendylabsinc/wendy/go/internal/agent/interceptor"
 	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
 
@@ -152,9 +151,10 @@ type deviceHub struct {
 	// err is set by runProducer to the terminal error before closing subscriber
 	// channels. Nil on graceful shutdown (context cancelled). Protected by h.mu.
 	err error
-	// req is the StreamVideoRequest that started this hub's producer.
-	// Subsequent callers whose request differs are rejected with InvalidArgument.
-	req *agentpb.StreamVideoRequest
+	// width, height, framerate are copied from the request that started this hub.
+	// Storing scalars (not a proto pointer) prevents data races if the caller's
+	// proto message is ever mutated by middleware after the hub is created.
+	width, height, framerate uint32
 }
 
 // subscribe adds a new subscriber and returns its channel and integer ID.
@@ -191,15 +191,22 @@ func (h *deviceHub) broadcast(frame videoFrame) bool {
 		h.mu.Unlock()
 		return false
 	}
+	// Snapshot the subscriber map under the lock so we hold h.mu only for the
+	// map read, not for the per-subscriber allocations and channel sends.
+	snapshot := make([]chan videoFrame, 0, len(h.subs))
 	for _, ch := range h.subs {
-		// Copy data per subscriber so concurrent gRPC sends can't race on the slice.
+		snapshot = append(snapshot, ch)
+	}
+	h.mu.Unlock()
+	// Copy data per subscriber outside the lock so large I-frames don't stall
+	// unsubscribe() calls while h.mu is held.
+	for _, ch := range snapshot {
 		f := videoFrame{data: append([]byte(nil), frame.data...), tsNs: frame.tsNs, codec: frame.codec}
 		select {
 		case ch <- f:
 		default:
 		}
 	}
-	h.mu.Unlock()
 	return true
 }
 
@@ -297,8 +304,8 @@ func (s *VideoService) ListVideoDevices(ctx context.Context, _ *agentpb.ListVide
 // hubTeardownTimeout caps how long each retry waits for a dying hub to release
 // the device fd, bounding the worst-case total wait to maxHubRetries * timeout.
 const (
-	maxHubRetries      = 10
-	hubTeardownTimeout = 2 * time.Second
+	maxHubRetries      = 3
+	hubTeardownTimeout = 500 * time.Millisecond
 )
 
 // getOrCreateHub returns the existing hub for path, or starts a new producer and hub.
@@ -316,11 +323,11 @@ func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *age
 			break
 		}
 		if h.ctx.Err() == nil {
-			if h.req.GetWidth() != req.GetWidth() || h.req.GetHeight() != req.GetHeight() || h.req.GetFramerate() != req.GetFramerate() {
+			if h.width != req.GetWidth() || h.height != req.GetHeight() || h.framerate != req.GetFramerate() {
 				s.mu.Unlock()
 				s.logger.Debug("stream parameter mismatch", zap.String("device", path),
-					zap.Uint32("existing_w", h.req.GetWidth()), zap.Uint32("existing_h", h.req.GetHeight()),
-					zap.Uint32("existing_fps", h.req.GetFramerate()))
+					zap.Uint32("existing_w", h.width), zap.Uint32("existing_h", h.height),
+					zap.Uint32("existing_fps", h.framerate))
 				return nil, 0, nil, status.Errorf(codes.InvalidArgument, "device already in use with different stream parameters")
 			}
 			id, ch = h.subscribe()
@@ -377,11 +384,13 @@ func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *age
 
 	hctx, cancel := context.WithCancel(s.ctx)
 	h = &deviceHub{
-		subs:   make(map[int]chan videoFrame),
-		ctx:    hctx,
-		cancel: cancel,
-		done:   make(chan struct{}),
-		req:    req,
+		subs:      make(map[int]chan videoFrame),
+		ctx:       hctx,
+		cancel:    cancel,
+		done:      make(chan struct{}),
+		width:     req.GetWidth(),
+		height:    req.GetHeight(),
+		framerate: req.GetFramerate(),
 	}
 	id, ch = h.subscribe()
 	s.hubs[path] = h
@@ -470,13 +479,6 @@ func validateStreamParams(req *agentpb.StreamVideoRequest) error {
 // Multiple concurrent callers for the same device share one producer via a deviceHub.
 func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.ServerStreamingServer[agentpb.VideoFrame]) error {
 	ctx := stream.Context()
-	// Per-handler mTLS check using the shared interceptor helper: verifies the
-	// caller has a TLS peer with a verified certificate chain. The server-level
-	// StreamMTLSInterceptor runs the same check before this handler is reached,
-	// so this is defence-in-depth if the interceptor chain is ever misconfigured.
-	if err := interceptor.CheckMTLS(ctx, s.logger); err != nil {
-		return err
-	}
 	devID := req.GetDeviceId()
 	if devID > maxVideoDeviceID {
 		return status.Errorf(codes.InvalidArgument, "device ID %d out of range [0, %d]", devID, maxVideoDeviceID)
