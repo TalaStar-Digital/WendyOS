@@ -143,6 +143,38 @@ func TestValidate_AppIDCharset(t *testing.T) {
 	}
 }
 
+func TestValidateServiceName(t *testing.T) {
+	valid := []string{
+		"api",    // typical multi-service name
+		"db",     // two chars — boundary minimum
+		"a",      // single char — intentionally allowed (not a DNS-minimum violation)
+		"my-svc", // hyphen in middle
+		"svc1",   // trailing digit
+		"ab",     // two chars
+	}
+	for _, name := range valid {
+		if err := ValidateServiceName(name); err != nil {
+			t.Errorf("ValidateServiceName(%q) unexpected error: %v", name, err)
+		}
+	}
+
+	invalid := []string{
+		"",                      // empty
+		"Api",                   // uppercase rejected
+		"api-",                  // trailing hyphen (RFC 1123)
+		"-api",                  // leading hyphen
+		"api\nnewline",          // would break env-var injection
+		"api\x00null",           // null byte
+		"api=value",             // equals sign
+		strings.Repeat("a", 58), // too long (> 57 chars)
+	}
+	for _, name := range invalid {
+		if err := ValidateServiceName(name); err == nil {
+			t.Errorf("ValidateServiceName(%q) expected error, got nil", name)
+		}
+	}
+}
+
 func TestValidate_UnknownEntitlementType(t *testing.T) {
 	cfg := &AppConfig{
 		AppID: "com.example.app",
