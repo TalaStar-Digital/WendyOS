@@ -497,13 +497,18 @@ func refreshCertsForAuth(ctx context.Context, auth *config.AuthConfig) error {
 
 	existingCert := auth.Certificates[0]
 
+	cn, err := certCommonName(existingCert.PemCertificate)
+	if err != nil {
+		return fmt.Errorf("reading existing cert CN: %w", err)
+	}
+
 	// Generate new key pair.
 	newKeyPEM, err := certs.GenerateKeyPair()
 	if err != nil {
 		return fmt.Errorf("generating key pair: %w", err)
 	}
 
-	csrPEM, err := certs.GenerateCSR([]byte(newKeyPEM), "wendy-cli-user")
+	csrPEM, err := certs.GenerateCSR([]byte(newKeyPEM), cn)
 	if err != nil {
 		return fmt.Errorf("generating CSR: %w", err)
 	}

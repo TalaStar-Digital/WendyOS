@@ -328,8 +328,9 @@ func (s *ProvisioningService) loadOrGenerateKey() ([]byte, error) {
 	keyPEM := []byte(keyStr)
 
 	// Persist the key so it's reused on future provisioning.
+	// 0o400: private key must be read-only after creation.
 	if err := os.MkdirAll(s.configPath, 0o700); err == nil {
-		_ = os.WriteFile(keyPath, keyPEM, 0o600)
+		_ = os.WriteFile(keyPath, keyPEM, 0o400)
 	}
 
 	return keyPEM, nil
