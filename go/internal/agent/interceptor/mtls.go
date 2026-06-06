@@ -61,7 +61,7 @@ func CheckMTLS(ctx context.Context, logger *zap.Logger) error {
 	if len(leaf.ExtKeyUsage) > 0 {
 		hasClientAuth := false
 		for _, eku := range leaf.ExtKeyUsage {
-			if eku == x509.ExtKeyUsageClientAuth || eku == x509.ExtKeyUsageAny {
+			if eku == x509.ExtKeyUsageClientAuth {
 				hasClientAuth = true
 				break
 			}

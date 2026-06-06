@@ -164,10 +164,16 @@ type deviceHub struct {
 const maxSubscribersPerHub = 16
 
 // subscribe adds a new subscriber and returns its channel and integer ID.
-// Returns an error if the hub already has maxSubscribersPerHub active subscribers.
+// Returns codes.Unavailable if the hub's context has already been cancelled
+// (checked atomically under h.mu so no subscriber can be added to a dying hub),
+// or codes.ResourceExhausted if the hub already has maxSubscribersPerHub active subscribers.
 func (h *deviceHub) subscribe() (int, chan videoFrame, error) {
 	ch := make(chan videoFrame, 4)
 	h.mu.Lock()
+	if h.ctx.Err() != nil {
+		h.mu.Unlock()
+		return 0, nil, status.Errorf(codes.Unavailable, "video hub is shutting down")
+	}
 	if len(h.subs) >= maxSubscribersPerHub {
 		h.mu.Unlock()
 		return 0, nil, status.Errorf(codes.ResourceExhausted, "too many concurrent streams for this device (max %d)", maxSubscribersPerHub)
@@ -372,35 +378,29 @@ func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *age
 			id, ch, err = h.subscribe()
 			s.mu.Unlock()
 			if err != nil {
-				return nil, 0, nil, err
-			}
-			// Guard against the race where the last subscriber called unsubscribe
-			// (emptying h.subs) between our Err() check above and subscribe()
-			// acquiring h.mu. If cancel() already fired, back off and retry so
-			// we create a fresh hub rather than returning one whose producer is
-			// about to stop.
-			if h.ctx.Err() != nil {
-				h.unsubscribe(id)
-				waitCtx, waitCancel := context.WithTimeout(ctx, hubTeardownTimeout)
-				select {
-				case <-h.done:
-				case <-waitCtx.Done():
-					waitCancel()
-					if ctx.Err() != nil {
-						return nil, 0, nil, ctx.Err()
+				if st, _ := status.FromError(err); st.Code() == codes.Unavailable {
+					// subscribe() detected a cancelled hub atomically under h.mu.
+					// Wait for the producer to release the device fd, evict the stale
+					// hub, and retry so we create a fresh one.
+					waitCtx, waitCancel := context.WithTimeout(ctx, hubTeardownTimeout)
+					select {
+					case <-h.done:
+					case <-waitCtx.Done():
+						waitCancel()
+						if ctx.Err() != nil {
+							return nil, 0, nil, ctx.Err()
+						}
+						s.logger.Warn("timed out waiting for hub teardown", zap.String("device", path))
 					}
-					s.logger.Warn("timed out waiting for hub teardown", zap.String("device", path))
+					waitCancel()
+					s.mu.Lock()
+					if s.hubs[path] == h {
+						delete(s.hubs, path)
+					}
+					s.mu.Unlock()
+					continue
 				}
-				waitCancel()
-				// Defensively evict the stale hub if runProducer hasn't
-				// already done so — prevents the next iteration from seeing
-				// the same dying hub if it lost its s.mu window.
-				s.mu.Lock()
-				if s.hubs[path] == h {
-					delete(s.hubs, path)
-				}
-				s.mu.Unlock()
-				continue
+				return nil, 0, nil, err
 			}
 			return h, id, ch, nil
 		}
@@ -834,6 +834,9 @@ func (s *VideoService) streamGStreamer(ctx context.Context, broadcast func([]byt
 	if err != nil {
 		return status.Errorf(codes.FailedPrecondition, "%v", err)
 	}
+	if !isValidGSTElementName(enc.element) {
+		return status.Errorf(codes.Internal, "GStreamer encoder name contains invalid characters")
+	}
 	s.logger.Info("GStreamer encoder selected", zap.String("encoder", enc.element), zap.String("codec", enc.codec.String()))
 
 	args := buildGStreamerArgs(gstPath, path, req, enc.element, enc.hasH264Parse)
@@ -1072,6 +1075,22 @@ func keyframeArg(encoder string, gop int) string {
 	default:
 		return ""
 	}
+}
+
+// isValidGSTElementName reports whether name is a safe GStreamer element identifier.
+// GStreamer element names are restricted to letters, digits, underscores and hyphens;
+// any other character (including pipeline tokens !, (, ), ;) would enable pipeline injection
+// when the name is interpolated into a gst-launch-1.0 argument string.
+func isValidGSTElementName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	for _, c := range name {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 // encoderSegment returns the GStreamer pipeline segment for the given encoder element.
