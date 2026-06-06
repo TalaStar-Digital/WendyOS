@@ -428,12 +428,16 @@ func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.
 			return ctx.Err()
 		case frame, ok := <-ch:
 			if !ok {
-				// Producer exited. Return the original error if one was recorded,
-				// otherwise fall back to a generic internal error.
+				// Producer exited. Return the original error if one was recorded.
 				if h.err != nil {
 					return h.err
 				}
+				// If the hub context was cancelled (e.g. service shutdown), propagate that.
+				if err := h.ctx.Err(); err != nil {
+					return status.FromContextError(err).Err()
+				}
 				return status.Errorf(codes.Internal, "video producer for %s stopped", path)
+			}
 			}
 			if err := stream.Send(&agentpb.VideoFrame{
 				Data:        frame.data,
