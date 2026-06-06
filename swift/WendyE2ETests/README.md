@@ -4,8 +4,8 @@ Swift end-to-end tests for the Wendy CLI and Wendy agent. This package runs the
 real `wendy` binary, records every shell command, and writes artifacts for local
 debugging, CI, and AI review.
 
-The harness is currently separate from the `.github/ci-tests/` app integration
-suite. Over time, overlapping app integration coverage is expected to move into
+The harness is currently separate from the `.github/ci-tests/` integration
+suite. Over time, overlapping integration coverage is expected to move into
 Swift E2E specs so orchestration, assertions, artifacts, and reporting can live
 in one place.
 
