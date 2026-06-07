@@ -135,6 +135,11 @@ type nativeH264NotSupported struct{ msg string }
 func (e nativeH264NotSupported) Error() string { return e.msg }
 
 // videoFrame carries a single encoded video frame from a producer to subscribers.
+// IMMUTABLE after the call to broadcast(): the data slice is allocated once, copied
+// from the V4L2 mmap region or GStreamer pipe, and never written again. Multiple
+// subscriber goroutines may hold the same videoFrame value concurrently; each must
+// copy data before passing it to any function that might write through the pointer
+// (e.g. proto marshalling, TLS record packing). See StreamVideo for the copy site.
 type videoFrame struct {
 	data  []byte
 	tsNs  uint64
@@ -374,9 +379,12 @@ func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *age
 					waitCtx, waitCancel := context.WithTimeout(ctx, hubTeardownTimeout)
 					select {
 					case <-h.done:
-					case <-waitCtx.Done():
+					case <-ctx.Done():
 						waitCancel()
+						return nil, 0, nil, ctx.Err()
+					case <-waitCtx.Done():
 						if ctx.Err() != nil {
+							waitCancel()
 							return nil, 0, nil, ctx.Err()
 						}
 						s.logger.Warn("timed out waiting for hub teardown", zap.String("device", path))
@@ -402,9 +410,12 @@ func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *age
 		waitCtx, waitCancel := context.WithTimeout(ctx, hubTeardownTimeout)
 		select {
 		case <-done:
-		case <-waitCtx.Done():
+		case <-ctx.Done():
 			waitCancel()
+			return nil, 0, nil, ctx.Err()
+		case <-waitCtx.Done():
 			if ctx.Err() != nil {
+				waitCancel()
 				return nil, 0, nil, ctx.Err()
 			}
 			s.logger.Warn("timed out waiting for hub teardown", zap.String("device", path))
