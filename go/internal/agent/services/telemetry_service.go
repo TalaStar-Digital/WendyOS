@@ -51,7 +51,8 @@ func (b *TelemetryBroadcaster) nextSubID() string {
 	return fmt.Sprintf("sub-%d", b.nextID)
 }
 
-// Cached recent logs are pre-filled into the channel asynchronously.
+// SubscribeLogs adds a log subscriber and returns the channel and subscription ID.
+// Cached recent logs are pre-filled into the channel synchronously before returning.
 func (b *TelemetryBroadcaster) SubscribeLogs() (string, <-chan *otelpb.ExportLogsServiceRequest) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -59,30 +60,46 @@ func (b *TelemetryBroadcaster) SubscribeLogs() (string, <-chan *otelpb.ExportLog
 	ch := make(chan *otelpb.ExportLogsServiceRequest, 64)
 	b.logSubs[id] = ch
 
-	// Pre-fill cached logs into the channel in a goroutine.
+	// Pre-fill cached logs synchronously while the lock is held. The 64-slot
+	// buffer is always larger than defaultMaxCachedLogs (20), so these sends
+	// never block and eliminate the data race between a background goroutine
+	// sending on ch and UnsubscribeLogs closing it.
 	if b.logCount > 0 {
-		cached := make([]*otelpb.ExportLogsServiceRequest, b.logCount)
 		start := (b.logHead - b.logCount + defaultMaxCachedLogs) % defaultMaxCachedLogs
 		for i := 0; i < b.logCount; i++ {
-			cached[i] = b.recentLogs[(start+i)%defaultMaxCachedLogs]
+			ch <- b.recentLogs[(start+i)%defaultMaxCachedLogs]
 		}
-		go func() {
-			// recover guards against a send on closed channel if the subscriber
-			// calls UnsubscribeLogs before this goroutine finishes pre-filling.
-			defer func() { _ = recover() }()
-			for _, entry := range cached {
-				select {
-				case ch <- entry:
-				default:
-					return // channel full, stop pre-filling
-				}
-			}
-		}()
 	}
 
 	return id, ch
 }
 
+// SubscribeLogsNoPrefill adds a log subscriber without pre-filling cached logs.
+// Use this when the caller will replay disk history itself (via ReadLastN) to
+// avoid sending the same recent batches twice — once from disk and again from
+// the in-memory cache. Live telemetry published after this call is buffered in
+// the returned channel and will be delivered after the caller's history replay.
+func (b *TelemetryBroadcaster) SubscribeLogsNoPrefill() (string, <-chan *otelpb.ExportLogsServiceRequest) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	id := b.nextSubID()
+	ch := make(chan *otelpb.ExportLogsServiceRequest, 64)
+	b.logSubs[id] = ch
+	return id, ch
+}
+
+// SubscribeMetricsNoPrefill adds a metrics subscriber without pre-filling cached snapshots.
+// Use when the caller replays disk history to avoid duplicate metric deliveries.
+func (b *TelemetryBroadcaster) SubscribeMetricsNoPrefill() (string, <-chan *otelpb.ExportMetricsServiceRequest) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	id := b.nextSubID()
+	ch := make(chan *otelpb.ExportMetricsServiceRequest, 64)
+	b.metricSubs[id] = ch
+	return id, ch
+}
+
+// UnsubscribeLogs removes a log subscriber.
 func (b *TelemetryBroadcaster) UnsubscribeLogs(id string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -109,7 +126,8 @@ func (b *TelemetryBroadcaster) PublishLogs(req *otelpb.ExportLogsServiceRequest)
 	b.mu.Unlock()
 }
 
-// Cached latest metrics are pre-filled into the channel asynchronously.
+// SubscribeMetrics adds a metrics subscriber.
+// Cached latest metrics are pre-filled into the channel synchronously before returning.
 func (b *TelemetryBroadcaster) SubscribeMetrics() (string, <-chan *otelpb.ExportMetricsServiceRequest) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -117,29 +135,21 @@ func (b *TelemetryBroadcaster) SubscribeMetrics() (string, <-chan *otelpb.Export
 	ch := make(chan *otelpb.ExportMetricsServiceRequest, 64)
 	b.metricSubs[id] = ch
 
-	// Pre-fill cached metrics into the channel in a goroutine. Clone each
-	// snapshot while the lock is still held so the goroutine sends immutable
-	// copies; without cloning, a concurrent PublishMetrics could mutate the
-	// cached object in place while the subscriber reads it.
+	// Pre-fill one snapshot per service synchronously. Clones are made while
+	// the lock is held so concurrent PublishMetrics cannot mutate the cached
+	// object after it is enqueued. Non-blocking sends guard against the
+	// unlikely case where the number of distinct service names exceeds 64.
 	if len(b.latestMetrics) > 0 {
 		seen := make(map[*otelpb.ExportMetricsServiceRequest]bool, len(b.latestMetrics))
-		cached := make([]*otelpb.ExportMetricsServiceRequest, 0, len(b.latestMetrics))
 		for _, v := range b.latestMetrics {
 			if !seen[v] {
 				seen[v] = true
-				cached = append(cached, proto.Clone(v).(*otelpb.ExportMetricsServiceRequest))
-			}
-		}
-		go func() {
-			defer func() { _ = recover() }()
-			for _, entry := range cached {
 				select {
-				case ch <- entry:
+				case ch <- proto.Clone(v).(*otelpb.ExportMetricsServiceRequest):
 				default:
-					return
 				}
 			}
-		}()
+		}
 	}
 
 	return id, ch
@@ -293,12 +303,15 @@ type TelemetryService struct {
 	agentpb.UnimplementedWendyTelemetryServiceServer
 	logger      *zap.Logger
 	broadcaster *TelemetryBroadcaster
+	buffer      *TelemetryBuffer // nil if disk buffering is unavailable
 }
 
-func NewTelemetryService(logger *zap.Logger, broadcaster *TelemetryBroadcaster) *TelemetryService {
+// NewTelemetryService creates a new TelemetryService.
+func NewTelemetryService(logger *zap.Logger, broadcaster *TelemetryBroadcaster, buffer *TelemetryBuffer) *TelemetryService {
 	return &TelemetryService{
 		logger:      logger,
 		broadcaster: broadcaster,
+		buffer:      buffer,
 	}
 }
 
@@ -309,8 +322,38 @@ func (s *TelemetryService) Broadcaster() *TelemetryBroadcaster {
 func (s *TelemetryService) StreamLogs(req *agentpb.StreamLogsRequest, stream grpc.ServerStreamingServer[agentpb.StreamLogsResponse]) error {
 	ctx := stream.Context()
 
-	id, ch := s.broadcaster.SubscribeLogs()
+	// When replaying history, subscribe without cache prefill first so that
+	// live telemetry published during replay is buffered rather than lost,
+	// and to avoid sending the same recent batches twice (once from disk and
+	// once from the broadcaster's in-memory ring buffer).
+	var id string
+	var ch <-chan *otelpb.ExportLogsServiceRequest
+	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil && s.buffer.DiskEnabled() {
+		id, ch = s.broadcaster.SubscribeLogsNoPrefill()
+	} else {
+		id, ch = s.broadcaster.SubscribeLogs()
+	}
 	defer s.broadcaster.UnsubscribeLogs(id)
+
+	// Replay history if requested (after subscribing so no live items are missed).
+	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil && s.buffer.DiskEnabled() {
+		entries := s.buffer.ReadLastN(SignalLogs, int(*req.LastN))
+		for _, e := range entries {
+			logs, ok := e.(*otelpb.ExportLogsServiceRequest)
+			if !ok {
+				continue
+			}
+			if req.AppName != nil || req.ServiceName != nil || req.MinSeverity != nil {
+				logs = filterLogs(logs, req)
+				if logs == nil {
+					continue
+				}
+			}
+			if err := stream.Send(&agentpb.StreamLogsResponse{Logs: logs, IsHistory: true}); err != nil {
+				return err
+			}
+		}
+	}
 
 	s.logger.Info("StreamLogs client connected", zap.String("sub_id", id))
 
@@ -343,8 +386,36 @@ func (s *TelemetryService) StreamLogs(req *agentpb.StreamLogsRequest, stream grp
 func (s *TelemetryService) StreamMetrics(req *agentpb.StreamMetricsRequest, stream grpc.ServerStreamingServer[agentpb.StreamMetricsResponse]) error {
 	ctx := stream.Context()
 
-	id, ch := s.broadcaster.SubscribeMetrics()
+	// Subscribe first (without cache prefill when replaying history) so that
+	// live telemetry is buffered during the replay window and not lost.
+	var id string
+	var ch <-chan *otelpb.ExportMetricsServiceRequest
+	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil && s.buffer.DiskEnabled() {
+		id, ch = s.broadcaster.SubscribeMetricsNoPrefill()
+	} else {
+		id, ch = s.broadcaster.SubscribeMetrics()
+	}
 	defer s.broadcaster.UnsubscribeMetrics(id)
+
+	// Replay history after subscribing.
+	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil && s.buffer.DiskEnabled() {
+		entries := s.buffer.ReadLastN(SignalMetrics, int(*req.LastN))
+		for _, e := range entries {
+			metrics, ok := e.(*otelpb.ExportMetricsServiceRequest)
+			if !ok {
+				continue
+			}
+			if req.ServiceName != nil || req.AppName != nil || req.MetricNamePrefix != nil {
+				metrics = filterMetrics(metrics, req)
+				if metrics == nil {
+					continue
+				}
+			}
+			if err := stream.Send(&agentpb.StreamMetricsResponse{Metrics: metrics, IsHistory: true}); err != nil {
+				return err
+			}
+		}
+	}
 
 	s.logger.Info("StreamMetrics client connected", zap.String("sub_id", id))
 
@@ -378,8 +449,30 @@ func (s *TelemetryService) StreamMetrics(req *agentpb.StreamMetricsRequest, stre
 func (s *TelemetryService) StreamTraces(req *agentpb.StreamTracesRequest, stream grpc.ServerStreamingServer[agentpb.StreamTracesResponse]) error {
 	ctx := stream.Context()
 
+	// Subscribe first so live traces published during history replay are buffered.
+	// Traces have no in-memory cache prefill so SubscribeTraces is always correct here.
 	id, ch := s.broadcaster.SubscribeTraces()
 	defer s.broadcaster.UnsubscribeTraces(id)
+
+	// Replay history after subscribing.
+	if req.LastN != nil && *req.LastN > 0 && s.buffer != nil && s.buffer.DiskEnabled() {
+		entries := s.buffer.ReadLastN(SignalTraces, int(*req.LastN))
+		for _, e := range entries {
+			traces, ok := e.(*otelpb.ExportTraceServiceRequest)
+			if !ok {
+				continue
+			}
+			if req.ServiceName != nil || req.AppName != nil || req.SpanNamePrefix != nil {
+				traces = filterTraces(traces, req)
+				if traces == nil {
+					continue
+				}
+			}
+			if err := stream.Send(&agentpb.StreamTracesResponse{Traces: traces, IsHistory: true}); err != nil {
+				return err
+			}
+		}
+	}
 
 	s.logger.Info("StreamTraces client connected", zap.String("sub_id", id))
 
@@ -412,10 +505,11 @@ func (s *TelemetryService) StreamTraces(req *agentpb.StreamTracesRequest, stream
 
 type OTELLogsReceiver struct {
 	otelpb.UnimplementedLogsServiceServer
-	broadcaster *TelemetryBroadcaster
+	broadcaster TelemetryPublisher
 }
 
-func NewOTELLogsReceiver(b *TelemetryBroadcaster) *OTELLogsReceiver {
+// NewOTELLogsReceiver creates a new OTELLogsReceiver.
+func NewOTELLogsReceiver(b TelemetryPublisher) *OTELLogsReceiver {
 	return &OTELLogsReceiver{broadcaster: b}
 }
 
@@ -426,10 +520,11 @@ func (r *OTELLogsReceiver) Export(_ context.Context, req *otelpb.ExportLogsServi
 
 type OTELMetricsReceiver struct {
 	otelpb.UnimplementedMetricsServiceServer
-	broadcaster *TelemetryBroadcaster
+	broadcaster TelemetryPublisher
 }
 
-func NewOTELMetricsReceiver(b *TelemetryBroadcaster) *OTELMetricsReceiver {
+// NewOTELMetricsReceiver creates a new OTELMetricsReceiver.
+func NewOTELMetricsReceiver(b TelemetryPublisher) *OTELMetricsReceiver {
 	return &OTELMetricsReceiver{broadcaster: b}
 }
 
@@ -440,10 +535,11 @@ func (r *OTELMetricsReceiver) Export(_ context.Context, req *otelpb.ExportMetric
 
 type OTELTraceReceiver struct {
 	otelpb.UnimplementedTraceServiceServer
-	broadcaster *TelemetryBroadcaster
+	broadcaster TelemetryPublisher
 }
 
-func NewOTELTraceReceiver(b *TelemetryBroadcaster) *OTELTraceReceiver {
+// NewOTELTraceReceiver creates a new OTELTraceReceiver.
+func NewOTELTraceReceiver(b TelemetryPublisher) *OTELTraceReceiver {
 	return &OTELTraceReceiver{broadcaster: b}
 }
 

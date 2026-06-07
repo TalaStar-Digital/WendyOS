@@ -51,74 +51,87 @@ To prove this out, we'll use FastAPI, a modern, fast (high-performance) web fram
 
 <Steps>
   <Step>
-    ### Generated requirements.txt
-
-    Review the generated `requirements.txt` file with FastAPI and Uvicorn:
-
-    ```txt
-    fastapi
-    uvicorn[standard]
-    ```
-  </Step>
-
-  <Step>
     ### Generated Web Server
 
-    The generated `app.py` contains the server logic:
+    The generated `app.py` contains the server logic — a FastAPI app with a few routes:
 
     ```python
-    #!/usr/bin/env python3
+    import os
     from fastapi import FastAPI
     from pydantic import BaseModel
 
     app = FastAPI()
 
-    class Car(BaseModel):
-        make: str
-        year: int
+    hostname = (
+        os.environ.get("WENDY_DEVICE_HOSTNAME")
+        or os.environ.get("WENDY_HOSTNAME")
+        or "localhost"
+    )
+
+
+    class Item(BaseModel):
+        name: str
+        price: float
+
+
+    @app.on_event("startup")
+    async def startup_event():
+        print(f"Server running on {hostname}:8000", flush=True)
+
 
     @app.get("/")
     async def root():
-        return "hello-world"
+        print("Received request: GET /", flush=True)
+        return {"message": "hello-world"}
 
-    @app.get("/json")
-    async def get_car():
-        return Car(make="Tesla", year=2024)
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
+
+    @app.post("/items", status_code=201)
+    async def create_item(item: Item):
+        print(f"Received request: POST /items - {item.name}", flush=True)
+        return {"id": 1, "name": item.name, "price": item.price}
     ```
 
     <Callout type="info">
-      **Multiple Routes**: This example includes two routes:
-      - `GET /` - Returns a simple string "hello-world"
-      - `GET /json` - Returns a JSON object with a Pydantic model
+      **Multiple Routes**: This example includes three routes:
+      - `GET /` - Returns a JSON object `{"message": "hello-world"}`
+      - `GET /health` - A health check returning `{"status": "ok"}`
+      - `POST /items` - Accepts a JSON body validated by a Pydantic model and echoes it back
     </Callout>
   </Step>
 
   <Step>
     ### Generated Dockerfile
 
-    The generated project includes a Dockerfile:
+    The generated project includes a Dockerfile that installs FastAPI/Uvicorn with `uv` and starts the server with `uvicorn`. Dependencies are installed in the Dockerfile, so there is no `requirements.txt`:
 
     ```dockerfile
-    # Use uv with Python 3.14 (slim variant for better compatibility)
     FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
-    # Set working directory
     WORKDIR /app
 
-    # Copy application files
-    COPY requirements.txt .
+    ENV PYTHONUNBUFFERED=1
+
+    ARG WENDY_DEVICE_HOSTNAME=localhost
+    ENV WENDY_DEVICE_HOSTNAME=${WENDY_DEVICE_HOSTNAME}
+
+    ARG WENDY_DEVICE_TYPE
+    ARG WENDY_DEBUG=false
+    ENV WENDY_DEVICE_TYPE=${WENDY_DEVICE_TYPE}
+    ENV WENDY_DEBUG=${WENDY_DEBUG}
+
+    RUN uv pip install --system fastapi==0.135.3 "uvicorn[standard]"
+    RUN if [ "$WENDY_DEBUG" = "true" ]; then uv pip install --system debugpy; fi
+
     COPY app.py .
 
-    # Create a non-root user for security
-    RUN useradd --create-home --shell /bin/bash app && \
-        chown -R app:app /app
-    USER app
-
-    # Expose port 8000
     EXPOSE 8000
 
-    # Run the application with uvicorn, ensuring dependencies are available
-    CMD ["uv", "run", "--with", "fastapi", "--with", "uvicorn[standard]", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+    CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
     ```
 
     <Callout type="warning">
@@ -171,19 +184,26 @@ INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 
 After deploying your server to your WendyOS device, you can test it from your development machine. As long as your WendyOS device is accessible over USB or the Local Area Network, you can reach it from your browser.
 
-You can configure `wendy.json` with a readiness probe and postStart hook to automatically open your browser when the server is ready:
+The generated `wendy.json` already includes the `network` entitlement, a readiness probe, and a `postStart` hook that opens your browser automatically once the server is ready:
 
 ```json
 {
-  "readiness": {
-    "tcpSocket": { "port": 8000 },
-    "timeoutSeconds": 30
-  },
-  "hooks": {
-    "postStart": {
-      "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:8000"
+    "appId": "simple-server",
+    "version": "0.1.0",
+    "entitlements": [
+        {
+            "type": "network"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": 8000 },
+        "timeoutSeconds": 30
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:8000"
+        }
     }
-  }
 }
 ```
 Or open your browser manually and navigate to:
@@ -198,8 +218,8 @@ http://wendyos-true-probe.local:8000
 
 You should see the following output:
 
-```
-"hello-world"
+```json
+{"message":"hello-world"}
 ```
 
 This confirms your web server is successfully running on your WendyOS device and accepting requests from your network.
@@ -215,7 +235,7 @@ wendy device apps list
 ╭───────────────┬─────────┬─────────┬──────────╮
 │ App           │ Version │ State   │ Failures │
 ├───────────────┼─────────┼─────────┼──────────┤
-│ simple-server │ 0.0.0   │ Stopped │ 0        │
+│ simple-server │ 0.1.0   │ Running │ 0        │
 ╰───────────────┴─────────┴─────────┴──────────╯
 ```
 
@@ -249,10 +269,10 @@ Now that you have a basic web server running:
 
     ### Using Python Directly
 
-    Install dependencies and run your server locally:
+    There is no `requirements.txt`, so install the dependencies directly, then run the server with `uvicorn`:
 
     ```bash
-    pip install -r requirements.txt
+    pip install fastapi "uvicorn[standard]"
     uvicorn app:app --host 0.0.0.0 --port 8000
     ```
 
@@ -261,6 +281,7 @@ Now that you have a basic web server running:
     ```
     INFO:     Started server process [12345]
     INFO:     Waiting for application startup.
+    Server running on localhost:8000
     INFO:     Application startup complete.
     INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
     ```
@@ -284,20 +305,34 @@ Now that you have a basic web server running:
 
     You should see:
 
-    ```
-    "hello-world"
+    ```json
+    {"message":"hello-world"}
     ```
 
-    Test the JSON endpoint:
+    Test the health endpoint:
 
     ```bash
-    curl http://localhost:8000/json
+    curl http://localhost:8000/health
     ```
 
     You should see:
 
     ```json
-    {"make":"Tesla","year":2024}
+    {"status":"ok"}
+    ```
+
+    Test the POST endpoint with a JSON body:
+
+    ```bash
+    curl -X POST http://localhost:8000/items \
+      -H "Content-Type: application/json" \
+      -d '{"name": "Widget", "price": 9.99}'
+    ```
+
+    You should see:
+
+    ```json
+    {"id":1,"name":"Widget","price":9.99}
     ```
   </Accordion>
 </Accordions>

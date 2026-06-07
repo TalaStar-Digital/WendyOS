@@ -93,6 +93,7 @@ extension ReviewCommand {
         let resolvedModel = reviewHarness.modelName
         let reviewer = e2eReviewReviewer(model: resolvedModel)
         let reviewDirectoryName = e2eReviewDirectoryName(reviewer: reviewer)
+        let overview = try ensureRunOverview(in: runURL)
         let suites = try loadRunReviewSuites(
             testsURL: testsURL,
             runURL: runURL,
@@ -107,6 +108,7 @@ extension ReviewCommand {
         print("    Auth:           \(reviewHarness.authSummary)")
         print("    Repo:           \(repoURL.path)")
         print("    Run:            \(runURL.path)")
+        print("    Overview:       \(runOverviewURL(in: runURL).path)")
         print("    Mode:           \(reviewMode.name)")
         print("    Reviewer:       \(reviewer)")
         print("    Review dir:     \(reviewDirectoryName)")
@@ -140,6 +142,7 @@ extension ReviewCommand {
                             testsURL: testsURL,
                             runURL: runURL,
                             context: context,
+                            overview: overview,
                             reviewer: reviewer,
                             reviewDirectoryName: reviewDirectoryName,
                             overwrite: overwrite
@@ -169,6 +172,7 @@ extension ReviewCommand {
                 testsURL: testsURL,
                 runURL: runURL,
                 context: context,
+                overview: overview,
                 reviewer: reviewer,
                 reviewDirectoryName: reviewDirectoryName,
                 overwrite: overwrite
@@ -822,9 +826,20 @@ private func runReviewObservationResult(
     guard xmlParser.parse() else {
         throw ValidationError("Could not parse Swift Testing xUnit results: \(resultURL.path)")
     }
-    return parser.results.first { key, _ in
+    if let result = parser.results.first(where: { key, _ in
         reviewSlug(key.suite) == suiteKey && reviewSlug(key.name) == testKey
-    }?.value ?? ReviewTestObservation(status: .unknown, durationSeconds: nil)
+    })?.value {
+        return result
+    }
+
+    let matchingTestNames = parser.results.filter { key, _ in
+        reviewSlug(key.name) == testKey
+    }
+    if matchingTestNames.count == 1, let result = matchingTestNames.first?.value {
+        return result
+    }
+
+    return ReviewTestObservation(status: .unknown, durationSeconds: nil)
 }
 
 private func runReviewDirectoryChildren(of url: URL) throws -> [URL] {
@@ -856,6 +871,7 @@ private func runSuitePrompt(
     testsURL: URL,
     runURL: URL,
     context: ReviewContext,
+    overview: E2ERunOverview,
     reviewer: String,
     reviewDirectoryName: String,
     overwrite: Bool
@@ -867,7 +883,8 @@ private func runSuitePrompt(
         packageURL: packageURL,
         testsURL: testsURL,
         runURL: runURL,
-        context: context
+        context: context,
+        overviewURL: runOverviewURL(in: runURL)
     )
     lines.append("## Suite")
     lines.append("")
@@ -888,10 +905,16 @@ private func runSuitePrompt(
         overwrite: overwrite
     )
     lines.append("")
+    appendRunOverviewSuiteFocus(overview, suiteKey: suite.suiteKey, to: &lines)
     lines.append("## Tests in this suite")
     lines.append("")
     for test in suite.tests {
-        appendRunReviewTest(test, to: &lines, runURL: runURL)
+        appendRunReviewTest(
+            test,
+            to: &lines,
+            runURL: runURL,
+            reviewDirectoryName: reviewDirectoryName
+        )
     }
     return lines.joined(separator: "\n")
 }
@@ -904,6 +927,7 @@ private func runReportPrompt(
     testsURL: URL,
     runURL: URL,
     context: ReviewContext,
+    overview: E2ERunOverview,
     reviewer: String,
     reviewDirectoryName: String,
     overwrite: Bool
@@ -915,7 +939,8 @@ private func runReportPrompt(
         packageURL: packageURL,
         testsURL: testsURL,
         runURL: runURL,
-        context: context
+        context: context,
+        overviewURL: runOverviewURL(in: runURL)
     )
     lines.append("## Report scope")
     lines.append("")
@@ -930,9 +955,10 @@ private func runReportPrompt(
         overwrite: overwrite
     )
     lines.append(
-        "For report-level reviews, only create findings that are run-level or cross-suite. Do not repeat suite/test reviews already covered at lower scopes."
+        "For report-level reviews, create run-level or cross-suite findings. If the overview records failed or flaked target outcomes, include a top-level synthesis that covers each one and cites the lower-scope review or artifact evidence."
     )
     lines.append("")
+    appendRunOverviewReportFocus(overview, to: &lines)
     lines.append("## Run summary")
     lines.append("")
     for suite in suites {
@@ -963,7 +989,8 @@ private func runPromptHeader(
     packageURL: URL,
     testsURL: URL,
     runURL: URL,
-    context: ReviewContext
+    context: ReviewContext,
+    overviewURL: URL
 ) -> [String] {
     var lines = [
         "# \(title)",
@@ -976,6 +1003,7 @@ private func runPromptHeader(
         "- Swift package: `\(packageURL.path)`",
         "- Swift E2E tests: `\(testsURL.path)`",
         "- Run directory: `\(runURL.path)`",
+        "- Run overview JSON: `\(overviewURL.path)`",
         "",
         "Walk only the canonical run depth. Do not recursively scan copied `cli/` or `agent/` sandboxes unless you intentionally inspect a specific artifact referenced below.",
         "Print short `Progress:` lines while reviewing so CI shows activity.",
@@ -1055,6 +1083,146 @@ private func appendReviewOutputContract(
     )
 }
 
+private func appendRunOverviewSuiteFocus(
+    _ overview: E2ERunOverview,
+    suiteKey: String,
+    to lines: inout [String]
+) {
+    lines.append("## Failure and flake evidence from `\(e2eRunOverviewFileName)`")
+    lines.append("")
+    lines.append(
+        "Prioritize deterministic `FAILED` target outcomes first, then `FLAKED` target outcomes, then unresolved `UNKNOWN` outcomes. Cite the attempt artifacts listed here when writing reviews."
+    )
+    lines.append("")
+
+    appendRunOverviewIssues(
+        title: "Deterministic failures",
+        issues: overview.noteworthy.deterministicFailures.filter { $0.suite == suiteKey },
+        to: &lines
+    )
+    appendRunOverviewIssues(
+        title: "Flakes",
+        issues: overview.noteworthy.flakes.filter { $0.suite == suiteKey },
+        to: &lines
+    )
+    appendRunOverviewIssues(
+        title: "Unknown outcomes",
+        issues: overview.noteworthy.unknowns.filter { $0.suite == suiteKey },
+        to: &lines
+    )
+}
+
+private func appendRunOverviewReportFocus(
+    _ overview: E2ERunOverview,
+    to lines: inout [String]
+) {
+    lines.append("## Run overview from `\(e2eRunOverviewFileName)`")
+    lines.append("")
+    lines.append(
+        "The overview is generated before AI review from xUnit results and per-attempt artifacts. Use it as the source of truth for target-level deterministic failures and flakes."
+    )
+    lines.append("")
+    lines.append(
+        "- Summary: tests=\(overview.summary.tests), test-targets=\(overview.summary.testTargets), attempts=\(overview.summary.attemptResults), passed=\(overview.summary.passed), flaked=\(overview.summary.flaked), failed=\(overview.summary.failed), skipped=\(overview.summary.skipped), unknown=\(overview.summary.unknown), commands=\(overview.summary.commands)"
+    )
+    lines.append("- Target overview:")
+    for target in overview.targets {
+        lines.append(
+            "  - `\(target.name)`: outcome=`\(target.outcome.rawValue)`, attempts=\(target.attempts), tests=\(target.tests), passed=\(target.passed), flaked=\(target.flaked), failed=\(target.failed), skipped=\(target.skipped), unknown=\(target.unknown)"
+        )
+    }
+    lines.append("")
+
+    appendRunOverviewIssues(
+        title: "Deterministic failures",
+        issues: overview.noteworthy.deterministicFailures,
+        to: &lines
+    )
+    appendRunOverviewIssues(
+        title: "Flakes",
+        issues: overview.noteworthy.flakes,
+        to: &lines
+    )
+    appendRunOverviewIssues(
+        title: "Unknown outcomes",
+        issues: overview.noteworthy.unknowns,
+        to: &lines
+    )
+}
+
+private func appendRunOverviewIssues(
+    title: String,
+    issues: [E2ERunOverviewIssue],
+    to lines: inout [String]
+) {
+    lines.append("### \(title)")
+    lines.append("")
+    guard !issues.isEmpty else {
+        lines.append("- None recorded.")
+        lines.append("")
+        return
+    }
+
+    for issue in issues {
+        lines.append(
+            "- `\(issue.suite)/\(issue.test)` target=`\(issue.target)` outcome=`\(issue.outcome.rawValue)` attempts=\(runOverviewIssueAttemptSummary(issue.attempts))"
+        )
+        for attempt in issue.attempts where attempt.status != .passed || issue.outcome == .flaked {
+            appendRunOverviewIssueAttempt(attempt, prefix: "  ", to: &lines)
+        }
+    }
+    lines.append("")
+}
+
+private func appendRunOverviewIssueAttempt(
+    _ attempt: E2ERunOverviewIssueAttempt,
+    prefix: String,
+    to lines: inout [String]
+) {
+    let duration = attempt.durationSeconds.map(formatSeconds) ?? "unknown"
+    lines.append(
+        "\(prefix)- attempt=`\(attempt.attempt)` status=`\(attempt.status.rawValue)` duration=`\(duration)`"
+    )
+    appendRunOverviewDetail(attempt.detail, prefix: "\(prefix)  ", to: &lines)
+    appendRunOverviewArtifacts(attempt.artifacts, prefix: "\(prefix)  ", to: &lines)
+}
+
+private func appendRunOverviewDetail(
+    _ detail: String?,
+    prefix: String,
+    to lines: inout [String]
+) {
+    guard let detail, !detail.isEmpty else { return }
+    lines.append("\(prefix)detail: \(runOverviewSingleLine(detail, limit: 500))")
+}
+
+private func appendRunOverviewArtifacts(
+    _ artifacts: E2ERunOverviewArtifacts,
+    prefix: String,
+    to lines: inout [String]
+) {
+    if let recording = artifacts.recording {
+        lines.append("\(prefix)recording: `\(recording)`")
+    }
+    if let shell = artifacts.shell {
+        lines.append("\(prefix)shell: `\(shell)`")
+    }
+    if let testResults = artifacts.testResults {
+        lines.append("\(prefix)xunit: `\(testResults)`")
+    }
+}
+
+private func runOverviewIssueAttemptSummary(_ attempts: [E2ERunOverviewIssueAttempt]) -> String {
+    attempts.map { "\($0.attempt):\($0.status.rawValue)" }.joined(separator: ",")
+}
+
+private func runOverviewSingleLine(_ value: String, limit: Int) -> String {
+    let singleLine = value.replacingOccurrences(of: "\n", with: " ")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard singleLine.count > limit else { return singleLine }
+    return String(singleLine.prefix(limit)) + "…"
+}
+
 private func appendExistingReviews(
     _ reviews: [E2EReview],
     label: String,
@@ -1114,13 +1282,14 @@ private func appendReviewContext(_ context: ReviewContext, to lines: inout [Stri
 private func appendRunReviewTest(
     _ test: RunReviewTest,
     to lines: inout [String],
-    runURL: URL
+    runURL: URL,
+    reviewDirectoryName: String
 ) {
     lines.append("### \(test.test.suite) › \(test.test.name)")
     lines.append("- Test key: `\(test.suiteKey)/\(test.testKey)`")
     lines.append("- Source: `\(test.test.sourcePath):\(test.test.funcLine)`")
     lines.append(
-        "- Review directory: `\(runURL.appendingPathComponent(test.suiteKey).appendingPathComponent(test.testKey).appendingPathComponent("review").path)`"
+        "- Review directory: `\(runURL.appendingPathComponent(test.suiteKey).appendingPathComponent(test.testKey).appendingPathComponent(reviewDirectoryName).path)`"
     )
     appendExistingReviews(test.existingReviews, label: "Existing reviews", to: &lines)
     if !test.test.aiComments.isEmpty {

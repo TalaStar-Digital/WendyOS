@@ -54,7 +54,9 @@ struct AggregateCommand: ParsableCommand {
         }
 
         for root in runURLs.sorted(by: { $0.path < $1.path }) {
+            _ = try writeRunOverview(in: root)
             print("==> Wrote Swift E2E run: \(root.path)")
+            print("    Overview: \(runOverviewURL(in: root).path)")
         }
     }
 

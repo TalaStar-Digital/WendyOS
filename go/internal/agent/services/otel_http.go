@@ -34,11 +34,12 @@ var (
 // rather than gRPC on port 4317.
 type OTELHTTPReceiver struct {
 	logger      *zap.Logger
-	broadcaster *TelemetryBroadcaster
+	broadcaster TelemetryPublisher
 	server      *http.Server
 }
 
-func NewOTELHTTPReceiver(logger *zap.Logger, broadcaster *TelemetryBroadcaster) *OTELHTTPReceiver {
+// NewOTELHTTPReceiver creates a new OTELHTTPReceiver.
+func NewOTELHTTPReceiver(logger *zap.Logger, broadcaster TelemetryPublisher) *OTELHTTPReceiver {
 	r := &OTELHTTPReceiver{
 		logger:      logger,
 		broadcaster: broadcaster,

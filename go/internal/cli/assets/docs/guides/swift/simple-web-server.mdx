@@ -6,13 +6,9 @@ language: swift
 
 ## Building a Web Server with Hummingbird
 
-<Callout type="info">
-  **Source Code**: The complete source code for this example is available at [github.com/wendylabsinc/samples/swift/simple-server](https://github.com/wendylabsinc/samples/tree/main/swift/simple-server)
-</Callout>
+Often times you'll want a long-running server where you can make HTTP calls to your WendyOS device. This allows your device to accept incoming requests and respond to them, making it easy to build interactive applications or APIs that can be accessed from other devices on your network.
 
-Often times you'll want a long-running server where you can make HTTP or WebSocket calls to your WendyOS device. This allows your device to accept incoming requests and respond to them, making it easy to build interactive applications or APIs that can be accessed from other devices on your network.
-
-To prove this out, we'll use Hummingbird, a lightweight and flexible HTTP server framework for Swift.
+To prove this out, we'll use [Hummingbird](https://hummingbird.codes/), a lightweight and flexible HTTP server framework for Swift. The `simple-api` template generates a ready-to-run Hummingbird server with OpenTelemetry instrumentation wired in.
 
 ### Prerequisites
 
@@ -43,7 +39,7 @@ To prove this out, we'll use Hummingbird, a lightweight and flexible HTTP server
     wendy run
     ```
 
-    Wendy will build the app, ask you to select a device if one is not already configured, deploy the app, and print the URL or run output.
+    Wendy will build the app, ask you to select a device if one is not already configured, deploy the app, and stream the run output. Because this is a long-running server, the app stays running after deploy.
   </Step>
 </Steps>
 
@@ -56,23 +52,26 @@ To prove this out, we'll use Hummingbird, a lightweight and flexible HTTP server
     The generated `Package.swift` at the project root looks like this:
 
     ```swift
-    // swift-tools-version: 6.2
+    // swift-tools-version: 6.3
+
     import PackageDescription
 
     let package = Package(
-        name: "SimpleServer",
+        name: "simple-web-server",
         platforms: [
             .macOS(.v14)
         ],
         dependencies: [
-            .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0", traits: []),
+            .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.21.1", traits: []),
+            .package(url: "https://github.com/swift-otel/swift-otel.git", from: "1.0.0", traits: ["OTLPHTTP", "OTLPGRPC"]),
             .package(url: "https://github.com/apple/swift-container-plugin", from: "1.0.0"),
         ],
         targets: [
             .executableTarget(
-                name: "SimpleServer",
+                name: "simple-web-server",
                 dependencies: [
-                    .product(name: "Hummingbird", package: "hummingbird")
+                    .product(name: "Hummingbird", package: "hummingbird"),
+                    .product(name: "OTel", package: "swift-otel"),
                 ]
             )
         ]
@@ -86,54 +85,77 @@ Your project layout should look like this:
 ```
 simple-web-server/
 ├── Package.swift
-├── Sources/
-│   └── SimpleServer/
-│       └── main.swift
-└── wendy.json
+├── Dockerfile
+├── wendy.json
+├── .swift-version
+└── Sources/
+    └── simple-web-server/
+        └── App.swift
 ```
 
 ## Generated Web Server
 
-The generated `Sources/SimpleServer/main.swift` contains the server logic:
+The generated `Sources/simple-web-server/App.swift` contains the server logic. It listens on port `8000` and exposes three routes:
 
 ```swift
-import Foundation
 import Hummingbird
+import Logging
+import OTel
+import ServiceLifecycle
 
-struct Car: ResponseEncodable {
-    let make: String
-    let year: Int
+struct Item: Decodable {
+    let name: String
+    let price: Double
+}
+
+struct ItemResponse: ResponseCodable {
+    let id: Int
+    let name: String
+    let price: Double
 }
 
 @main
-struct SimpleServer {
+struct SimpleAPI {
     static func main() async throws {
-        let hostname = ProcessInfo.processInfo.environment["WENDY_HOSTNAME"] ?? "0.0.0.0"
+        let observability = try OTel.bootstrap()
+
+        let logger = Logger(label: "simple-web-server")
 
         let router = Router()
+        router.middlewares.add(TracingMiddleware())
+        router.middlewares.add(MetricsMiddleware())
+        router.middlewares.add(LogRequestsMiddleware(.info))
 
-        // GET / - Returns "hello-world"
         router.get("/") { _, _ in
-            print("Received request: GET /")
-            return "hello-world"
+            ["message": "hello-world"]
         }
 
-        // GET /json - Returns a Car JSON object
-        router.get("/json") { _, _ in
-            print("Received request: GET /json")
-            return Car(make: "Tesla", year: 2024)
+        router.get("/health") { _, _ -> HTTPResponse.Status in
+            .ok
+        }
+
+        router.post("/items") { request, context -> ItemResponse in
+            let item = try await request.decode(as: Item.self, context: context)
+            return ItemResponse(id: 1, name: item.name, price: item.price)
         }
 
         let app = Application(
             router: router,
-            configuration: .init(address: .hostname("0.0.0.0", port: 6001))
+            configuration: .init(address: .hostname("0.0.0.0", port: 8000))
         )
 
-        print("Server running on http://\(hostname):6001")
-        try await app.runService()
+        let serviceGroup = ServiceGroup(
+            services: [observability, app],
+            gracefulShutdownSignals: [.sigterm, .sigint],
+            logger: logger
+        )
+
+        try await serviceGroup.run()
     }
 }
 ```
+
+`GET /` returns `{"message":"hello-world"}`, `GET /health` returns `200 OK`, and `POST /items` decodes an item from the request body and echoes it back as JSON. The `ServiceGroup` runs both the OpenTelemetry observability service and the HTTP server, and shuts them down gracefully on `SIGTERM`/`SIGINT`.
 
 <Callout type="warning">
   **Important**: It's important that your Hummingbird server is running on `0.0.0.0` and not `localhost` or `127.0.0.1`. `0.0.0.0` binds to all network interfaces on the device, making your server reachable from the host machine and the local network. Using `localhost` or `127.0.0.1` binds only to the loopback interface, so the server would not be accessible from outside the device.
@@ -147,20 +169,46 @@ You can test your server on your development machine before deploying to a Wendy
 swift run
 ```
 
-Once the build completes, the server will start and you'll see:
-
-```
-Server running on http://0.0.0.0:6001
-```
-
-You can then test it from another terminal:
+Once the build completes, the server starts listening on `0.0.0.0:8000`. You can then test it from another terminal:
 
 ```bash
-curl http://localhost:6001
-# hello-world
+curl http://localhost:8000
+# {"message":"hello-world"}
 
-curl http://localhost:6001/json
-# {"make":"Tesla","year":2024}
+curl http://localhost:8000/health
+# (returns HTTP 200)
+
+curl -X POST http://localhost:8000/items \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Widget","price":9.99}'
+# {"id":1,"name":"Widget","price":9.99}
+```
+
+Press `Ctrl+C` to stop the local server.
+
+## Generated wendy.json
+
+The generated `wendy.json` requests the `network` entitlement and already includes a readiness probe plus a `postStart` hook that opens your browser when the server is ready — you don't need to add these by hand:
+
+```json
+{
+    "appId": "simple-web-server",
+    "version": "0.1.0",
+    "entitlements": [
+        {
+            "type": "network"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": 8000 },
+        "timeoutSeconds": 30
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:8000"
+        }
+    }
+}
 ```
 
 ## Run Again on WendyOS
@@ -171,35 +219,19 @@ When you're ready to deploy, run:
 wendy run
 ```
 
-You can configure `wendy.json` with a readiness probe and postStart hook to automatically open your browser when the server is ready:
-
-```json
-{
-  "readiness": {
-    "tcpSocket": { "port": 6001 },
-    "timeoutSeconds": 30
-  },
-  "hooks": {
-    "postStart": {
-      "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:6001"
-    }
-  }
-}
-```
-Or access it manually by opening a web browser or using curl:
+Once the readiness probe passes, the `postStart` hook opens `http://${WENDY_HOSTNAME}:8000` in your browser. You can also access it manually with curl:
 
 ```bash
-curl http://wendyos-device.local:6001
+curl http://wendyos-device.local:8000
 ```
 
-Take note of the hostname of your WendyOS device. It will be something like `wendyos-device.local`, `wendy run` will output the hostname of your device.
+Take note of the hostname of your WendyOS device. It will be something like `wendyos-device.local`; `wendy run` will output the hostname of your device.
 
 You should see the response:
 
+```json
+{"message":"hello-world"}
 ```
-hello-world
-```
-
 
 ## Verifying Deployment
 
@@ -209,12 +241,14 @@ You can also verify the server is running by listing the applications on your de
 wendy device apps list
 ✔︎ Searching for WendyOS devices [5.3s]
 ✔︎ Listing applications: True Probe [USB, Ethernet, LAN]
-╭───────────────┬─────────┬─────────┬──────────╮
-│ App           │ Version │ State   │ Failures │
-├───────────────┼─────────┼─────────┼──────────┤
-│ simple-server │ 0.0.0   │ Stopped │ 0        │
-╰───────────────┴─────────┴─────────┴──────────╯
+╭───────────────────┬─────────┬─────────┬──────────╮
+│ App               │ Version │ State   │ Failures │
+├───────────────────┼─────────┼─────────┼──────────┤
+│ simple-web-server │ 0.1.0   │ Running │ 0        │
+╰───────────────────┴─────────┴─────────┴──────────╯
 ```
+
+The app shows as **Running** because it is a long-running HTTP server.
 
 ## Learn More
 

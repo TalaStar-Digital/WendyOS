@@ -55,19 +55,25 @@ This demonstrates how to use **GStreamer** with Swift to handle complex multimed
 
 ## Project Structure
 
+The template ships a single Swift backend that also serves a static browser UI (`index.html`), plus a folder of sample `.wav` files in `assets/`:
+
 ```
 audio/
+├── Package.swift
 ├── Dockerfile
 ├── wendy.json
-├── frontend/           # React + Vite frontend
-│   └── src/
-│       └── App.tsx     # Audio visualizer & controls
-└── server/             # Swift backend
-    ├── Package.swift
-    └── Sources/
-        └── audio-server/
-            ├── main.swift
-            └── sounds/ # WAV files
+├── .swift-version
+├── index.html          # Browser UI: audio visualizer & controls
+├── assets/             # Sample sounds + logo
+│   ├── car-horn.wav
+│   ├── magic.wav
+│   ├── piano.wav
+│   ├── voice.wav
+│   └── wendy-logo.svg
+└── Sources/
+    └── audio/
+        ├── main.swift             # Routes, GStreamer pipelines, WebSocket
+        └── StaticFileMiddleware.swift
 ```
 
 ## Setting Up the Backend
@@ -76,170 +82,184 @@ The backend uses [Hummingbird](https://hummingbird.codes) for the HTTP/WebSocket
 
 ### 1. Package Dependencies
 
-In `server/Package.swift`, we include the GStreamer Swift wrapper:
+The generated `Package.swift` declares a minimum `swift-tools-version` of 6.2 (the project still builds with the Swift 6.3 toolchain in the Dockerfile) and includes the GStreamer Swift wrapper alongside Hummingbird and its WebSocket support:
 
 ```swift
-dependencies: [
-    .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
-    .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
-    .package(url: "https://github.com/wendylabsinc/gstreamer.git", from: "0.0.3"),
-],
+// swift-tools-version: 6.2
+
+import PackageDescription
+
+let package = Package(
+    name: "audio",
+    platforms: [
+        .macOS("26.0"),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.21.1"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
+        .package(url: "https://github.com/wendylabsinc/gstreamer-swift.git", branch: "main"),
+        .package(url: "https://github.com/apple/swift-container-plugin.git", from: "1.0.0"),
+    ],
+    targets: [
+        .executableTarget(
+            name: "audio",
+            dependencies: [
+                .product(name: "Hummingbird", package: "hummingbird", condition: nil),
+                .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
+                .product(name: "GStreamer", package: "gstreamer-swift"),
+            ]
+        ),
+    ]
+)
 ```
 
-### 2. Audio Playback Pipeline
+<Callout type="note">
+  The build runs against Swift 6.3 (the Dockerfile uses `swift:6.3-bookworm`). The `swift-tools-version` line in `Package.swift` declares the minimum Package Manager version and is independent of the toolchain that compiles the code.
+</Callout>
 
-To play a sound, we construct a GStreamer pipeline that reads a file, parses the WAV format, converts it to the correct audio format, and sends it to the default audio sink (speaker).
+### 2. Routes
+
+`Sources/audio/main.swift` wires up the HTTP routes and a WebSocket endpoint:
+
+- `GET /sounds` — lists the bundled `.wav` files in `./assets`
+- `GET /microphones` — enumerates capture devices via `arecord -l`
+- `GET /speakers` — enumerates output devices via `aplay -l`
+- `POST /speaker/{deviceID}` — selects the active speaker (ALSA `hw:card,device`)
+- `POST /play/{filename}` — plays a bundled sound through the selected speaker
+- `WS /stream` — streams live microphone PCM to the browser; send `{"switch_microphone": "<deviceID>"}` to change the source
+- `GET /` and `GET {path+}` — serve the bundled `index.html` UI
+
+### 3. Audio Playback Pipeline
+
+To play a sound, the app builds a GStreamer pipeline that reads a file, parses the WAV format, converts/resamples it, and sends it to the chosen sink (a specific ALSA speaker, or `autoaudiosink`):
 
 ```swift
-func playSound(_ soundName: String, soundsPath: String) async -> PlayResponse {
-    let soundFile = "\(soundsPath)/\(soundName).wav"
-
-    // GStreamer pipeline description
-    let pipelineDesc = """
-        filesrc location=\(soundFile) ! \
-        wavparse ! \
-        audioconvert ! \
-        audioresample ! \
-        autoaudiosink
-        """
-
+func playSound(filename: String, speaker: String?, playback: PlaybackManager) async -> Bool {
+    guard let path = resolveSoundPath(filename) else { return false }
+    let sink = speaker.map { "alsasink device=\($0)" } ?? "autoaudiosink"
+    let description =
+        "filesrc location=\"\(path)\" ! wavparse ! audioconvert ! audioresample ! \(sink)"
     do {
-        let pipeline = try Pipeline(pipelineDesc)
+        let pipeline = try Pipeline(description)
         try pipeline.play()
-
-        // Wait for End of Stream (EOS)
-        for await message in pipeline.bus.messages() {
-            if case .eos = message {
-                pipeline.stop()
-                return PlayResponse(success: true, sound: soundName, error: nil)
-            }
-        }
+        await playback.play(pipeline: pipeline)
+        return true
     } catch {
-        return PlayResponse(success: false, sound: nil, error: "\(error)")
+        return false
     }
-    return PlayResponse(success: false, sound: nil, error: "Unknown error")
 }
 ```
 
-### 3. Microphone Streaming Pipeline
+### 4. Microphone Streaming Pipeline
 
-To stream audio, we capture from the microphone (using ALSA, PulseAudio, or PipeWire), convert it to raw PCM data, and send it to an `appsink` where our Swift code can read the buffers.
+To stream audio, an `AudioCapture` actor builds a microphone source (16 kHz, mono, S16LE) and broadcasts the raw PCM buffers to every connected WebSocket client:
 
 ```swift
-func handleMicrophoneWebSocket(inbound: WebSocketInboundStream, outbound: WebSocketOutboundWriter) async {
-    // Pipeline: Capture -> Convert -> Resample -> Raw PCM (16kHz, Mono) -> AppSink
-    let pipelineDesc = """
-        autoaudiosrc ! \
-        audioconvert ! \
-        audioresample ! \
-        audio/x-raw,format=S16LE,rate=16000,channels=1 ! \
-        appsink name=sink
-        """
+let source = try builder
+    .withSampleRate(16_000)
+    .withChannels(1)
+    .withFormat(.s16le)
+    .build()
 
-    guard let pipeline = try? Pipeline(pipelineDesc),
-          let sink = try? pipeline.audioSink(named: "sink") else {
-        return
+captureTask = Task {
+    for await buffer in source.buffers() {
+        var chunk = ByteBuffer()
+        _ = buffer.bytes.withUnsafeBytes { raw in
+            chunk.writeBytes(raw)
+        }
+        guard chunk.readableBytes > 0 else { continue }
+        await self.broadcast(chunk)
     }
+}
+```
 
-    try? pipeline.play()
-    defer { pipeline.stop() }
+Each `/stream` WebSocket client registers a sender, and the actor writes binary audio frames out to all of them:
 
-    // Stream buffers to the client
-    for await buffer in sink.buffers() {
-        let data = extractAudioBytes(from: buffer)
-        let base64Data = data.base64EncodedString()
-
-        // Send JSON message to client
-        let json = """
-            {\"type\":\"audio\",\"data\":\"\(base64Data)\",\"sampleRate\":16000,\"channels\":1}
-            """
-        try? await outbound.write(.text(json))
+```swift
+wsRouter.ws("/stream") { inbound, outbound, _ in
+    let clientId = UUID()
+    await audioCapture.addClient(id: clientId) { buffer in
+        try? await outbound.write(.binary(buffer))
     }
+    // ... handle inbound switch_microphone commands ...
+    await audioCapture.removeClient(id: clientId)
 }
 ```
 
 ## Frontend Implementation
 
-The frontend is a React application that connects to the WebSocket to receive audio data. It uses the Web Audio API to play the streamed audio and draws a visualization on a canvas.
-
-```tsx
-// Connect to WebSocket
-const ws = new WebSocket(`ws://${window.location.host}/ws/microphone`);
-
-ws.onmessage = async (event) => {
-  const message = JSON.parse(event.data);
-
-  if (message.type === "audio") {
-    // Decode base64
-    const binaryString = atob(message.data);
-    // Convert to Int16 samples
-    // ...
-
-    // Play using Web Audio API
-    const source = audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioContext.destination);
-    source.start(nextPlayTime);
-  }
-};
-```
+The frontend is the bundled `index.html` page. It connects to the `/stream` WebSocket to receive binary PCM frames, plays them back with the Web Audio API, and renders a live waveform on a canvas. It also calls `GET /sounds` to populate the play buttons and `POST /play/{filename}` when you click one.
 
 ## Docker Configuration
 
-Working with audio requires system-level dependencies. The `Dockerfile` installs GStreamer development files for building and runtime libraries for the final image.
+Working with audio requires system-level dependencies. The generated `Dockerfile` is a multi-stage build: GStreamer dev packages in the builder, and runtime GStreamer + ALSA libraries in the slim final image. It also copies the `index.html` UI and the `assets/` sounds:
 
 ```dockerfile
-# Build Stage
-FROM swift:6.2.3-noble AS swift-builder
-RUN apt-get update && apt-get install -y \
+FROM swift:6.3-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
-    # ... other plugins
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    && rm -rf /var/lib/apt/lists/*
 
-# Runtime Stage
-FROM swift:6.2.3-noble-slim
-RUN apt-get update && apt-get install -y \
+WORKDIR /app
+COPY Package.swift .
+COPY Sources/ Sources/
+RUN swift build -c release
+
+FROM swift:6.3-bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libgstreamer1.0-0 \
+    gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
     gstreamer1.0-alsa \
-    gstreamer1.0-pulseaudio \
-    alsa-utils
+    alsa-utils \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy sounds
-COPY server/Sources/audio-server/sounds ./sounds
+WORKDIR /app
+COPY --from=builder /app/.build/release/audio /usr/local/bin/audio
+COPY index.html /app/index.html
+COPY assets/ /app/assets/
+
+EXPOSE 6004
+
+CMD ["audio"]
 ```
 
 ## Entitlements
 
-To access the microphone and speaker, the application needs the `audio` entitlement in `wendy.json`:
+To access the microphone and speaker, the generated `wendy.json` already requests the `audio` entitlement (plus host networking). It also includes a readiness probe and a `postStart` browser hook on port `6004`:
 
 ```json
 {
-  "appId": "com.example.swift-audio",
-  "version": "0.0.1",
-  "entitlements": [
-    {
-      "type": "network",
-      "mode": "host"
+    "appId": "audio",
+    "version": "0.1.0",
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "audio"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": 6004 },
+        "timeoutSeconds": 30
     },
-    {
-      "type": "audio"
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:6004"
+        }
     }
-  ],
-  "readiness": {
-    "tcpSocket": { "port": 3005 },
-    "timeoutSeconds": 30
-  },
-  "hooks": {
-    "postStart": {
-      "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:3005"
-    }
-  }
 }
 ```
 
-The `readiness` probe waits for port `3005` to accept connections. The `postStart` hook automatically opens the web interface in your browser.
+The `readiness` probe waits for port `6004` to accept connections. The `postStart` hook automatically opens the web interface in your browser.
 ## Run Again on WendyOS
 
 1.  Connect your WendyOS device.
@@ -249,7 +269,7 @@ The `readiness` probe waits for port `3005` to accept connections. The `postStar
 wendy run
 ```
 
-3.  Your browser will open automatically once the app is ready. If it doesn't, navigate to `http://<device-hostname>.local:3005`.
+3.  Your browser will open automatically once the app is ready. If it doesn't, navigate to `http://<device-hostname>.local:6004`.
 
 You should be able to click buttons to play sounds on the device and toggle the microphone to see the waveform of the audio captured by the device.
 

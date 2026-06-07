@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -102,8 +103,13 @@ func main() {
 	// Create the telemetry broadcaster early so we can tee agent logs into it.
 	broadcaster := services.NewTelemetryBroadcaster()
 
+	telemetryBuf := services.NewTelemetryBuffer(services.TelemetryBufferConfig{}, broadcaster, logger)
+	if !telemetryBuf.DiskEnabled() {
+		logger.Warn("telemetry disk buffer unavailable, falling back to in-memory only")
+	}
+
 	// Wrap the logger so agent internal logs are published to the telemetry stream.
-	telemetryCore := services.NewTelemetryCore(broadcaster, zapcore.DebugLevel)
+	telemetryCore := services.NewTelemetryCore(telemetryBuf, zapcore.DebugLevel)
 	logger = zap.New(zapcore.NewTee(logger.Core(), telemetryCore))
 
 	logger.Info("Starting wendy-agent", zap.String("version", version.Version))
@@ -147,7 +153,7 @@ func main() {
 		defer ctrdClient.Close()
 	}
 
-	logManager := services.NewContainerLogManager(logger, broadcaster)
+	logManager := services.NewContainerLogManager(logger, telemetryBuf)
 
 	installer := &services.AgentInstaller{}
 	agentSvc := services.NewAgentService(logger, networkMgr, hwDiscoverer, btManager, installer)
@@ -167,10 +173,9 @@ func main() {
 		containerSvcOpts...,
 	)
 	audioSvc := services.NewAudioService(logger)
-	videoSvc := services.NewVideoService(logger)
 
 	provisioningSvc := services.NewProvisioningService(logger, configPath)
-	telemetrySvc := services.NewTelemetryService(logger, broadcaster)
+	telemetrySvc := services.NewTelemetryService(logger, broadcaster, telemetryBuf)
 
 	deviceInfoSvc := services.NewDeviceInfoService(logger, hwDiscoverer)
 	wifiSvc := services.NewWiFiService(logger, networkMgr)
@@ -180,20 +185,24 @@ func main() {
 	containerSvcV2 := services.NewContainerServiceV2(containerSvc)
 	provisioningSvcV2 := services.NewProvisioningServiceV2(provisioningSvc)
 	audioSvcV2 := services.NewAudioServiceV2(audioSvc)
-	telemetrySvcV2 := services.NewTelemetryServiceV2(logger, broadcaster)
+	telemetrySvcV2 := services.NewTelemetryServiceV2(logger, broadcaster, telemetryBuf)
 
-	otelLogReceiver := services.NewOTELLogsReceiver(broadcaster)
-	otelMetricReceiver := services.NewOTELMetricsReceiver(broadcaster)
-	otelTraceReceiver := services.NewOTELTraceReceiver(broadcaster)
+	// OTEL receivers.
+	otelLogReceiver := services.NewOTELLogsReceiver(telemetryBuf)
+	otelMetricReceiver := services.NewOTELMetricsReceiver(telemetryBuf)
+	otelTraceReceiver := services.NewOTELTraceReceiver(telemetryBuf)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	videoSvc := services.NewVideoService(ctx, logger)
+	defer videoSvc.Shutdown()
 
 	bleDispatcher := bluetooth.NewDispatcher(networkMgr, containerdClient, hwDiscoverer, btManager)
 
 	// Returns nil if the PEM data is invalid, which causes the registry to stay HTTP.
 	registryTLSConfig := func(certPEM, chainPEM, keyPEM string) *tls.Config {
-		tlsConfig, err := mtls.NewTLSConfig(certPEM, chainPEM, keyPEM, nil)
+		tlsConfig, err := mtls.NewTLSConfig(certPEM, chainPEM, keyPEM, nil, certNotBeforeFloor(certPEM))
 		if err != nil {
 			logger.Error("Failed to build registry TLS config", zap.Error(err))
 			return nil
@@ -247,16 +256,60 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			services.CollectContainerMetrics(ctx, containerdClient, broadcaster, logManager)
+			services.CollectContainerMetrics(ctx, containerdClient, telemetryBuf, logManager)
 		}()
 	}
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		services.CollectAgentMetrics(ctx, broadcaster)
+		services.CollectAgentMetrics(ctx, telemetryBuf)
 	}()
 
+	// Collect kernel messages from /dev/kmsg as OTel debug/trace logs.
+	// Opt-in: set WENDY_COLLECT_DMESG=true to enable. Disabled by default
+	// because kernel messages may contain PII (MAC addresses, serial numbers,
+	// process names, filesystem paths) that operators must consciously opt into
+	// forwarding to their telemetry backend.
+	collectDmesgEnv := os.Getenv("WENDY_COLLECT_DMESG")
+	collectDmesg, collectDmesgErr := strconv.ParseBool(collectDmesgEnv)
+	if collectDmesgEnv != "" && collectDmesgErr != nil {
+		logger.Warn("WENDY_COLLECT_DMESG has unrecognised value; dmesg collection disabled",
+			zap.String("value", collectDmesgEnv),
+		)
+	}
+	if collectDmesg {
+		// Dual-control gate: env-var (WENDY_COLLECT_DMESG) is the first domain;
+		// the DPIA confirmation file is the second, filesystem domain. A process
+		// with only env-var write access cannot enable collection on its own.
+		// CollectDmesgLogs enforces this independently, but the pre-check here
+		// makes both controls visible at the callsite and avoids starting a
+		// goroutine that would immediately return on DPIA failure.
+		// Check both existence and non-empty content to mirror CollectDmesgLogs.
+		dpiaContent, dpiaErr := os.ReadFile(services.DmesgDPIAConfirmFile)
+		dpiaValid := dpiaErr == nil && len(bytes.TrimSpace(dpiaContent)) > 0
+		for i := range dpiaContent {
+			dpiaContent[i] = 0
+		}
+		dpiaContent = nil
+		if !dpiaValid {
+			logger.Info("kernel dmesg collection skipped: DPIA confirmation file absent or empty",
+				zap.String("file", services.DmesgDPIAConfirmFile),
+				zap.String("reason", "filesystem-domain gate not satisfied; WENDY_COLLECT_DMESG alone is insufficient"),
+			)
+		} else {
+			logger.Info("kernel dmesg collection enabled", zap.String("source", "/dev/kmsg"))
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				services.CollectDmesgLogs(ctx, logger, broadcaster)
+			}()
+		}
+	} else {
+		logger.Info("kernel dmesg collection disabled (set WENDY_COLLECT_DMESG=true to enable)")
+	}
+
+	// Main agent gRPC server port.
 	agentPort := defaultAgentPort
 	if p := os.Getenv("WENDY_AGENT_PORT"); p != "" {
 		agentPort = p
@@ -324,14 +377,22 @@ func main() {
 			return
 		}
 
-		// Warn if the device clock appears to predate the provisioning cert.
-		// This almost always means an unsynchronized RTC, which causes every
-		// client cert to appear "not yet valid" from the device's perspective.
-		warnClockSkewIfNeeded(logger, certPEM)
+		floor := certNotBeforeFloor(certPEM)
+		if floor.IsZero() && certPEM != "" {
+			logger.Warn("Could not extract NotBefore from provisioning cert — NTP clock skew protection is disabled")
+		} else if now := time.Now(); !floor.IsZero() && now.Before(floor) {
+			logger.Warn("Device clock predates provisioning cert — using cert NotBefore as mTLS time floor; clock will sync when network is available",
+				zap.Time("deviceClock", now),
+				zap.Time("floor", floor),
+				zap.Duration("clockBehindBy", floor.Sub(now)),
+			)
+		}
 
-		srv, err := mtls.NewServer(certPEM, chainPEM, keyPEM, logger,
-			grpc.UnaryInterceptor(interceptor.UnaryErrorInterceptor(logger)),
-			grpc.StreamInterceptor(interceptor.StreamErrorInterceptor(logger)),
+		srv, err := mtls.NewServer(certPEM, chainPEM, keyPEM, logger, floor,
+			// UnaryMTLSInterceptor and StreamMTLSInterceptor are embedded inside
+			// mtls.NewServer and run before these caller-provided interceptors.
+			grpc.ChainUnaryInterceptor(interceptor.UnaryErrorInterceptor(logger)),
+			grpc.ChainStreamInterceptor(interceptor.StreamErrorInterceptor(logger)),
 		)
 		if err != nil {
 			logger.Error("Failed to create mTLS server", zap.Error(err))
@@ -369,7 +430,7 @@ func main() {
 
 	// Only called after provisioning so the cert is available.
 	startBLEPeripheral := func(certPEM, chainPEM, keyPEM string) {
-		tlsConfig, err := mtls.NewTLSConfig(certPEM, chainPEM, keyPEM, logger)
+		tlsConfig, err := mtls.NewTLSConfig(certPEM, chainPEM, keyPEM, logger, certNotBeforeFloor(certPEM))
 		if err != nil {
 			logger.Error("Failed to build BLE TLS config", zap.Error(err))
 			return
@@ -377,7 +438,12 @@ func main() {
 		bluetooth.StartBLEPeripheral(ctx, logger, bleDispatcher, tlsConfig)
 	}
 
-	certPEM, chainPEM, keyPEM := provisioningSvc.ProvisioningCerts()
+	// Check if already provisioned and start mTLS server and tunnel broker if certificates exist.
+	certPEM, chainPEM, keyData := provisioningSvc.ProvisioningCerts()
+	keyPEM := string(keyData)
+	for i := range keyData {
+		keyData[i] = 0
+	}
 	alreadyProvisioned := certPEM != "" && keyPEM != ""
 
 	if alreadyProvisioned {
@@ -434,7 +500,15 @@ func main() {
 		}()
 	}
 
-	provisioningSvc.OnProvisioned = func(certPEM, chainPEM, keyPEM string) {
+	// Set up the provisioning callback to start the mTLS server, shut down
+	// the plaintext server, and switch the registry to HTTPS.
+	provisioningSvc.OnProvisioned = func(certPEM, chainPEM string, keyData []byte) {
+		defer func() {
+			for i := range keyData {
+				keyData[i] = 0
+			}
+		}()
+		keyPEM := string(keyData)
 		startMTLSServer(certPEM, chainPEM, keyPEM)
 		startTunnelBroker()
 		configpartition.UpdateAvahiForProvisioning(logger, mtlsPortNum)
@@ -491,7 +565,7 @@ func main() {
 		otelHTTPPort = p
 	}
 
-	otelHTTPReceiver := services.NewOTELHTTPReceiver(logger, broadcaster)
+	otelHTTPReceiver := services.NewOTELHTTPReceiver(logger, telemetryBuf)
 	otelHTTPLis, err := listenDualStackLoopback(otelHTTPPort)
 	if err != nil {
 		logger.Fatal("Failed to listen on OTEL HTTP port", zap.String("port", otelHTTPPort), zap.Error(err))
@@ -505,6 +579,15 @@ func main() {
 			logger.Error("OTEL HTTP server error", zap.Error(err))
 		}
 	}()
+
+	cloudFlusher := services.NewCloudFlusherWithProvisioning(logger, telemetryBuf, provisioningSvc)
+	if telemetryBuf.DiskEnabled() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cloudFlusher.Run(ctx)
+		}()
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -535,17 +618,18 @@ func main() {
 	logger.Info("wendy-agent stopped")
 }
 
-// warnClockSkewIfNeeded parses the device's own provisioning cert and logs a
-// warning if the system clock predates the cert's NotBefore. A clock that is
-// behind the cert's issuance time will reject every legitimate client cert
-// ("not yet valid"), making the mTLS port effectively unusable — but silently.
-func warnClockSkewIfNeeded(logger *zap.Logger, certPEM string) {
+// certNotBeforeFloor parses the device's own provisioning cert and returns its
+// NotBefore time to use as a lower bound on time.Now() during mTLS cert
+// verification. This lets the device accept legitimate client certs even when
+// the system clock has not yet been synchronised via NTP (e.g. after a power
+// cycle without WiFi). Returns a zero time.Time if the cert cannot be parsed.
+func certNotBeforeFloor(certPEM string) time.Time {
 	if certPEM == "" {
-		return
+		return time.Time{}
 	}
 	block, _ := pem.Decode([]byte(certPEM))
 	if block == nil {
-		return
+		return time.Time{}
 	}
 	// ML-DSA certs from pki-core have trailing ASN.1 bytes that cause
 	// x509.ParseCertificate to fail. Strip them with the same fallback
@@ -558,16 +642,9 @@ func warnClockSkewIfNeeded(logger *zap.Logger, certPEM string) {
 		}
 	}
 	if err != nil {
-		return
+		return time.Time{}
 	}
-	now := time.Now()
-	if now.Before(cert.NotBefore) {
-		logger.Warn("Device clock appears to predate the provisioning certificate — mTLS client cert verification will fail until NTP synchronizes the clock",
-			zap.Time("deviceClock", now),
-			zap.Time("certNotBefore", cert.NotBefore),
-			zap.Duration("clockBehindBy", cert.NotBefore.Sub(now)),
-		)
-	}
+	return cert.NotBefore
 }
 
 func brokerURLForCloudHost(cloudHost string) string {

@@ -14,7 +14,6 @@ import (
 
 	"github.com/wendylabsinc/wendy/go/internal/agent/board"
 	"github.com/wendylabsinc/wendy/go/internal/shared/appconfig"
-	"github.com/wendylabsinc/wendy/go/internal/shared/env"
 )
 
 const (
@@ -41,8 +40,16 @@ type ApplyOptions struct {
 
 // ApplyEntitlements modifies an OCI spec in-place based on app config entitlements.
 func ApplyEntitlements(spec *Spec, cfg *appconfig.AppConfig, opts ApplyOptions) error {
-	didSetDeviceCapabilities := false
+	if err := appconfig.ValidateAppID(cfg.AppID); err != nil {
+		return fmt.Errorf("invalid app ID: %w", err)
+	}
+	if cfg.ServiceName != "" {
+		if err := appconfig.ValidateServiceName(cfg.ServiceName); err != nil {
+			return fmt.Errorf("invalid service name: %w", err)
+		}
+	}
 
+	didSetDeviceCapabilities := false
 	for _, ent := range cfg.Entitlements {
 		switch ent.Type {
 		case appconfig.EntitlementGPU:
@@ -53,13 +60,13 @@ func ApplyEntitlements(spec *Spec, cfg *appconfig.AppConfig, opts ApplyOptions) 
 			applyAudio(spec)
 			if !didSetDeviceCapabilities {
 				didSetDeviceCapabilities = true
-				SetDeviceCapabilities(spec, cfg.AppID)
+				SetDeviceCapabilities(spec)
 			}
 		case appconfig.EntitlementVideo, appconfig.EntitlementCamera:
 			applyCamera(spec)
 			if !didSetDeviceCapabilities {
 				didSetDeviceCapabilities = true
-				SetDeviceCapabilities(spec, cfg.AppID)
+				SetDeviceCapabilities(spec)
 			}
 		case appconfig.EntitlementPersist:
 			applyPersist(spec, ent, cfg.AppID)
@@ -81,11 +88,13 @@ func ApplyEntitlements(spec *Spec, cfg *appconfig.AppConfig, opts ApplyOptions) 
 }
 
 // SetDeviceCapabilities adds standard device capabilities plus the cgroup
-// mount/namespace wiring needed for device-aware workloads. Callers are still
-// responsible for adding explicit device cgroup allow rules for each
+// mount/namespace wiring needed for device-aware workloads. The caller is
+// responsible for setting CgroupsPath after this call (client.go sets it
+// explicitly so it is the sole authority on the cgroup path). Callers are
+// also responsible for adding explicit device cgroup allow rules for each
 // entitlement they enable; this helper intentionally does not add a generic
 // allow-all devices rule.
-func SetDeviceCapabilities(spec *Spec, appName string) {
+func SetDeviceCapabilities(spec *Spec) {
 	caps := []string{
 		"CAP_CHOWN",
 		"CAP_DAC_OVERRIDE",
@@ -123,11 +132,6 @@ func SetDeviceCapabilities(spec *Spec, appName string) {
 	if spec.Linux.Resources == nil {
 		spec.Linux.Resources = &LinuxResources{}
 	}
-
-	// Configure cgroupsPath: use WENDY_SYSTEMD_SERVICE_NAME env var or default to "edge-agent".
-	path := strings.ReplaceAll(appName, "-", "_")
-	serviceName := env.SystemdServiceName()
-	spec.Linux.CgroupsPath = fmt.Sprintf("system.slice:%s:%s", serviceName, path)
 
 	// Add cgroup namespace.
 	spec.Linux.Namespaces = append(spec.Linux.Namespaces, LinuxNamespace{Type: "cgroup"})

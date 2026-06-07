@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -27,6 +28,28 @@ type ContainerService struct {
 	containerd ContainerdClient
 	logManager *ContainerLogManager
 	monitor    ContainerMonitorRegistrar
+
+	// appMu serialises create/stop/delete operations per appID so that
+	// ContainerIDsForApp and the subsequent monitor marks + containerd call are
+	// atomic with respect to concurrent RPCs for the same app (TOCTOU prevention,
+	// SOC2-CC6, NIST-AC-4).
+	appMu appMutex
+}
+
+// appMutex provides per-app name mutual exclusion. Entries are permanent
+// (never deleted) to avoid reference-counting deletion races under concurrent
+// contention (SOC2-CC6, NIST-AC-4). Memory overhead is negligible: one
+// *sync.Mutex per distinct appName seen during the process lifetime.
+type appMutex struct {
+	m sync.Map // map[string]*sync.Mutex
+}
+
+// lockApp acquires the per-app lock for appName and returns an unlock function.
+func (a *appMutex) lockApp(appName string) func() {
+	v, _ := a.m.LoadOrStore(appName, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func NewContainerService(logger *zap.Logger, client ContainerdClient, opts ...ContainerServiceOption) *ContainerService {
@@ -219,7 +242,55 @@ func (s *ContainerService) RunContainer(req *agentpb.RunContainerLayersRequest, 
 
 func (s *ContainerService) StartContainer(req *agentpb.StartContainerRequest, stream grpc.ServerStreamingServer[agentpb.RunContainerLayersResponse]) error {
 	appName := req.GetAppName()
-	return s.streamContainerOutput(stream.Context(), appName, postStartAgentHookFromContext(stream.Context()), req.GetRestartPolicy(), stream)
+	ctx := stream.Context()
+
+	// Multi-service groups: start each service container without streaming.
+	// Streaming output from multiple containers concurrently is not supported;
+	// group start behaves like --detach for every service.
+	ids, err := s.containerd.ContainerIDsForApp(ctx, appName)
+	if err == nil && len(ids) > 1 {
+		return s.startGroup(ctx, appName, ids, req.GetRestartPolicy(), stream)
+	}
+
+	return s.streamContainerOutput(ctx, appName, postStartAgentHookFromContext(ctx), req.GetRestartPolicy(), stream)
+}
+
+// startGroup starts each service container in a multi-service app in detach
+// mode and sends a single Started response. Output from individual services
+// is discarded; use wendy device logs to tail per-service logs.
+func (s *ContainerService) startGroup(
+	ctx context.Context,
+	appName string,
+	containerIDs []string,
+	restartPolicy *agentpb.RestartPolicy,
+	stream grpc.ServerStreamingServer[agentpb.RunContainerLayersResponse],
+) error {
+	unlock := s.appMu.lockApp(appName)
+	defer unlock()
+
+	for _, id := range containerIDs {
+		outputCh, startErr := s.containerd.StartContainer(ctx, id, "", restartPolicy)
+		if startErr != nil {
+			return status.Errorf(codes.Internal, "failed to start service %q: %v", id, startErr)
+		}
+		// Drain the output channel in the background so the containerd goroutine
+		// does not block. The container runs independently after this.
+		go func(ch <-chan ContainerOutput) {
+			for range ch {
+			}
+		}(outputCh)
+
+		if s.monitor != nil {
+			s.monitor.ClearExplicitStop(id)
+		}
+		s.registerContainerWithMonitor(ctx, id, restartPolicy)
+	}
+
+	return stream.Send(&agentpb.RunContainerLayersResponse{
+		ResponseType: &agentpb.RunContainerLayersResponse_Started_{
+			Started: &agentpb.RunContainerLayersResponse_Started{},
+		},
+	})
 }
 
 func postStartAgentHookFromContext(ctx context.Context) string {
@@ -513,46 +584,98 @@ func (s *ContainerService) AttachContainer(stream grpc.BidiStreamingServer[agent
 
 func (s *ContainerService) StopContainer(ctx context.Context, req *agentpb.StopContainerRequest) (*agentpb.StopContainerResponse, error) {
 	appName := req.GetAppName()
-	// Mark the container as explicitly stopped BEFORE issuing the stop so that
-	// the monitor cannot observe the container exit and restart it in the window
-	// between StopContainer returning and MarkExplicitStop being called.
-	// If the stop fails we revert the mark via ClearExplicitStop.
+	// Validate before acquiring the mutex so that invalid names never reach the
+	// appMutex map (preventing unbounded map growth from adversarial RPC input,
+	// SOC2-CC6, NIST-SC-5) and so the monitor fallback below always receives a
+	// well-formed identifier (SOC2-CC6 INFORMATIONAL-12).
+	if err := appconfig.ValidateAppID(appName); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid app name: %v", err)
+	}
+
+	// Hold the per-app lock so that ContainerIDsForApp, MarkExplicitStop, and
+	// the actual stop are atomic with respect to concurrent CreateContainer or
+	// DeleteContainer calls for the same app (SOC2-CC6, NIST-AC-4).
+	unlock := s.appMu.lockApp(appName)
+	defer unlock()
+
+	// Resolve every container ID that belongs to this app (one for
+	// single-container apps, one per service for multi-service apps) so the
+	// monitor can mark each before any stop is issued. Marking only the bare
+	// appName would miss {appID}_{serviceName} entries registered by the monitor.
+	ids, err := s.containerd.ContainerIDsForApp(ctx, appName)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "resolving containers for app %q: %v", appName, err)
+	}
+	if len(ids) == 0 {
+		ids = []string{appName}
+	}
+
+	// Mark BEFORE stop so the monitor cannot observe the exit and restart in
+	// the window between StopContainer returning and MarkExplicitStop being
+	// called. Revert all marks if the stop ultimately fails.
 	if s.monitor != nil {
-		s.monitor.MarkExplicitStop(appName)
+		for _, id := range ids {
+			s.monitor.MarkExplicitStop(id)
+		}
 	}
 	if err := s.containerd.StopContainer(ctx, appName); err != nil {
-		// Revert the explicit-stop mark so future restarts are not suppressed.
 		if s.monitor != nil {
-			s.monitor.ClearExplicitStop(appName)
+			for _, id := range ids {
+				s.monitor.ClearExplicitStop(id)
+			}
 		}
 		return nil, status.Errorf(codes.Internal, "failed to stop container: %v", err)
 	}
-	s.logger.Info("Container stopped", zap.String("app_name", appName))
+	s.logger.Info("App stopped", zap.String("app_name", appName), zap.Int("service_count", len(ids)))
 	return &agentpb.StopContainerResponse{}, nil
 }
 
 func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.DeleteContainerRequest) (*agentpb.DeleteContainerResponse, error) {
-	// Unregister from the monitor BEFORE deletion to close the window where the
-	// monitor could attempt a restart while the container is being removed.
-	// MarkExplicitStop prevents a spurious restart attempt if the monitor fires
-	// between the two calls. Safe to call even if the app was never registered.
-	// If DeleteContainer subsequently fails, the container is left unregistered —
-	// that is acceptable: the caller will retry deletion.
-	if s.monitor != nil {
-		s.monitor.MarkExplicitStop(req.GetAppName())
-		s.monitor.Unregister(req.GetAppName())
+	appName := req.GetAppName()
+	if err := appconfig.ValidateAppID(appName); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid app name: %v", err)
 	}
 
-	if err := s.containerd.DeleteContainer(ctx, req.GetAppName(), req.GetDeleteImage()); err != nil {
+	// Hold the per-app lock so that ContainerIDsForApp, monitor unregister, and
+	// the actual delete are atomic with respect to concurrent CreateContainer or
+	// StopContainer calls for the same app (SOC2-CC6, NIST-AC-4).
+	unlock := s.appMu.lockApp(appName)
+	defer unlock()
+
+	// Resolve all container IDs before deletion so the monitor can unregister
+	// each one. Unregistering only the bare appName would leave
+	// {appID}_{serviceName} monitor entries alive and potentially trigger
+	// spurious restart attempts while the container is being removed.
+	ids, err := s.containerd.ContainerIDsForApp(ctx, appName)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "resolving containers for app %q: %v", appName, err)
+	}
+	if len(ids) == 0 {
+		ids = []string{appName}
+	}
+
+	// Unregister from the monitor BEFORE deletion to close the window where the
+	// monitor could attempt a restart while containers are being removed.
+	if s.monitor != nil {
+		for _, id := range ids {
+			s.monitor.MarkExplicitStop(id)
+			s.monitor.Unregister(id)
+		}
+	}
+
+	if err := s.containerd.DeleteContainer(ctx, appName, req.GetDeleteImage()); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to delete container: %v", err)
 	}
 
 	if req.GetDeleteVolumes() {
-		s.deleteVolumes(req.GetAppName())
+		// Volumes are keyed by appID, not by per-service container ID, so we
+		// call deleteVolumes once with the app name rather than once per service
+		// container (which would be "appID_serviceName" and find nothing).
+		s.deleteVolumes(appName)
 	}
 
-	s.logger.Info("Container deleted",
-		zap.String("app_name", req.GetAppName()),
+	s.logger.Info("App deleted",
+		zap.String("app_name", appName),
 		zap.Bool("delete_image", req.GetDeleteImage()),
 		zap.Bool("delete_volumes", req.GetDeleteVolumes()),
 	)
@@ -564,6 +687,14 @@ func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.Del
 var volumesDir = "/var/lib/wendy/volumes"
 
 func (s *ContainerService) deleteVolumes(appName string) {
+	// Guard: volumes are always keyed by plain appID (no "/"). A slash-containing
+	// name would find no matching directories, but reject it explicitly to prevent
+	// any future path-construction change from introducing a traversal vector
+	// (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+	if strings.Contains(appName, "/") {
+		s.logger.Warn("deleteVolumes: app name contains '/'; volumes are keyed by appID only — skipping")
+		return
+	}
 	entries, err := os.ReadDir(volumesDir)
 	if err != nil {
 		s.logger.Warn("Failed to read volumes directory",

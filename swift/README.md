@@ -8,7 +8,7 @@ This directory contains:
 
 - `WendyAgentCore/` — the shared Swift package that implements the agent runtime, gRPC services, Bonjour advertising, and local OpenTelemetry ingestion.
 - `WendyAgentMac/` — a lightweight macOS menu bar app that launches and manages `WendyAgent`, organized into `Sources/`, `Assets/`, and `Design/`.
-- `WendyE2ETests/` — a small standalone Swift package for script-like end-to-end tests built around a `Machine` helper.
+- `WendyE2ETests/` — a Swift package for end-to-end tests of the Wendy CLI and agent.
 - `WendyAgent.xcworkspace/` — the Xcode workspace for working on the app and package together.
 - `Scripts/` — helper scripts, including protobuf generation.
 
@@ -111,6 +111,8 @@ The Makefile includes helpers for the common cases:
 - `make e2e-review` reviews existing run results.
 - `make e2e-report` renders run HTML reports and opens the newest report on
   macOS.
+- `make e2e-reference` generates Swift E2E HTML reference documentation and
+  opens it.
 - `make e2e-analyze` runs `e2e-aggregate`, `e2e-review`, and `e2e-report` in
   order for the current run ID.
 

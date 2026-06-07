@@ -47,6 +47,12 @@ let package = Package(
             swiftSettings: swiftSettings
         ),
         .testTarget(
+            name: "SwiftE2ETestingCLITests",
+            dependencies: ["SwiftE2ETestingCLI"],
+            path: "Tests/SwiftE2ETestingCLITests",
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
             name: "WendyE2ETests",
             dependencies: ["WendyE2ETesting"],
             path: "Tests/WendyE2ETests",

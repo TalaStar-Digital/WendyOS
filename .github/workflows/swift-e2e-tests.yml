@@ -1,12 +1,6 @@
 name: Swift E2E Tests
 
 on:
-  pull_request:
-    paths:
-      - 'swift/**'
-      - 'Proto/**'
-      - '.github/actions/swift-e2e-run/**'
-      - '.github/workflows/swift-e2e-tests.yml'
   push:
     branches:
       - main
@@ -38,7 +32,7 @@ on:
 
 concurrency:
   group: swift-e2e-tests-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -54,7 +48,7 @@ jobs:
     name: ${{ matrix.target.name }}
     runs-on: ["self-hosted", "${{ matrix.target.runner_label }}"]
     concurrency:
-      group: swift-e2e-${{ matrix.target.device_id }}
+      group: device-${{ matrix.target.device_id }}
       cancel-in-progress: false
       queue: max
     timeout-minutes: 120

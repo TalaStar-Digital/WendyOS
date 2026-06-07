@@ -52,7 +52,7 @@ See `references/yocto-meta-layers.md` for detailed Yocto configuration.
 
 ## E2E Testing
 
-The `wendy-agent` repository includes an E2E test suite in `E2ETests/`.
+The `wendy-agent` repository includes an E2E test suite in `swift/WendyE2ETests/`.
 
 ### Running E2E Tests
 ```bash

@@ -64,7 +64,18 @@ Press **Ctrl-C** to stop all services. The CLI cancels all streams, issues a `St
 
 ### Container naming
 
-Each service container is named `<appId>-<serviceName>` (both lowercased). For example, with `appId: "com.example.myapp"` and service `"api"`, the container name is `com.example.myapp-api`.
+Each service container ID follows the `{appId}/{serviceName}` convention. For
+example, with `appId: "com.example.myapp"` and service `"api"`, the containerd
+container ID is `com.example.myapp/api`. The corresponding snapshot key uses
+`@` as the separator (`wendy-com.example.myapp@api`) to remain unambiguous when
+either component contains a hyphen. The cgroup path component uses `@` as the
+separator: `system.slice:edge-agent:com.example.myapp@api` (the systemd service segment
+reflects the `WENDY_SYSTEMD_SERVICE_NAME` env var, which defaults to `edge-agent`;
+`@` is used because it cannot appear in either a valid appId or serviceName,
+eliminating any collision risk from the hyphen separator).
+
+> **Note:** Single-container apps (no `serviceName` in the top-level
+> `wendy.json`) are unaffected — their container ID remains the bare `appId`.
 
 ## Filtering with `--service`
 

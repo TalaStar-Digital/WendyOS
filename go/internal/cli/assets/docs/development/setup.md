@@ -74,8 +74,10 @@ The `Makefile` lives in `go/`. All targets below are run from `go/`.
 ```sh
 cd go
 make build
-# Produces: bin/wendy  bin/wendy-agent
+# Produces: bin/wendy bin/wendy-agent
 ```
+
+> **Note:** On Windows, only the CLI builds (`bin/wendy.exe`) because `wendy-agent` does not have Windows support.
 
 ### Build just the CLI
 
@@ -90,6 +92,8 @@ On Windows, `make build-cli` invokes PowerShell for the native Windows CLI build
 ```sh
 make build-agent   # bin/wendy-agent
 ```
+
+> **Note:** `build-agent` is not supported on Windows. Run this target on macOS, Linux, or WSL.
 
 ### Cross-compile
 

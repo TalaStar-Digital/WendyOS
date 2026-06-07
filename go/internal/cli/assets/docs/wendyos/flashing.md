@@ -14,6 +14,10 @@ Use `wendy os list-drives` to enumerate available drives.
 
 `wendy os install` downloads the WendyOS release zip (~5.5 GB) for the selected device type and writes it directly to the target drive. The compressed zip is never fully extracted to disk — the image entry is streamed from the zip to the drive in a single pass, so the peak temporary disk usage is the zip file itself.
 
+### Image formats
+
+Both raw (`.img`) and gzip-compressed (`.img.gz`) images are supported, in addition to zip archives. Gzip content is detected by inspecting the file's magic bytes rather than its extension, so a cached or renamed image without a `.gz` suffix is still handled correctly. Gzip images are decompressed on the fly and streamed straight to the drive — the full decompressed image is never written to a temporary file.
+
 ### Caching
 
 The downloaded zip is cached locally. On subsequent installs for the same device type the cached zip is used directly, avoiding a repeat download. Legacy `.img` cache entries from older versions of the tool are still recognised as a fallback.
@@ -35,7 +39,7 @@ While writing, the tool reports bytes written to the drive. There is no separate
 
 ### macOS
 
-The image is written via `dd` to the raw disk device (`/dev/rdiskN`), bypassing the filesystem buffer cache. NVMe drives in USB enclosures use a 64 MiB block size to reduce per-write overhead over the USB link.
+The image is written via `dd` to the raw disk device (`/dev/rdiskN`), bypassing the filesystem buffer cache. NVMe drives in USB enclosures use a 64 MiB block size to reduce per-write overhead over the USB link. `dd` is invoked with `conv=sync` so the final partial block is padded to the block size, keeping all writes to the raw device sector-aligned (required for `/dev/rdiskN`).
 
 ### Linux
 
@@ -46,3 +50,7 @@ The image is written via `dd` with `conv=fdatasync` to ensure the device is flus
 ### Windows
 
 The image is written directly to the raw disk device. After writing, any auto-assigned drive letters are removed from all partitions to prevent phantom drives from appearing in Explorer. For fixed (non-removable) disks, the disk is then taken offline. For removable media (USB, SD, MMC), the offline step is skipped — Windows does not support setting removable media offline, and physically removing the media serves as the eject action.
+
+## Errors
+
+On macOS and Linux, if `dd` exits with a non-zero status its stderr output (the underlying cause, e.g. "Operation not permitted" or "No space left on device") is captured and included in the error reported to you, rather than just the exit code. Continuous `status=progress` output is filtered out and the captured diagnostics are bounded, so the message stays focused on the actual failure.

@@ -1,6 +1,6 @@
 ---
 title: YOLOv8 Webcam Detection
-description: Build a full-screen real-time object detection app with YOLOv8, MJPEG streaming, and a React frontend on WendyOS
+description: Build a full-screen real-time object detection app with YOLOv8, WebSocket streaming, and a canvas overlay on WendyOS
 language: python
 ---
 
@@ -12,16 +12,16 @@ import { Accordions, Accordion } from 'fumadocs-ui/components/accordion';
 
 ## Real-Time COCO Object Detection with YOLOv8
 
-This guide walks you through building a complete webcam detection application that runs YOLOv8 on a WendyOS device. The app features a full-screen video feed with bounding box overlays and a detection log showing identified objects from the COCO dataset (80 classes including people, cars, animals, and everyday objects).
+This guide walks you through building a complete webcam detection application that runs YOLOv8 on a WendyOS device. The app features a full-screen video feed with bounding box overlays drawn on a canvas, a confidence slider, and a live count of identified objects from the COCO dataset (80 classes including people, cars, animals, and everyday objects).
 
 The complete sample is available in the [samples repository](https://github.com/wendylabsinc/samples/tree/main/python/yolov8).
 
 ### What You'll Build
 
-- A FastAPI backend that captures webcam frames and runs YOLOv8 inference
-- MJPEG video streaming with detection overlays drawn by YOLOv8
-- A React + Tailwind frontend with full-screen video and a detection log overlay
-- A Docker container optimized for NVIDIA Jetson devices
+- A FastAPI backend that captures webcam frames (via GStreamer, with an OpenCV fallback) and runs YOLOv8 inference in a background thread
+- A WebSocket stream that sends raw JPEG frames alongside JSON detection metadata
+- A single-file HTML/Tailwind frontend that renders frames in an `<img>` and overlays bounding boxes on a `<canvas>`, with a camera picker and confidence slider
+- A multi-stage Dockerfile that picks a CUDA (Jetson) or CPU base image at build time
 
 ### Prerequisites
 
@@ -64,17 +64,20 @@ The complete sample is available in the [samples repository](https://github.com/
 
 ### Understanding the Architecture
 
-This sample uses a **prebuilt Ultralytics Docker image** specifically optimized for Jetson devices. The `ultralytics/ultralytics:latest-jetson-jetpack6` image comes with:
+This sample uses a **multi-stage Dockerfile that selects its base image at build time** via the `WENDY_PLATFORM` build arg, which the Wendy CLI injects after probing the target device:
 
-- YOLOv8 and the Ultralytics library pre-installed
-- OpenCV with CUDA support
-- PyTorch optimized for Jetson GPUs
-- All necessary CUDA libraries
+- **`nvidia-jetson`** → `dustynv/pytorch` with CUDA/JetPack for GPU-accelerated inference
+- **`generic`** → `python:3.11-slim-bookworm` for CPU inference (Raspberry Pi, unknown devices, or a plain `docker build`)
 
-This means you don't need to compile OpenCV or PyTorch from source - saving significant build time.
+Frames flow through the app like this:
+
+1. **GStreamer** captures JPEG frames from the webcam (with an OpenCV fallback on CPU/RPi devices)
+2. The raw JPEG frames stream to the browser over a WebSocket at camera rate
+3. **YOLOv8 inference runs in a separate background thread** at a lower rate, publishing detection metadata (bounding boxes, classes, timings) as JSON
+4. The browser renders the JPEG in an `<img>` and **draws the boxes on a `<canvas>` overlay**, so slow inference never stalls the video
 
 <Callout type="warning">
-**Large Image Size**: The Ultralytics Jetson image is approximately **5-9 GB** in size. Initial uploads to your device can be slow depending on your network connection. See the [Speeding Up Uploads](#speeding-up-uploads) section for tips.
+**Large Image Size**: The Jetson CUDA base image is large (several GB). Initial uploads to your device can be slow depending on your network connection. See the [Speeding Up Uploads](#speeding-up-uploads) section for tips. The YOLOv8n weights file is small (~6 MB) and is baked into the image at build time so the app works offline.
 </Callout>
 
 
@@ -82,247 +85,303 @@ This means you don't need to compile OpenCV or PyTorch from source - saving sign
   <Step>
     ### Understanding the Dockerfile
 
-    The Dockerfile uses a multi-stage build:
+    The Dockerfile is multi-stage and chooses its base from the `WENDY_PLATFORM` build arg. There are two base stages — a CUDA Jetson base and a generic CPU base — and a final stage that copies in the app. Here is the structure (trimmed for readability):
 
     ```dockerfile
-    # Build frontend
-    FROM node:22-slim AS frontend-builder
+    # syntax=docker/dockerfile:1.6
+    ARG WENDY_PLATFORM=generic
 
-    WORKDIR /app/frontend
-    COPY frontend/package*.json ./
-    RUN npm ci
-    COPY frontend/ ./
-    RUN npm run build
+    # ── NVIDIA Jetson base (CUDA-accelerated via L4T) ──
+    FROM dustynv/pytorch:2.7-r36.4.0-cu128-24.04 AS base-nvidia-jetson
+    # L4T base already ships CUDA torch/torchvision/OpenCV/numpy.
+    # Add GStreamer + v4l so USB cameras work, then app-level deps.
+    RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+        gir1.2-gst-plugins-bad-1.0 gstreamer1.0-tools \
+        gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+        gstreamer1.0-libav v4l-utils \
+        && rm -rf /var/lib/apt/lists/*
+    ENV PATH="/opt/venv/bin:${PATH}"
+    RUN pip3 install --no-cache-dir --index-url https://pypi.org/simple/ \
+        fastapi 'uvicorn[standard]' ultralytics
 
-    # Runtime stage - Ultralytics official Jetson image
-    FROM ultralytics/ultralytics:latest-jetson-jetpack6
+    # ── Generic CPU base (Raspberry Pi, unknown, non-accelerated) ──
+    FROM python:3.11-slim-bookworm AS base-generic
+    RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+        gir1.2-gst-plugins-bad-1.0 gstreamer1.0-tools \
+        gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+        gstreamer1.0-libav gstreamer1.0-nice v4l-utils \
+        libgl1 libglib2.0-0 libgomp1 \
+        && rm -rf /var/lib/apt/lists/*
+    COPY requirements.txt /tmp/requirements.txt
+    RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
+    # ── Final stage: WENDY_PLATFORM selects the hardware path ──
+    FROM base-${WENDY_PLATFORM} AS final
     WORKDIR /app
 
-    # Only need to install web server dependencies
-    RUN pip3 install --no-cache-dir fastapi "uvicorn[standard]"
+    # apt's python3-gi lives under /usr/lib/python3/dist-packages;
+    # expose it so `import gi` works, and fail loudly if it regresses.
+    ENV PYTHONPATH=/usr/lib/python3/dist-packages
+    RUN python3 -c "import gi; gi.require_version('Gst','1.0'); from gi.repository import Gst; Gst.init(None); print('gi+Gst OK')"
 
-    # Pre-download the YOLOv8 model during build (so it works offline)
-    RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+    # Bake YOLOv8n weights into the image (works offline on first run).
+    RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" && \
+        [ -s /app/yolov8n.pt ] && [ "$(stat -c %s /app/yolov8n.pt)" -gt 6000000 ]
 
-    # Copy server files
-    COPY server/app.py ./
+    COPY app.py index.html ./
+    COPY assets/ ./assets/
 
-    # Copy the built frontend
-    COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
-
-    ENV FRONTEND_DIST=/app/frontend/dist
     ENV PYTHONUNBUFFERED=1
+    EXPOSE 3005
+    CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "3005"]
+    ```
 
-    EXPOSE 3003
+    The accompanying `requirements.txt` (used by the generic CPU base) is:
 
-    CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "3003"]
+    ```txt
+    fastapi
+    uvicorn[standard]
+    opencv-python-headless
+    ultralytics
     ```
 
     **Key points:**
-    - The first stage builds the React frontend with Node.js
-    - The second stage uses the prebuilt Ultralytics Jetson image
-    - The YOLOv8 model (`yolov8n.pt`) is downloaded during build, not at runtime
-    - This ensures the app works even if the device has no internet access
+    - `ARG WENDY_PLATFORM` + `FROM base-${WENDY_PLATFORM}` pick the CUDA or CPU base; the Wendy CLI sets this after probing your device (it falls back to `generic` for a plain `docker build`)
+    - Both bases install GStreamer and `v4l-utils` so USB cameras work
+    - The YOLOv8n weights (`yolov8n.pt`, ~6 MB) are baked in at build time, not downloaded at runtime, so the app works offline
+    - A build-time check confirms the GStreamer Python bindings (`import gi`) load successfully
   </Step>
 
   <Step>
     ### Understanding the Backend
 
-    The FastAPI backend (`server/app.py`) handles webcam capture, YOLOv8 inference, MJPEG streaming, and detection logging:
+    The FastAPI backend (`app.py`) captures frames with GStreamer, runs YOLOv8 inference on a **separate background thread**, and ships raw JPEG frames plus JSON detection metadata to the browser over a WebSocket. Capturing and inference are decoupled so a slow inference pass never stalls the video.
+
+    The base-image selection at build time is mirrored at runtime: the app reads the `WENDY_HAS_GPU` / `WENDY_GPU_VENDOR` hints the CLI baked in, and chooses CUDA vs CPU (and a sensible inference FPS/image size) accordingly:
 
     ```python
-    from collections import deque
-    from datetime import datetime, timezone
-    from fastapi import FastAPI
-    from fastapi.responses import StreamingResponse
-    import cv2
-    from ultralytics import YOLO
+    _HAS_CUDA = _has_cuda()  # uses WENDY_HAS_GPU hint, then torch.cuda.is_available()
+    _MAX_INFERENCE_FPS = float(os.environ.get("YOLO_MAX_FPS", "15" if _HAS_CUDA else "3"))
+    _INFERENCE_IMGSZ = 320 if _HAS_CUDA else 224
+    # RPi5 / CPU devices idle lighter on OpenCV than GStreamer + inference.
+    _FORCE_OPENCV = not _HAS_GSTREAMER or (_backend == "opencv") or (
+        _backend == "auto" and (IS_RPI or not _HAS_CUDA)
+    )
+    ```
 
-    app = FastAPI()
+    The model is loaded lazily (and warmed at startup on a background thread) so the first WebSocket connection isn't blocked by the multi-second torch load:
 
-    # Load YOLOv8 model (pre-downloaded in Docker build)
-    model = YOLO("yolov8n.pt")
+    ```python
+    def _get_model() -> YOLO:
+        global _model
+        if _model is not None:
+            return _model
+        with _model_lock:
+            if _model is not None:
+                return _model
+            model_path = "yolov8n.onnx" if Path("yolov8n.onnx").exists() else "yolov8n.pt"
+            m = YOLO(model_path)
+            logger.info("YOLOv8n ready — %d COCO classes, backend: %s", len(m.names), model_path)
+            _model = m
+            return _model
+    ```
 
-    # Store recent detections for the log
-    detection_log: deque = deque(maxlen=100)
+    Inference runs in its own loop, decoding the latest raw JPEG, running `model.predict`, and caching the resulting boxes/classes as JSON metadata:
 
-    def generate_frames():
-        """Generate MJPEG frames with YOLOv8 detection overlay."""
-        cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
+    ```python
+    def _inference_loop(self):
+        last_inference = 0.0
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+            self._raw_event.wait(timeout=1.0)
+            self._raw_event.clear()
+            now = time.monotonic()
+            if now - last_inference < _MIN_INFERENCE_INTERVAL:
+                continue
 
-            # Run YOLOv8 inference
-            results = model(frame, verbose=False)
+            with self._lock:
+                raw, self._latest_raw = self._latest_raw, None
+                conf = self._confidence
+                has_clients = bool(self.queues)
+            if raw is None or not has_clients:
+                continue
 
-            # Log detections with confidence > 50%
-            timestamp = datetime.now(timezone.utc).isoformat()
-            for result in results:
-                for box in result.boxes:
-                    conf = float(box.conf[0])
-                    if conf > 0.5:
-                        cls_name = model.names[int(box.cls[0])]
-                        detection_log.append({
-                            "label": cls_name,
-                            "confidence": round(conf * 100, 1),
-                            "timestamp": timestamp
-                        })
+            model = _get_model()
+            frame = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                continue
+            h, w = frame.shape[:2]
 
-            # Draw bounding boxes and encode as JPEG
-            annotated_frame = results[0].plot()
-            _, buffer = cv2.imencode('.jpg', annotated_frame,
-                                     [cv2.IMWRITE_JPEG_QUALITY, 80])
+            t0 = time.monotonic()
+            results = model.predict(frame, conf=conf, imgsz=_INFERENCE_IMGSZ, verbose=False)
+            inference_ms = (time.monotonic() - t0) * 1000
+            last_inference = time.monotonic()
 
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' +
-                   buffer.tobytes() + b'\r\n')
+            boxes_out, classes = [], {}
+            for box in results[0].boxes:
+                xyxy = box.xyxy[0].tolist()
+                cls_name = model.names[int(box.cls)]
+                boxes_out.append({
+                    "x1": xyxy[0], "y1": xyxy[1], "x2": xyxy[2], "y2": xyxy[3],
+                    "conf": float(box.conf), "cls": int(box.cls), "name": cls_name,
+                })
+                classes[cls_name] = classes.get(cls_name, 0) + 1
 
-    @app.get("/api/video-feed")
-    async def video_feed():
-        """Stream MJPEG video with YOLOv8 detections."""
-        return StreamingResponse(
-            generate_frames(),
-            media_type="multipart/x-mixed-replace; boundary=frame"
-        )
+            with self._lock:
+                self._cached_meta = json.dumps({
+                    "detections": len(boxes_out), "inference_ms": round(inference_ms, 1),
+                    "classes": classes, "boxes": boxes_out, "frame_w": w, "frame_h": h,
+                })
+    ```
 
-    @app.get("/api/detections")
-    async def get_detections():
-        """Get recent detections for the log overlay."""
-        return list(detection_log)[-20:]
+    The WebSocket endpoint runs a sender task (it sends the metadata as text, then the JPEG as binary) and a receiver task that handles `switch_camera` and `confidence` commands:
+
+    ```python
+    @app.websocket("/stream")
+    async def websocket_stream(websocket: WebSocket):
+        await websocket.accept()
+        q = await camera.add_client(websocket)
+
+        async def send_frames():
+            while True:
+                frame_data, meta = await q.get()
+                await websocket.send_text(meta)
+                await websocket.send_bytes(frame_data)
+
+        async def recv_commands():
+            try:
+                while True:
+                    msg = json.loads(await websocket.receive_text())
+                    if "switch_camera" in msg:
+                        await camera.switch_camera(msg["switch_camera"])
+                    if "confidence" in msg:
+                        camera.set_confidence(float(msg["confidence"]))
+            except WebSocketDisconnect:
+                pass
+
+        try:
+            done, pending = await asyncio.wait(
+                [asyncio.create_task(send_frames()), asyncio.create_task(recv_commands())],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+        finally:
+            camera.remove_client(websocket)
     ```
 
     **How it works:**
-    - `generate_frames()` captures webcam frames and runs YOLOv8 inference
-    - `results[0].plot()` draws bounding boxes directly on the frame
-    - Detections above 50% confidence are logged with label, confidence, and timestamp
-    - `/api/detections` returns the last 20 detections for the frontend overlay
+    - GStreamer (or OpenCV on CPU/RPi) captures JPEG frames and feeds them to all connected clients at camera rate
+    - A background thread runs YOLOv8 at its own throttled rate and caches detection metadata
+    - Each WebSocket message pair is `<json-metadata>` then `<binary-jpeg>`; the browser overlays the boxes
+    - `/cameras`, `/logs`, and `/debug` endpoints expose camera inventory, recent logs, and live state; `/` serves `index.html`
   </Step>
 
   <Step>
     ### Understanding the Frontend
 
-    The React frontend (`frontend/src/App.tsx`) displays a full-screen video feed with a detection log overlay:
+    The frontend is a single `index.html` file (Tailwind via CDN). A fullscreen `<img>` shows the raw JPEG frames, and a `<canvas id="overlay">` is positioned on top to draw the bounding boxes:
 
-    ```tsx
-    import { useState, useEffect, useRef } from "react";
+    ```html
+    <img id="video-stream" class="max-w-full max-h-full w-full h-full object-contain" alt="" />
+    <canvas id="overlay" class="pointer-events-none absolute"></canvas>
+    ```
 
-    interface Detection {
-      label: string;
-      confidence: number;
-      timestamp: string;
+    Each WebSocket message is either JSON metadata (stored in `latestMeta`) or a binary JPEG (decoded into the `<img>`):
+
+    ```javascript
+    ws.onmessage = (e) => {
+      if (e.data instanceof ArrayBuffer) {
+        imgEl.src = arrayBufferToDataUrl(e.data);
+        frameCount++;
+        setStatus("Live", "green");
+      } else {
+        latestMeta = JSON.parse(e.data);
+        updateMetaUI(latestMeta);
+      }
+    };
+    ```
+
+    The boxes are drawn on the canvas, sized to match the source frame so coordinates are 1:1. Each COCO class gets its own color:
+
+    ```javascript
+    function drawBoxes() {
+      const fw = latestMeta.frame_w || imgEl.naturalWidth;
+      const fh = latestMeta.frame_h || imgEl.naturalHeight;
+      if (!fw || !fh) return;
+      if (canvasEl.width !== fw) canvasEl.width = fw;
+      if (canvasEl.height !== fh) canvasEl.height = fh;
+      ctx.clearRect(0, 0, fw, fh);
+      for (const b of latestMeta.boxes || []) {
+        const color = COLORS[(b.cls | 0) % 80];
+        ctx.strokeStyle = color;
+        ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+        const label = `${b.name || `class ${b.cls}`} ${(b.conf ?? 0).toFixed(2)}`;
+        // ... draw a filled label background and the text ...
+      }
     }
+    ```
 
-    function App() {
-      const [detections, setDetections] = useState<Detection[]>([]);
-      const logRef = useRef<HTMLDivElement>(null);
+    The confidence slider sends a `confidence` command to the server so YOLO re-thresholds in real time:
 
-      useEffect(() => {
-        // Poll for detections every 500ms
-        const fetchDetections = async () => {
-          const response = await fetch("/api/detections");
-          const data: Detection[] = await response.json();
-          setDetections(data);
-        };
-
-        fetchDetections();
-        const interval = setInterval(fetchDetections, 500);
-        return () => clearInterval(interval);
-      }, []);
-
-      useEffect(() => {
-        // Auto-scroll to bottom of log
-        if (logRef.current) {
-          logRef.current.scrollTop = logRef.current.scrollHeight;
-        }
-      }, [detections]);
-
-      return (
-        <div className="relative h-screen w-screen overflow-hidden bg-black">
-          {/* Full-screen video feed */}
-          <img
-            src="/api/video-feed"
-            alt="YOLOv8 Detection Feed"
-            className="absolute inset-0 h-full w-full object-contain"
-          />
-
-          {/* Bottom overlay for detection log (1/5 of screen) */}
-          <div className="absolute bottom-0 left-0 right-0 h-1/5
-                          bg-black/70 backdrop-blur-sm z-10">
-            <div className="h-full flex flex-col">
-              <div className="px-4 py-2 border-b border-white/20">
-                <h2 className="text-white text-sm font-semibold uppercase">
-                  COCO Object Detections
-                </h2>
-              </div>
-              <div ref={logRef}
-                   className="flex-1 overflow-y-auto px-4 py-2 font-mono text-sm">
-                {detections.map((detection, index) => (
-                  <div key={`${detection.timestamp}-${index}`}
-                       className="text-white/90 py-0.5">
-                    <span className="text-green-400">
-                      [{detection.confidence}%]
-                    </span>{" "}
-                    <span className="text-yellow-300">
-                      {detection.label}
-                    </span>{" "}
-                    <span className="text-white/50 text-xs">
-                      {new Date(detection.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    export default App;
+    ```javascript
+    confSlider.addEventListener("change", () => {
+      const val = confSlider.value / 100;
+      confValue.textContent = val.toFixed(2);
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ confidence: val }));
+      }
+    });
     ```
 
     **UI Features:**
-    - Full-screen MJPEG video feed via a simple `<img>` tag
-    - Semi-transparent overlay at the bottom (1/5 of screen height)
-    - Detection entries show confidence in green, label in yellow, time in gray
-    - Auto-scrolls to show the latest detections
+    - Fullscreen video feed (`<img>`) with bounding boxes drawn on a `<canvas>` overlay
+    - Live counters for FPS, object count, and inference time (ms)
+    - A per-class detection panel (e.g. "person 2, car 1")
+    - A camera picker (populated from `/cameras`) and a confidence slider
+    - Fullscreen toggle and automatic reconnect on disconnect
   </Step>
 
   <Step>
     ### Configure Entitlements
 
-    The `wendy.json` file specifies the required device permissions:
+    The generated `wendy.json` specifies the required device permissions. Note the longer readiness timeout — the YOLO/CUDA image and model load can take a while on first start:
 
     ```json
     {
-      "appId": "com.example.python-yolov8",
-      "version": "0.0.1",
-      "entitlements": [
-        { "type": "network", "mode": "host" },
-        { "type": "gpu" },
-        { "type": "video" }
-      ],
-      "readiness": {
-        "tcpSocket": { "port": 3003 },
-        "timeoutSeconds": 30
-      },
-      "hooks": {
-        "postStart": {
-          "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:3003"
+        "appId": "yolov8",
+        "version": "0.1.0",
+        "entitlements": [
+            {
+                "type": "network",
+                "mode": "host"
+            },
+            {
+                "type": "camera"
+            },
+            {
+                "type": "gpu"
+            }
+        ],
+        "readiness": {
+            "tcpSocket": { "port": 3005 },
+            "timeoutSeconds": 180
+        },
+        "hooks": {
+            "postStart": {
+                "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:3005"
+            }
         }
-      }
     }
     ```
 
     - **network (host mode)**: Allows binding to ports directly on the device
-    - **gpu**: Enables CUDA acceleration for YOLOv8 inference
-    - **video**: Grants access to `/dev/video*` webcam devices
-    - **readiness**: Waits for port `3003` to accept connections before proceeding
+    - **camera**: Grants access to `/dev/video*` webcam devices
+    - **gpu**: Enables CUDA acceleration for YOLOv8 inference on Jetson
+    - **readiness**: Waits up to `180s` for port `3005` to accept connections (the large image and model load can be slow)
     - **postStart**: Automatically opens the detection UI in your browser once ready
   </Step>
 </Steps>
@@ -348,13 +407,15 @@ wendy run
 ✔︎ Container built and uploaded successfully! [45.2s]
 ✔ Success
   Started app
-INFO:     Uvicorn running on http://0.0.0.0:3003
+INFO:     Uvicorn running on http://0.0.0.0:3005
+INFO:     Loading YOLOv8n model (CUDA: True)...
+INFO:     YOLOv8n ready — 80 COCO classes, backend: yolov8n.pt
 ```
 
 Your browser will open automatically once the detection server is ready, thanks to the `postStart` hook. If it doesn't, navigate to:
 
 ```
-http://wendyos-zestful-stork.local:3003
+http://wendyos-zestful-stork.local:3005
 ```
 
 Replace the hostname with your device's actual hostname.
@@ -392,17 +453,17 @@ Docker layer caching means that after the initial upload:
 
 <Accordions>
   <Accordion title="Webcam not detected">
-    Ensure your webcam is connected before running the app. Check that the `video` entitlement is in your `wendy.json`. You can verify the webcam is visible on the device:
+    Ensure your webcam is connected before running the app. Check that the `camera` entitlement is in your `wendy.json`. You can verify the webcam is visible on the device:
 
     ```bash
-    ssh edge@wendyos-zestful-stork.local "ls /dev/video*"
+    ssh wendy@wendyos-zestful-stork.local "ls /dev/video*"
     ```
 
-    Common webcam devices are `/dev/video0` or `/dev/video1`.
+    The app discovers cameras automatically (see `GET /cameras` and the picker in the UI). Common webcam devices are `/dev/video0` or `/dev/video1`. Hit `GET /debug` to see what the app detected, including the active capture backend.
   </Accordion>
 
   <Accordion title="Model download fails at runtime">
-    If you see errors about failing to download `yolov8n.pt`, the model wasn't properly baked into the image. Ensure your Dockerfile includes:
+    The weights are baked into the image at build time, so this normally never happens. If it does, the model wasn't properly baked in. Ensure your Dockerfile includes:
 
     ```dockerfile
     RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
@@ -412,9 +473,9 @@ Docker layer caching means that after the initial upload:
   </Accordion>
 
   <Accordion title="Slow inference / low FPS">
-    Ensure the `gpu` entitlement is configured. Without GPU access, YOLOv8 falls back to CPU inference which is significantly slower on Jetson devices.
+    Ensure the `gpu` entitlement is configured and that your device was detected as a Jetson — on CPU devices the app caps inference at a lower FPS and smaller image size by design. Check `GET /debug` for `cuda`, `capture_backend`, `max_inference_fps`, and `device`.
 
-    You can also try using a smaller model like `yolov8n.pt` (nano) instead of larger variants.
+    You can tune the inference rate with the `YOLO_MAX_FPS` environment variable, or force a capture backend with `CAMERA_BACKEND=opencv|gstreamer`.
   </Accordion>
 
   <Accordion title="Upload is very slow">

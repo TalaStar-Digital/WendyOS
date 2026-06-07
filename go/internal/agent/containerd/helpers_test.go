@@ -3,6 +3,7 @@ package containerd
 import (
 	"crypto/sha256"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,77 @@ import (
 	"github.com/wendylabsinc/wendy/go/internal/shared/appconfig"
 	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
+
+func TestContainerName_SingleContainer(t *testing.T) {
+	// Single-container apps: name must equal the appID unchanged.
+	if got := ContainerName("com.example.app", ""); got != "com.example.app" {
+		t.Errorf("ContainerName(%q, %q) = %q; want %q", "com.example.app", "", got, "com.example.app")
+	}
+}
+
+func TestContainerName_MultiService(t *testing.T) {
+	got := ContainerName("com.example.app", "api")
+	want := "com.example.app_api"
+	if got != want {
+		t.Errorf("ContainerName(%q, %q) = %q; want %q", "com.example.app", "api", got, want)
+	}
+}
+
+func TestContainerName_ValidContainerdID(t *testing.T) {
+	// Containerd identifiers must match ^[A-Za-z0-9]+(?:[._-](?:[A-Za-z0-9]+))*$
+	// (max 76 chars). Verify multi-service names pass this constraint.
+	containerdRe := regexp.MustCompile(`^[A-Za-z0-9]+(?:[._-](?:[A-Za-z0-9]+))*$`)
+	cases := []struct{ appID, svc string }{
+		{"sh.wendy.examples.hellocompose", "api"},
+		{"com.example.myapp", "camera"},
+		{"sh.wendy.robot", "slam"},
+	}
+	for _, tc := range cases {
+		name := ContainerName(tc.appID, tc.svc)
+		if !containerdRe.MatchString(name) {
+			t.Errorf("ContainerName(%q, %q) = %q does not match containerd identifier regex", tc.appID, tc.svc, name)
+		}
+		if len(name) > 76 {
+			t.Errorf("ContainerName(%q, %q) = %q exceeds containerd max length 76", tc.appID, tc.svc, name)
+		}
+	}
+}
+
+func TestSnapshotKey_SingleContainer(t *testing.T) {
+	// Single-container apps: snapshot key must equal "wendy-{appID}" unchanged.
+	got := SnapshotKey("com.example.app", "")
+	want := "wendy-com.example.app"
+	if got != want {
+		t.Errorf("SnapshotKey(%q, %q) = %q; want %q", "com.example.app", "", got, want)
+	}
+}
+
+func TestSnapshotKey_MultiService(t *testing.T) {
+	got := SnapshotKey("com.example.app", "api")
+	want := "wendy-com.example.app@api"
+	if got != want {
+		t.Errorf("SnapshotKey(%q, %q) = %q; want %q", "com.example.app", "api", got, want)
+	}
+}
+
+func TestSnapshotKey_NoSlash(t *testing.T) {
+	// Snapshot keys must never contain a slash (filesystem safety).
+	key := SnapshotKey("com.example.app", "worker")
+	if strings.Contains(key, "/") {
+		t.Errorf("SnapshotKey must not contain '/'; got %q", key)
+	}
+}
+
+func TestSnapshotKey_NoCollision(t *testing.T) {
+	// "wendy-foo-bar@baz" must differ from "wendy-foo@bar-baz": without "@
+	// separation a "-" separator would make both produce "wendy-foo-bar-baz".
+	a := SnapshotKey("foo-bar", "baz")
+	b := SnapshotKey("foo", "bar-baz")
+	if a == b {
+		t.Errorf("SnapshotKey collision: SnapshotKey(%q,%q) == SnapshotKey(%q,%q) == %q",
+			"foo-bar", "baz", "foo", "bar-baz", a)
+	}
+}
 
 func TestComputeChainID_FirstLayer(t *testing.T) {
 	diffID := "sha256:abc123"
@@ -192,7 +264,7 @@ func TestGCTimestamp_IsUTC(t *testing.T) {
 }
 
 func TestWendyLabels_Basic(t *testing.T) {
-	labels := wendyLabels("myapp", "1.0.0", nil, nil)
+	labels := wendyLabels("myapp", "", "1.0.0", nil, nil)
 
 	if v, ok := labels[labelKeyAppVersion]; !ok {
 		t.Error("missing app version label")
@@ -204,11 +276,27 @@ func TestWendyLabels_Basic(t *testing.T) {
 	if _, ok := labels[labelKeyRestartPolicy]; ok {
 		t.Error("should not have restart policy label when policy is nil")
 	}
+
+	// Single-container apps must not get a service label.
+	if _, ok := labels[labelKeyServiceName]; ok {
+		t.Error("single-container app must not have service label")
+	}
+}
+
+func TestWendyLabels_MultiService(t *testing.T) {
+	labels := wendyLabels("com.example.app", "api", "2.0", nil, nil)
+
+	if v := labels[labelKeyServiceName]; v != "api" {
+		t.Errorf("service label = %q; want %q", v, "api")
+	}
+	if v := labels[labelKeyAppVersion]; v != "2.0" {
+		t.Errorf("version label = %q; want %q", v, "2.0")
+	}
 }
 
 func TestWendyLabels_WithRestartPolicyUnlessStopped(t *testing.T) {
 	rp := &agentpb.RestartPolicy{Mode: agentpb.RestartPolicyMode_UNLESS_STOPPED}
-	labels := wendyLabels("app", "2.0", rp, nil)
+	labels := wendyLabels("app", "", "2.0", rp, nil)
 
 	if v, ok := labels[labelKeyRestartPolicy]; !ok {
 		t.Error("missing restart policy label")
@@ -222,7 +310,7 @@ func TestWendyLabels_WithRestartPolicyOnFailure(t *testing.T) {
 		Mode:                agentpb.RestartPolicyMode_ON_FAILURE,
 		OnFailureMaxRetries: 3,
 	}
-	labels := wendyLabels("app", "1.0", rp, nil)
+	labels := wendyLabels("app", "", "1.0", rp, nil)
 
 	if v := labels[labelKeyRestartPolicy]; v != "on-failure:3" {
 		t.Errorf("restart policy = %q; want %q", v, "on-failure:3")
@@ -231,7 +319,7 @@ func TestWendyLabels_WithRestartPolicyOnFailure(t *testing.T) {
 
 func TestWendyLabels_WithRestartPolicyNo(t *testing.T) {
 	rp := &agentpb.RestartPolicy{Mode: agentpb.RestartPolicyMode_NO}
-	labels := wendyLabels("app", "1.0", rp, nil)
+	labels := wendyLabels("app", "", "1.0", rp, nil)
 
 	if v := labels[labelKeyRestartPolicy]; v != "no" {
 		t.Errorf("restart policy = %q; want %q", v, "no")
@@ -240,7 +328,7 @@ func TestWendyLabels_WithRestartPolicyNo(t *testing.T) {
 
 func TestWendyLabels_WithRestartPolicyDefault(t *testing.T) {
 	rp := &agentpb.RestartPolicy{Mode: agentpb.RestartPolicyMode_DEFAULT}
-	labels := wendyLabels("app", "1.0", rp, nil)
+	labels := wendyLabels("app", "", "1.0", rp, nil)
 
 	if v := labels[labelKeyRestartPolicy]; v != "unless-stopped" {
 		t.Errorf("restart policy = %q; want %q (DEFAULT maps to unless-stopped)", v, "unless-stopped")
@@ -249,7 +337,7 @@ func TestWendyLabels_WithRestartPolicyDefault(t *testing.T) {
 
 func TestWendyLabels_WithMCPEntitlement(t *testing.T) {
 	entitlements := []appconfig.Entitlement{{Type: appconfig.EntitlementMCP, Port: 3000}}
-	labels := wendyLabels("app", "1.0", nil, entitlements)
+	labels := wendyLabels("app", "", "1.0", nil, entitlements)
 	if v, ok := labels[labelKeyMCPPort]; !ok {
 		t.Error("missing mcp port label")
 	} else if v != "3000" {
@@ -259,7 +347,7 @@ func TestWendyLabels_WithMCPEntitlement(t *testing.T) {
 
 func TestWendyLabels_WithMCPPortZero(t *testing.T) {
 	entitlements := []appconfig.Entitlement{{Type: appconfig.EntitlementMCP, Port: 0}}
-	labels := wendyLabels("app", "1.0", nil, entitlements)
+	labels := wendyLabels("app", "", "1.0", nil, entitlements)
 	if _, ok := labels[labelKeyMCPPort]; ok {
 		t.Error("should not have mcp port label when port is 0")
 	}
@@ -270,7 +358,7 @@ func TestWendyLabels_EntitlementsStoredAsKeyValue(t *testing.T) {
 		{Type: appconfig.EntitlementNetwork, Mode: "host"},
 		{Type: appconfig.EntitlementGPU},
 	}
-	labels := wendyLabels("app", "1.0", nil, entitlements)
+	labels := wendyLabels("app", "", "1.0", nil, entitlements)
 
 	cases := []struct {
 		key     string
@@ -295,7 +383,7 @@ func TestWendyLabels_DuplicateEntitlementType(t *testing.T) {
 		{Type: appconfig.EntitlementPersist, Name: "data", Path: "/data"},
 		{Type: appconfig.EntitlementPersist, Name: "logs", Path: "/logs"},
 	}
-	labels := wendyLabels("app", "1.0", nil, entitlements)
+	labels := wendyLabels("app", "", "1.0", nil, entitlements)
 
 	for i, want := range entitlements {
 		key := fmt.Sprintf("%s%s.%d", appconfig.EntitlementAnnotationKeyPrefix, appconfig.EntitlementPersist, i)
@@ -311,7 +399,7 @@ func TestWendyLabels_DuplicateEntitlementType(t *testing.T) {
 }
 
 func TestWendyLabels_NoEntitlementsLabel(t *testing.T) {
-	labels := wendyLabels("app", "1.0", nil, nil)
+	labels := wendyLabels("app", "", "1.0", nil, nil)
 	for k := range labels {
 		if strings.HasPrefix(k, appconfig.EntitlementAnnotationKeyPrefix) {
 			t.Errorf("should not have entitlement label when entitlements are empty, got %q", k)
@@ -379,7 +467,7 @@ func TestParseEntitlementsFromAnnotations_RoundTrip(t *testing.T) {
 		{Type: appconfig.EntitlementGPU},
 	}
 
-	labels := wendyLabels("app", "1.0", nil, original)
+	labels := wendyLabels("app", "", "1.0", nil, original)
 	annotations := make(map[string]string)
 	for k, v := range labels {
 		if strings.HasPrefix(k, appconfig.EntitlementAnnotationKeyPrefix) {

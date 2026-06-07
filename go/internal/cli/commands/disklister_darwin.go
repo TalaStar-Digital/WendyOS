@@ -194,9 +194,12 @@ func writeImageToDisk(r io.Reader, totalSize int64, d drive, progressFn func(wri
 	// Use rdisk for faster raw writes on macOS. Read from stdin so the
 	// caller can pipe an io.Reader (e.g. a streaming zip entry) without
 	// materialising the image to disk first.
+	// conv=sync pads the final partial block to bs so that all writes to the
+	// raw device are sector-aligned (macOS requires this on /dev/rdiskN).
 	cmd := exec.Command("sudo", "dd",
 		fmt.Sprintf("of=%s", d.RawPath),
 		"bs="+bs,
+		"conv=sync",
 		"status=progress",
 	)
 	cmd.Stdin = r
@@ -210,16 +213,20 @@ func writeImageToDisk(r io.Reader, totalSize int64, d drive, progressFn func(wri
 		return fmt.Errorf("starting dd: %w", err)
 	}
 
+	var ddDiag string
 	scannerDone := make(chan struct{})
 	go func() {
 		defer close(scannerDone)
-		scanDDProgress(stderr, progressFn)
+		ddDiag = scanDDProgress(stderr, progressFn)
 	}()
 
 	waitErr := cmd.Wait()
 	<-scannerDone
 
 	if waitErr != nil {
+		if ddDiag != "" {
+			return fmt.Errorf("writing image: %w\n%s", waitErr, ddDiag)
+		}
 		return fmt.Errorf("writing image: %w", waitErr)
 	}
 

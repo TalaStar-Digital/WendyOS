@@ -45,14 +45,15 @@ func (s *logSubscriber) close() {
 
 type ContainerLogManager struct {
 	logger      *zap.Logger
-	broadcaster *TelemetryBroadcaster
+	broadcaster TelemetryPublisher
 	mu          sync.RWMutex
 	subscribers map[string]map[string]*logSubscriber // appName -> subID -> subscriber
 	nextID      uint64
 	resources   map[string]*otelpb.Resource // appName -> pre-built OTel resource (protected by mu)
 }
 
-func NewContainerLogManager(logger *zap.Logger, broadcaster *TelemetryBroadcaster) *ContainerLogManager {
+// NewContainerLogManager creates a new ContainerLogManager.
+func NewContainerLogManager(logger *zap.Logger, broadcaster TelemetryPublisher) *ContainerLogManager {
 	return &ContainerLogManager{
 		logger:      logger,
 		broadcaster: broadcaster,

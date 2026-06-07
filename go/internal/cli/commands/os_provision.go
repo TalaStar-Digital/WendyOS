@@ -86,7 +86,7 @@ func preEnrollDevice(ctx context.Context, auth *config.AuthConfig, deviceName st
 		return nil, fmt.Errorf("generating key pair: %w", err)
 	}
 
-	csrPEM, err := certs.GenerateCSR(keyPEM, fmt.Sprintf("sh/wendy/%d/%d", orgID, assetID))
+	csrPEM, err := certs.GenerateCSR([]byte(keyPEM), fmt.Sprintf("sh/wendy/%d/%d", orgID, assetID))
 	if err != nil {
 		return nil, fmt.Errorf("generating CSR: %w", err)
 	}

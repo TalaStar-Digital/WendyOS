@@ -6,12 +6,12 @@ language: rust
 
 ## Creating Your First Rust Application
 
-This guide will walk you through creating a simple "Hello, World!" application for WendyOS using Rust. This is a great way to prove that you can send your first app to your device and verify your development environment is set up correctly.
+This guide will walk you through creating your first WendyOS application in Rust. The Wendy Rust template scaffolds a small, long-running HTTP server (built with [Axum](https://docs.rs/axum/latest/axum/)) so you can prove out the full workflow: build on your machine, deploy over USB or Wi-Fi, and open the running app in your browser.
 
 ### Prerequisites
 
 - Wendy CLI installed on your development machine
-- Rust 1.83 or later installed (via `rustup`)
+- Rust 1.85 or later installed (via `rustup`)
 - A WendyOS device plugged in over USB or connectable over Wi-Fi
 
 <Callout type="info">
@@ -41,7 +41,7 @@ This guide will walk you through creating a simple "Hello, World!" application f
     wendy run
     ```
 
-    Wendy will build the app, ask you to select a device if one is not already configured, deploy the app, and show the run output.
+    Wendy will build the app, ask you to select a device if one is not already configured, deploy the app, and show the run output. Because the app is a web server, it keeps running and your browser opens to it automatically (see the `postStart` hook below).
   </Step>
 </Steps>
 
@@ -56,6 +56,8 @@ This guide will walk you through creating a simple "Hello, World!" application f
     ```
     hello-world/
     ├── Cargo.toml
+    ├── Dockerfile
+    ├── wendy.json
     └── src/
         └── main.rs
     ```
@@ -66,21 +68,73 @@ This guide will walk you through creating a simple "Hello, World!" application f
   <Step>
     ### Verify the Code
 
-    The generated `src/main.rs` file should contain:
+    The generated `src/main.rs` starts an Axum HTTP server. The root route (`/`) returns a JSON message, and there are also `/health` and `POST /items` routes to demonstrate JSON handling:
 
     ```rust
-    fn main() {
-        println!("Hello, world!");
+    use axum::{
+        http::StatusCode,
+        routing::{get, post},
+        Json, Router,
+    };
+    use serde::{Deserialize, Serialize};
+    use std::env;
+
+    #[tokio::main]
+    async fn main() {
+        let hostname = env::var("WENDY_HOSTNAME").unwrap_or_else(|_| "0.0.0.0".to_string());
+
+        let app = Router::new()
+            .route("/", get(root))
+            .route("/health", get(health))
+            .route("/items", post(create_item));
+
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:4001").await.unwrap();
+        println!("Server running on http://{}:4001", hostname);
+        axum::serve(listener, app).await.unwrap();
+    }
+
+    async fn root() -> Json<serde_json::Value> {
+        println!("Received request: GET /");
+        Json(serde_json::json!({"message": "hello-world"}))
+    }
+
+    async fn health() -> Json<serde_json::Value> {
+        Json(serde_json::json!({"status": "ok"}))
+    }
+
+    async fn create_item(Json(payload): Json<CreateItem>) -> (StatusCode, Json<ItemResponse>) {
+        println!("Received request: POST /items - {}", payload.name);
+        let item = ItemResponse {
+            id: 1,
+            name: payload.name,
+            price: payload.price,
+        };
+        (StatusCode::CREATED, Json(item))
+    }
+
+    #[derive(Deserialize)]
+    struct CreateItem {
+        name: String,
+        price: f64,
+    }
+
+    #[derive(Serialize)]
+    struct ItemResponse {
+        id: u64,
+        name: String,
+        price: f64,
     }
     ```
 
-    This is the entry point for your WendyOS application.
+    <Callout type="info">
+      **It's a server, not a one-shot script**: This app binds to `0.0.0.0:4001` and serves requests until it's stopped, so it stays in the `Running` state on your device. Requesting `/` returns `{"message":"hello-world"}`.
+    </Callout>
   </Step>
 
   <Step>
     ### Verify Cargo.toml
 
-    Your `Cargo.toml` should look like:
+    Your `Cargo.toml` declares the Axum, Tokio, and Serde dependencies:
 
     ```toml
     [package]
@@ -89,30 +143,65 @@ This guide will walk you through creating a simple "Hello, World!" application f
     edition = "2021"
 
     [dependencies]
+    axum = "0.8.8"
+    tokio = { version = "1", features = ["full"] }
+    serde = { version = "1", features = ["derive"] }
+    serde_json = "1"
     ```
   </Step>
 
   <Step>
     ### Generated Dockerfile
 
-    The generated project includes a Dockerfile for containerized deployment:
+    The generated project includes a multi-stage Dockerfile that builds the release binary with `rust:1.85-slim` and runs it on `debian:bookworm-slim`:
 
     ```dockerfile
-    # Build stage
-    FROM rust:1.83-slim AS builder
+    FROM rust:1.85-slim AS builder
 
     WORKDIR /app
-    COPY Cargo.toml Cargo.lock ./
+    COPY Cargo.toml ./
     COPY src ./src
 
     RUN cargo build --release
 
-    # Runtime stage
     FROM debian:bookworm-slim
+
+    RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        && rm -rf /var/lib/apt/lists/*
 
     COPY --from=builder /app/target/release/hello-world /usr/local/bin/hello-world
 
+    EXPOSE 4001
+
     CMD ["hello-world"]
+    ```
+  </Step>
+
+  <Step>
+    ### Generated wendy.json
+
+    The generated `wendy.json` already wires up a readiness probe and a `postStart` hook, so the CLI waits for port `4001` and then opens your browser to the running app — you don't add these by hand:
+
+    ```json
+    {
+        "appId": "hello-world",
+        "version": "0.1.0",
+        "entitlements": [
+            {
+                "type": "network"
+            }
+        ],
+        "readiness": {
+            "tcpSocket": { "port": 4001 },
+            "timeoutSeconds": 30
+        },
+        "hooks": {
+            "postStart": {
+                "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:4001"
+            }
+        }
+    }
     ```
   </Step>
 </Steps>
@@ -125,11 +214,15 @@ Deploy your containerized application to your WendyOS device:
 wendy run
 ```
 
-The Wendy CLI will build your Docker image, transfer it to your device, and run it.
+The Wendy CLI will build your Docker image, transfer it to your device, and run it. Once port `4001` is accepting connections, your browser opens automatically to `http://<your-device-hostname>:4001`, where you'll see:
+
+```json
+{"message":"hello-world"}
+```
 
 ## Verifying Deployment on Your Device
 
-After deploying your application to a WendyOS device, you can verify it was successfully deployed and ran by listing the applications on your device:
+After deploying your application to a WendyOS device, you can verify it is running by listing the applications on your device:
 
 ```bash
 wendy device apps list
@@ -138,12 +231,12 @@ wendy device apps list
 ╭───────────────┬─────────┬─────────┬──────────╮
 │ App           │ Version │ State   │ Failures │
 ├───────────────┼─────────┼─────────┼──────────┤
-│ hello-world   │ 0.0.1   │ Stopped │ 0        │
+│ hello-world   │ 0.1.0   │ Running │ 0        │
 ╰───────────────┴─────────┴─────────┴──────────╯
 ```
 
 <Callout type="info">
-  **Expected State**: The app shows as "Stopped" because a hello-world application exits immediately after printing its message. This is expected behavior. The key indicator of success is the "Failures" column showing `0`, which confirms your application ran and exited successfully without any errors.
+  **Expected State**: The app shows as "Running" because it's a long-lived HTTP server — it keeps listening for requests until you stop it. The "Failures" column showing `0` confirms it started cleanly without crashing.
 </Callout>
 
 ## Next Steps
@@ -161,7 +254,7 @@ Now that you have a basic Rust application running:
 
 <Accordions>
   <Accordion title="Testing the app on your own machine">
-    There are times when you might not have a WendyOS device around. You can still test your application locally using Cargo or Docker.
+    There are times when you might not have a WendyOS device around. You can still run the server locally using Cargo or Docker.
 
     ### Using Cargo Directly
 
@@ -175,9 +268,21 @@ Now that you have a basic Rust application running:
 
     ```
        Compiling hello-world v0.1.0 (/path/to/hello-world)
-        Finished dev [unoptimized + debuginfo] target(s) in 0.75s
+        Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.21s
          Running `target/debug/hello-world`
-    Hello, world!
+    Server running on http://0.0.0.0:4001
+    ```
+
+    The server keeps running. In another terminal, hit the root route:
+
+    ```bash
+    curl http://localhost:4001
+    ```
+
+    You should see:
+
+    ```json
+    {"message":"hello-world"}
     ```
 
     ### Using Docker Locally
@@ -186,13 +291,19 @@ Now that you have a basic Rust application running:
 
     ```bash
     docker build -t hello-world .
-    docker run hello-world
+    docker run -p 4001:4001 hello-world
+    ```
+
+    Then, in another terminal:
+
+    ```bash
+    curl http://localhost:4001
     ```
 
     You should see:
 
-    ```
-    Hello, world!
+    ```json
+    {"message":"hello-world"}
     ```
   </Accordion>
 </Accordions>

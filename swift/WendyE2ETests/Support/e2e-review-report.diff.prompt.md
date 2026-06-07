@@ -9,9 +9,16 @@ Inspect targeted Git diffs on demand rather than looking for a saved full patch.
 
 Guidelines:
 
-- Prefer no top-level files over low-value files.
+- Prefer no top-level files over low-value files only when there are no failed
+  or flaked tests plausibly related to the diff.
 - Write one Markdown file per actionable diff-related run-level or cross-suite
   review issue under the top-level review directory named in the generated prompt.
+- If `overview.json` records any deterministic failure or flake plausibly related
+  to the diff, write a top-level review that covers every related failed or
+  flaked test-target outcome. Find the likely root cause or pattern, explain
+  what to do next, and cite the lower-level review/artifact evidence. For flakes,
+  explicitly explain why the outcome may be nondeterministic and how to
+  investigate or stabilize it.
 - Use JSON `severity` to classify each issue as `info`, `concern`, or
   `fail`. Do not write prose status/severity lines such as `Status: pass`,
   `Status: concern`, or `Status: fail`.
@@ -19,9 +26,13 @@ Guidelines:
   tied to the diff plus the suggested action.
 - Put evidence, reasoning, targeted diff references, links to relevant suite/test
   details, and longer analysis under the review file's `## Details` heading.
-- Do not repeat or summarize suite/test reviews already covered at lower levels.
-- Do not restate obvious counts/statuses that the report already shows, such as
-  how many tests or attempts failed.
+- Do not repeat suite/test reviews already covered at lower levels except when
+  summarizing diff-related failed or flaked tests for the required top-level
+  failure/flake synthesis.
+- Use `overview.json` as the source of truth for target-level behavior. It is
+  available before the HTML report is rendered.
+- Do not merely restate obvious counts/statuses; synthesize what diff-related
+  deterministic failures, flakes, and target differences mean for the run.
 - Prefer concise synthesis over copying suite findings.
 - Use JSON `locations` only when the review is attributable to source lines.
 - Do not edit source code, tests, xUnit files, recordings, or the run's

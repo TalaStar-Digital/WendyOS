@@ -15,6 +15,22 @@ The device's mTLS CA pool is built from the `chainPem` field in `provisioning.js
 
 The trust bundle may contain multiple CA certificates sharing the same subject DN. This is normal during a CA key rollover, where an old CA and a new CA temporarily coexist in the bundle. The agent's ML-DSA client certificate verifier (`verifyMLDSAClientCert`) tries every CA whose subject DN matches the client certificate's issuer DN. Verification succeeds as soon as any matching CA validates the certificate. If all matching CAs fail, the error from the last attempted CA is returned. If no CA in the pool has a matching subject DN, the verifier returns a "client certificate issuer not found in trusted CA pool" error.
 
+## Clock skew and the NotBefore floor
+
+A device that reboots without network connectivity (e.g. a power cycle with no WiFi) may not have synchronised its clock via NTP before the mTLS server starts. With an unsynchronised clock that predates the certificates, every incoming client certificate would be rejected as "not yet valid", silently making the mTLS port unusable.
+
+To handle this, `wendy-agent` reads the `NotBefore` timestamp from the device's own provisioning certificate at startup and passes it to the verifier as a **time floor**. During peer-certificate verification the effective time is:
+
+```
+effectiveNow = max(time.Now(), provisioningCert.NotBefore)
+```
+
+`effectiveNow` is used **only for the leaf certificate's `NotBefore` check** — on both the standard (RSA/ECDSA) path, via `x509.VerifyOptions.CurrentTime`, and the ML-DSA path. Certificate expiry (`NotAfter`) and CA-certificate validity are always checked against the real system clock, so the floor cannot mask a genuinely expired certificate or make an immature CA appear valid. Pass a zero `time.Time` to disable the floor.
+
+When the device clock is behind the floor at startup, `wendy-agent` logs a `WARN` that includes the device clock, the floor, and how far behind the clock is. If the provisioning certificate cannot be parsed, the floor is zero (disabled) and a `WARN` notes that NTP clock-skew protection is off. Once NTP synchronises the clock the discrepancy disappears on its own.
+
+The systemd unit also orders the agent after `time-sync.target` (`After=`/`Wants=`) so NTP synchronisation is attempted as early as possible; the floor is the primary guard and does not depend on that ordering.
+
 ## Local development with pki-core
 
 [pki-core](https://github.com/wendylabsinc/pki-core) is the self-hosted Wendy PKI engine. Run it locally to provision real devices without a cloud deployment.

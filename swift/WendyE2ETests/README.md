@@ -4,6 +4,11 @@ Swift end-to-end tests for the Wendy CLI and Wendy agent. This package runs the
 real `wendy` binary, records every shell command, and writes artifacts for local
 debugging, CI, and AI review.
 
+The harness is currently separate from the `.github/ci-tests/` integration
+suite. Over time, overlapping integration coverage is expected to move into
+Swift E2E specs so orchestration, assertions, artifacts, and reporting can live
+in one place.
+
 ## Quick start
 
 From `swift/`:
@@ -80,7 +85,7 @@ The most useful environment variables are:
 | `WENDY_E2E_TEST_FILTERS` | Comma-separated test filters. |
 | `WENDY_E2E_CLI_RUN_DIR` / `WENDY_E2E_AGENT_RUN_DIR` | Role run directories consumed by scenarios. |
 | `WENDY_E2E_CLI_BIN_DIR` | Directory containing the managed `wendy` binary. |
-| `WENDY_E2E_CLI_AUTH_CONFIG_PATH` | Wendy CLI auth config fixture for authenticated tests. |
+| `WENDY_E2E_CLI_AUTH_CONFIG_PATH` | Dedicated Wendy CLI auth config fixture for authenticated tests. |
 | `WENDY_E2E_CLI_ADDRESS` | Optional SSH host for the CLI machine. |
 | `WENDY_E2E_AGENT_ADDRESS` | Optional SSH host for the agent/device machine. |
 | `WENDY_E2E_CLI_OS` / `WENDY_E2E_AGENT_OS` | Override machine OS metadata. |
@@ -98,8 +103,10 @@ Sandbox isolation modes:
   Existing machine state is used directly.
 
 Authenticated scenarios copy `WENDY_E2E_CLI_AUTH_CONFIG_PATH` into the test
-sandbox. If it is not set, the runner uses the current CLI user's
-`~/.wendy/config.json` where possible.
+sandbox. Prefer a dedicated E2E fixture config instead of your live
+`~/.wendy/config.json`; do not commit fixture configs, and avoid putting
+credential-related values directly in shell history. If the variable is not set,
+the runner uses the current CLI user's `~/.wendy/config.json` where possible.
 
 ## Artifacts
 
@@ -171,13 +178,14 @@ directory:
 captured `sh()` calls in order for manual debugging.
 
 AI review files are Markdown. Top-level `review.md` is the compact aggregate
-that can be posted as a CI comment. Attempt and AI review JSON schemas live in
-`Support/Schemas/`.
+that can be posted as a CI comment. Attempt, overview, and AI review JSON
+schemas live in `Support/Schemas/`.
 
 ### Reference directory
 
 `make e2e-reference` renders static reference documentation from the suite and
-test documentation comments, independent of any test run:
+test documentation comments, independent of any test run. It writes local files
+and opens `index.html`; it does not start a web server or network listener.
 
 ```text
 Build/Reference/
@@ -414,7 +422,8 @@ RUN_ID="current"
 RUN_DIR="$PWD/.build/e2e/$RUN_ID"
 CLI_RUN_DIR="$HOME/.wendy/e2e/$RUN_ID/cli"
 CLI_BIN_DIR="$PWD/../../go/bin"
-CLI_AUTH_CONFIG_PATH="$HOME/.wendy/config.json"
+# Use a dedicated E2E auth fixture, not your live ~/.wendy/config.json.
+CLI_AUTH_CONFIG_PATH="$HOME/.wendy/e2e-config.json"
 AGENT_RUN_DIR="$HOME/.wendy/e2e/$RUN_ID/agent"
 
 rm -rf "$RUN_DIR" "$CLI_RUN_DIR" "$AGENT_RUN_DIR"
@@ -432,4 +441,6 @@ swift test --filter WendyE2ETests
 ```
 
 Prefer the wrapper for normal development; use this only when debugging the
-harness itself.
+harness itself. Authenticated tests copy `CLI_AUTH_CONFIG_PATH` into sandbox
+directories, so keep the fixture out of version control and remove stale
+sandboxes when they are no longer needed.

@@ -5,7 +5,9 @@ package commands
 import (
 	"archive/zip"
 	"bufio"
+	"compress/gzip"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -970,6 +972,69 @@ func resolveOSImage(deviceKey string, img *imageInfo) (string, error) {
 	return imgCached, nil
 }
 
+// gzipReadCloser wraps a gzip.Reader so that closing it also closes the
+// underlying file, matching the io.ReadCloser contract.
+type gzipReadCloser struct {
+	gz *gzip.Reader
+	f  *os.File
+}
+
+func (g *gzipReadCloser) Read(p []byte) (int, error) { return g.gz.Read(p) }
+func (g *gzipReadCloser) Close() error {
+	err := g.gz.Close()
+	if err2 := g.f.Close(); err == nil {
+		err = err2
+	}
+	return err
+}
+
+// streamGzipImage opens a gzip-compressed image file and returns a streaming
+// reader over the decompressed bytes, plus the uncompressed size from the gzip
+// ISIZE trailer. ISIZE is stored mod 2^32, so it is only accurate for images
+// smaller than 4 GiB; larger images will show an incorrect size in the progress
+// bar but will still be written correctly.
+func streamGzipImage(path string) (io.ReadCloser, int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("opening gzip image: %w", err)
+	}
+
+	// Read the ISIZE field (last 4 LE bytes of the file) before creating the
+	// gzip reader, which advances the read position.
+	var isizeBuf [4]byte
+	var uncompressedSize int64
+	if _, seekErr := f.Seek(-4, io.SeekEnd); seekErr == nil {
+		if _, readErr := io.ReadFull(f, isizeBuf[:]); readErr == nil {
+			uncompressedSize = int64(binary.LittleEndian.Uint32(isizeBuf[:]))
+		}
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		f.Close()
+		return nil, 0, fmt.Errorf("seeking gzip image: %w", err)
+	}
+
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		f.Close()
+		return nil, 0, fmt.Errorf("creating gzip reader: %w", err)
+	}
+	return &gzipReadCloser{gz: gr, f: f}, uncompressedSize, nil
+}
+
+// isGzipFile returns true when path begins with the gzip magic bytes (0x1f 0x8b).
+// Used to detect compressed images regardless of file extension — GCS images
+// are sometimes served as .img.gz but cached under the .img extension.
+func isGzipFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var magic [2]byte
+	_, err = io.ReadFull(f, magic[:])
+	return err == nil && magic[0] == 0x1f && magic[1] == 0x8b
+}
+
 // openOSImageStream resolves the cached file for deviceKey+img, then returns
 // a streaming reader over the image bytes and the total uncompressed size.
 // The caller must Close the returned reader.
@@ -980,6 +1045,9 @@ func openOSImageStream(deviceKey string, img *imageInfo) (io.ReadCloser, int64, 
 	}
 	if strings.HasSuffix(strings.ToLower(cachePath), ".zip") {
 		return streamZipImageEntry(cachePath)
+	}
+	if isGzipFile(cachePath) {
+		return streamGzipImage(cachePath)
 	}
 	f, err := os.Open(cachePath)
 	if err != nil {
@@ -999,6 +1067,9 @@ func openOSImageStream(deviceKey string, img *imageInfo) (io.ReadCloser, int64, 
 func openLocalImageStream(imagePath string) (io.ReadCloser, int64, error) {
 	if strings.HasSuffix(strings.ToLower(imagePath), ".zip") {
 		return streamZipImageEntry(imagePath)
+	}
+	if isGzipFile(imagePath) {
+		return streamGzipImage(imagePath)
 	}
 	f, err := os.Open(imagePath)
 	if err != nil {
@@ -1171,7 +1242,33 @@ func splitEscaped(s string, sep byte) []string {
 func promptAddOneCredential(index int) (wendyconf.WifiCredential, bool, error) {
 	var c wendyconf.WifiCredential
 
-	networks, scanErr := scanLocalWifiNetworks()
+	var networks []localWifiNetwork
+	var scanErr error
+	{
+		spin := tui.NewSpinner("Scanning for nearby WiFi networks…")
+		p := tea.NewProgram(spin)
+		go func() {
+			nets, err := scanLocalWifiNetworks()
+			p.Send(tui.SpinnerDoneMsg{Result: nets, Err: err})
+		}()
+		finalModel, runErr := p.Run()
+		if runErr != nil {
+			return c, false, fmt.Errorf("scanning WiFi networks: %w", runErr)
+		}
+		sm, ok := finalModel.(tui.SpinnerModel)
+		if !ok {
+			return c, false, fmt.Errorf("scanning WiFi networks: unexpected spinner model %T", finalModel)
+		}
+		// A spinner that quit before receiving SpinnerDoneMsg means the user
+		// pressed Ctrl+C/q during the scan; treat that as a cancellation rather
+		// than silently falling through to the manual SSID prompt.
+		if !sm.Done() {
+			return c, false, ErrUserCancelled
+		}
+		result, err := sm.Result()
+		networks, _ = result.([]localWifiNetwork)
+		scanErr = err
+	}
 	if scanErr == nil && len(networks) > 0 {
 		var items []tui.PickerItem
 		for _, n := range networks {

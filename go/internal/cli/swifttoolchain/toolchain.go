@@ -168,6 +168,10 @@ func SwiftCommand(args ...string) *exec.Cmd {
 	return execCommand("swiftly", append([]string{"run", "+" + DefaultVersion, "swift"}, args...)...)
 }
 
+func ActiveSwiftCommand(args ...string) *exec.Cmd {
+	return execCommand("swift", args...)
+}
+
 func FindSwiftSDK(ctx context.Context, architecture string, stdout, stderr io.Writer) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -340,12 +344,25 @@ func FindSwiftProduct(dir string) (string, error) {
 }
 
 func FindSwiftProductWithOptions(dir, productOverride string, interactive bool) (string, error) {
+	return findSwiftProductWithOptions(dir, productOverride, interactive, SwiftCommand)
+}
+
+func FindSwiftProductWithActiveSwiftOptions(dir, productOverride string, interactive bool) (string, error) {
+	return findSwiftProductWithOptions(dir, productOverride, interactive, ActiveSwiftCommand)
+}
+
+func findSwiftProductWithOptions(
+	dir string,
+	productOverride string,
+	interactive bool,
+	command func(args ...string) *exec.Cmd,
+) (string, error) {
 	var stderr bytes.Buffer
 	if productOverride != "" {
 		return productOverride, nil
 	}
 
-	cmd := SwiftCommand("package", "dump-package")
+	cmd := command("package", "dump-package")
 	cmd.Dir = dir
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

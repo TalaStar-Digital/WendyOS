@@ -855,7 +855,7 @@ func runMacOSSwiftPMWithAgent(ctx context.Context, conn *grpcclient.AgentConnect
 		return fmt.Errorf("architecture mismatch: device is %s but host is %s", deviceArch, runtime.GOARCH)
 	}
 
-	product, err := swifttoolchain.FindSwiftProductWithOptions(cwd, opts.product, !opts.yes && isInteractiveTerminal())
+	product, err := swifttoolchain.FindSwiftProductWithActiveSwiftOptions(cwd, opts.product, !opts.yes && isInteractiveTerminal())
 	if err != nil {
 		return err
 	}

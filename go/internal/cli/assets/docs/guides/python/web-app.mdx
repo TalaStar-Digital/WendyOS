@@ -1,10 +1,10 @@
 ---
 title: Full-Stack Web App
-description: Build a full-stack web application with a Vite/React frontend and FastAPI backend on WendyOS
+description: Build a full-stack device dashboard with a React/Vite frontend and FastAPI backend on WendyOS
 language: python
 ---
 
-## Building a Full-Stack Web App
+## Building a Full-Stack Device Dashboard
 
 <Callout type="info">
   **Source Code**: The complete source code for this example is available at [github.com/wendylabsinc/samples/python/web-app](https://github.com/wendylabsinc/samples/tree/main/python/web-app)
@@ -12,35 +12,43 @@ language: python
 
 <img src="/images/web-app-example.gif" alt="Web App Demo" style={{ width: '100%', borderRadius: '8px' }} />
 
-In this guide, we'll build a complete web application with a modern React frontend (using Vite, TypeScript, and shadcn/ui) and a FastAPI backend. The app displays an animated shader background with "WendyOS" text and includes an interactive feature to fetch and display random car data from an API.
+In this guide, we'll build a complete **device dashboard**: a modern React frontend (Vite, TypeScript, Tailwind v4, shadcn/ui) backed by a FastAPI server that exposes your device's camera, audio, GPU, system info, and a persistent SQLite-backed data store. The frontend is built into static files and served directly by the backend, so the whole stack ships as a single container.
+
+The template generates the entire frontend and backend for you — you don't scaffold the UI by hand. This guide explains how the generated pieces fit together.
 
 This demonstrates how to:
-- Serve a production-built React frontend from a Python backend
-- Create API endpoints that the frontend can consume
+- Serve a production-built React SPA from a Python backend (with client-side routing)
+- Expose device capabilities (camera, audio, GPU, system) over an `/api` surface
+- Persist data to a volume that survives restarts (a cars CRUD on SQLite)
 - Deploy the entire stack as a single container to your WendyOS device
 
 ### Prerequisites
 
 - Wendy CLI installed on your development machine
-- Node.js 22+ and npm installed (for building the frontend)
-- Python 3.14 installed
 - A WendyOS device plugged in over USB or connectable over Wi-Fi
+- (Optional, for local frontend dev) Node.js 22+ and npm
 
 ## Project Structure
+
+The template generates a top-level layout like this (the frontend's shadcn/ui components are omitted for brevity):
 
 ```
 web-app/
 ├── Dockerfile
 ├── wendy.json
-├── frontend/           # Vite + React + TypeScript + shadcn/ui
-│   ├── package.json
-│   ├── src/
-│   │   ├── App.tsx
-│   │   └── components/
-│   └── ...
-└── server/             # FastAPI backend
-    ├── app.py
-    └── requirements.txt
+├── requirements.txt
+├── app/                 # FastAPI backend
+│   ├── __init__.py      # builds the FastAPI app, mounts routers, serves the SPA
+│   ├── lib/             # db.py (SQLite), devices.py (ALSA/V4L2), gst_sink.py (GStreamer)
+│   └── routes/          # data.py, camera.py, audio.py, gpu.py, system.py
+└── frontend/            # Vite + React 19 + Tailwind v4 + shadcn/ui
+    ├── package.json
+    ├── vite.config.ts
+    └── src/
+        ├── App.tsx      # sidebar layout + react-router routes
+        ├── main.tsx
+        ├── components/  # app-sidebar, shadcn/ui, etc.
+        └── pages/       # camera, audio, persistence, gpu, system
 ```
 
 ## Setting Up Your Project
@@ -56,7 +64,7 @@ web-app/
     cd web-app
     ```
 
-    The template creates `wendy.json`, the Dockerfile, frontend files, and Python backend files. The sections below explain how the generated full-stack app fits together.
+    This generates `wendy.json`, the Dockerfile, the full React frontend, and the FastAPI backend. The sections below explain how the generated full-stack app fits together.
   </Step>
 
   <Step>
@@ -66,7 +74,7 @@ web-app/
     wendy run
     ```
 
-    Wendy will build the app, ask you to select a device if one is not already configured, deploy the app, and print the URL or run output.
+    Wendy will build the app (frontend then backend), ask you to select a device if one is not already configured, deploy the app, and open your browser once it's ready.
   </Step>
 </Steps>
 
@@ -76,240 +84,208 @@ web-app/
   <Step>
     ### Generated Frontend
 
-    The template includes a Vite React TypeScript frontend:
-
-    ```bash
-    cd frontend
-    npm create vite@latest . -- --template react-ts
-    npm install
-    npm install -D tailwindcss @tailwindcss/vite
-    ```
-
-    Initialize shadcn/ui:
-
-    ```bash
-    npx shadcn@latest init --defaults
-    npx shadcn@latest add button table
-    ```
-  </Step>
-
-  <Step>
-    ### Generated Frontend App
-
-    The generated `src/App.tsx` drives the browser UI:
+    The frontend is a Vite + React 19 + Tailwind v4 app using shadcn/ui. It's a sidebar dashboard wired up with `react-router-dom` v7. The default route redirects to `/camera`:
 
     ```tsx
-    import { useState } from "react";
-    import { Button } from "@/components/ui/button";
-    import {
-      Table,
-      TableBody,
-      TableCell,
-      TableHead,
-      TableHeader,
-      TableRow,
-    } from "@/components/ui/table";
+    import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+    import { AppSidebar } from "@/components/app-sidebar"
+    import { SiteHeader } from "@/components/site-header"
+    import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 
-    interface Car {
-      name: string;
-      make: string;
-      year: number;
-      color: string;
-      createdAt: string;
-    }
+    import CameraPage from "@/pages/camera"
+    import AudioPage from "@/pages/audio"
+    import PersistencePage from "@/pages/persistence"
+    import GpuPage from "@/pages/gpu"
+    import SystemPage from "@/pages/system"
 
-    function App() {
-      const [cars, setCars] = useState<Car[]>([]);
-      const [loading, setLoading] = useState(false);
-
-      const fetchCar = async () => {
-        setLoading(true);
-        try {
-          const response = await fetch("/api/random-car");
-          const car: Car = await response.json();
-          setCars((prev) => [car, ...prev].slice(0, 10));
-        } catch (error) {
-          console.error("Failed to fetch car:", error);
-        } finally {
-          setLoading(false);
-        }
-      };
-
+    export default function App() {
       return (
-        <div className="flex min-h-screen w-full flex-col items-center bg-blue-700 p-8">
-          <h1 className="text-7xl font-semibold text-white mb-8">WendyOS</h1>
-
-          <Button
-            onClick={fetchCar}
-            disabled={loading}
-            size="lg"
-            variant="secondary"
-          >
-            {loading ? "Fetching..." : "Fetch Car"}
-          </Button>
-
-          {cars.length > 0 && (
-            <div className="mt-8 w-full max-w-4xl rounded-lg bg-white/10 p-4">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-white/20">
-                    <TableHead className="text-white">Name</TableHead>
-                    <TableHead className="text-white">Make</TableHead>
-                    <TableHead className="text-white">Year</TableHead>
-                    <TableHead className="text-white">Color</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {cars.map((car, index) => (
-                    <TableRow key={index} className="border-white/20">
-                      <TableCell className="text-white">{car.name}</TableCell>
-                      <TableCell className="text-white">{car.make}</TableCell>
-                      <TableCell className="text-white">{car.year}</TableCell>
-                      <TableCell className="text-white">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-4 h-4 rounded"
-                            style={{ backgroundColor: car.color }}
-                          />
-                          {car.color}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </div>
-      );
+        <BrowserRouter>
+          <SidebarProvider>
+            <AppSidebar variant="inset" />
+            <SidebarInset>
+              <SiteHeader />
+              <Routes>
+                <Route path="/" element={<Navigate to="/camera" replace />} />
+                <Route path="/camera" element={<CameraPage />} />
+                <Route path="/audio" element={<AudioPage />} />
+                <Route path="/persistence" element={<PersistencePage />} />
+                <Route path="/gpu" element={<GpuPage />} />
+                <Route path="/system" element={<SystemPage />} />
+              </Routes>
+            </SidebarInset>
+          </SidebarProvider>
+        </BrowserRouter>
+      )
     }
-
-    export default App;
     ```
 
-    Build the frontend:
+    Each page calls the matching backend route — for example the **Persistence** page does a full cars CRUD against `/api/cars`:
 
-    ```bash
-    npm run build
-    cd ..
+    ```tsx
+    // create
+    await fetch("/api/cars", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ make, model, color, year }),
+    })
+
+    // read
+    const cars = await (await fetch("/api/cars")).json()
+
+    // update / delete
+    await fetch(`/api/cars/${id}`, { method: "PUT", /* ... */ })
+    await fetch(`/api/cars/${id}`, { method: "DELETE" })
     ```
+
+    The **camera** and **audio** pages connect to WebSockets (`/api/camera/stream`, `/api/audio/stream`); the **gpu** and **system** pages poll `/api/gpu` and `/api/system`.
+
+    <Callout type="info">
+      **No manual scaffolding**: The template ships the entire frontend (Vite config, Tailwind, shadcn/ui components, pages). You do not run `npm create vite` or `npx shadcn add` yourself — it's already there. The Dockerfile builds it for you.
+    </Callout>
   </Step>
 
   <Step>
     ### Generated FastAPI Backend
 
-    The generated `server/requirements.txt` lists:
+    The backend lives under `app/`. The `requirements.txt` is minimal — GStreamer comes from system packages installed in the Dockerfile:
 
     ```txt
-    fastapi
+    fastapi==0.135.3
     uvicorn[standard]
     ```
 
-    The generated `server/app.py` handles the API:
+    `app/__init__.py` builds the FastAPI app (exposed as `api`), initializes GStreamer, mounts each router under `/api`, and serves the built SPA from `./static`, falling back to `index.html` for client-side routes:
 
     ```python
-    import os
-    import random
-    from datetime import datetime, timezone
+    import threading
     from pathlib import Path
+
+    import gi
+    gi.require_version("Gst", "1.0")
+    gi.require_version("GstApp", "1.0")
+    from gi.repository import Gst, GLib
     from fastapi import FastAPI
-    from fastapi.staticfiles import StaticFiles
-    from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.responses import FileResponse
 
-    app = FastAPI()
+    from app.routes import data, camera, audio, gpu, system
 
-    CAR_NAMES = ["Honda", "Toyota", "Ford", "Chevrolet", "BMW", "Mercedes", "Audi", "Tesla", "Nissan", "Mazda"]
-    CAR_MAKES = ["Civic", "Camry", "Mustang", "Corvette", "M3", "C-Class", "A4", "Model 3", "Altima", "MX-5"]
+    Gst.init(None)
+    _glib_loop = GLib.MainLoop()
+    threading.Thread(target=_glib_loop.run, daemon=True).start()
 
-    def random_car():
-        return {
-            "name": random.choice(CAR_NAMES),
-            "make": random.choice(CAR_MAKES),
-            "year": random.randint(1990, 2024),
-            "color": f"#{random.randint(0, 0xFFFFFF):06X}",
-            "createdAt": datetime.now(timezone.utc).isoformat(),
-        }
+    api = FastAPI()
 
-    # Determine frontend dist path
-    container_path = Path("/app/frontend/dist")
-    local_path = Path(__file__).parent.parent / "frontend" / "dist"
+    api.include_router(data.router, prefix="/api")
+    api.include_router(camera.router, prefix="/api")
+    api.include_router(audio.router, prefix="/api")
+    api.include_router(gpu.router, prefix="/api")
+    api.include_router(system.router, prefix="/api")
 
-    if os.environ.get("FRONTEND_DIST"):
-        frontend_dist = os.environ["FRONTEND_DIST"]
-    elif container_path.exists():
-        frontend_dist = str(container_path)
-    else:
-        frontend_dist = str(local_path)
+    _static_dir = Path(__file__).resolve().parent.parent / "static"
 
-    hostname = os.environ.get("WENDY_HOSTNAME", "0.0.0.0")
-
-    print(f"Serving frontend from: {frontend_dist}")
-
-    # API routes
-    @app.get("/api/random-car")
-    async def get_random_car():
-        return JSONResponse(random_car())
-
-    # Mount static files for assets
-    assets_path = Path(frontend_dist) / "assets"
-    if assets_path.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
-
-    @app.get("/{full_path:path}")
+    @api.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        """Serve the SPA - return index.html for all routes"""
-        file_path = Path(frontend_dist) / full_path
+        """Serve static files, fall back to index.html for SPA routing."""
+        file_path = _static_dir / full_path
         if file_path.is_file():
             return FileResponse(file_path)
-        return FileResponse(f"{frontend_dist}/index.html")
+        return FileResponse(_static_dir / "index.html")
+    ```
 
-    if __name__ == "__main__":
-        import uvicorn
-        print(f"Server running on http://{hostname}:3002")
-        # Bind to 0.0.0.0 to accept connections from all interfaces (required for container networking)
-        uvicorn.run(app, host="0.0.0.0", port=3002)
+    The routers expose:
+
+    - **`data.py`** — a cars CRUD (`GET/POST /api/cars`, `GET/PUT/DELETE /api/cars/{id}`) backed by SQLite at `/data/cars.db`
+    - **`system.py`** — `GET /api/system` returning hostname, platform, architecture, uptime, memory, disk, and CPU info from `/proc` and `shutil`
+    - **`gpu.py`** — `GET /api/gpu`, querying `nvidia-smi` (with a thermal-zone fallback for ARM GPUs)
+    - **`camera.py`** — `GET /api/cameras` plus a `/api/camera/stream` WebSocket (MJPEG over GStreamer)
+    - **`audio.py`** — `GET /api/microphones`, `GET /api/speakers`, plus an `/api/audio/stream` WebSocket (PCM over GStreamer)
+
+    The cars CRUD persists to a SQLite database that's created on demand:
+
+    ```python
+    DB_PATH = Path("/data/cars.db")
+
+    def get_db() -> sqlite3.Connection:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cars (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                make TEXT NOT NULL,
+                model TEXT NOT NULL,
+                color TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT
+            )
+        """)
+        conn.commit()
+        return conn
     ```
 
     <Callout type="info">
-      **API Endpoint**: The `/api/random-car` endpoint returns a randomly generated car object with name, make, year, color, and timestamp. The frontend fetches this data and displays the last 10 cars in a table.
+      **Persistence**: `/data` is backed by the `persist` entitlement in `wendy.json`, so cars you add survive app restarts and redeploys.
     </Callout>
   </Step>
 
   <Step>
     ### Generated Dockerfile
 
-    The generated project includes a Dockerfile:
+    The Dockerfile is multi-stage: it builds the React frontend with Node, then assembles a Debian-based Python runtime with GStreamer (camera/audio), ALSA, and V4L tools. The built frontend is copied into the image as `./static`, and the app is served by `uvicorn app:api`:
 
     ```dockerfile
-    # Build frontend
-    FROM node:22-slim AS frontend-builder
-
-    WORKDIR /app/frontend
+    # Stage 1 — Build React frontend
+    FROM node:22-slim AS frontend
+    WORKDIR /frontend
     COPY frontend/package*.json ./
-    RUN npm ci
+    RUN npm install
     COPY frontend/ ./
     RUN npm run build
 
-    # Runtime stage
-    FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
-
+    # Stage 2 — FastAPI backend with GStreamer for camera/audio
+    FROM debian:bookworm-slim
     WORKDIR /app
+    ENV PYTHONUNBUFFERED=1
 
-    # Install dependencies during build
-    RUN uv pip install --system fastapi "uvicorn[standard]"
+    RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-venv \
+        python3-gi \
+        gir1.2-gst-plugins-base-1.0 \
+        gir1.2-gst-plugins-bad-1.0 \
+        gir1.2-gstreamer-1.0 \
+        gstreamer1.0-tools \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad \
+        gstreamer1.0-plugins-ugly \
+        gstreamer1.0-libav \
+        gstreamer1.0-alsa \
+        alsa-utils \
+        v4l-utils \
+        && rm -rf /var/lib/apt/lists/*
 
-    # Copy server files
-    COPY server/requirements.txt ./
-    COPY server/app.py ./
+    RUN python3 -m venv --system-site-packages /app/venv
+    ENV PATH="/app/venv/bin:$PATH"
 
-    # Copy the built frontend
-    COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
 
-    ENV FRONTEND_DIST=/app/frontend/dist
+    COPY app/ ./app/
+    COPY --from=frontend /frontend/dist ./static
 
-    EXPOSE 3002
+    ARG WENDY_DEVICE_TYPE
+    ARG WENDY_DEBUG=false
+    ENV WENDY_DEVICE_TYPE=${WENDY_DEVICE_TYPE}
+    ENV WENDY_DEBUG=${WENDY_DEBUG}
+    RUN if [ "$WENDY_DEBUG" = "true" ]; then pip install --no-cache-dir debugpy; fi
 
-    CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "3002"]
+    EXPOSE 8000
+
+    CMD ["/app/venv/bin/uvicorn", "app:api", "--host", "0.0.0.0", "--port", "8000"]
     ```
 
     <Callout type="warning">
@@ -320,28 +296,49 @@ web-app/
   <Step>
     ### Generated wendy.json
 
-    Review the generated `wendy.json` file:
+    The generated `wendy.json` requests the entitlements the dashboard needs — host networking, camera, audio, GPU, and a persistent volume mounted at `/data`:
 
     ```json
     {
-      "appId": "com.example.python-web-app",
-      "version": "0.0.1",
-      "entitlements": [
-        { "type": "network" }
-      ],
-      "readiness": {
-        "tcpSocket": { "port": 3002 },
-        "timeoutSeconds": 30
-      },
-      "hooks": {
-        "postStart": {
-          "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:3002"
+        "appId": "web-app",
+        "version": "0.1.0",
+        "entitlements": [
+            {
+                "type": "network",
+                "mode": "host"
+            },
+            {
+                "type": "camera"
+            },
+            {
+                "type": "audio"
+            },
+            {
+                "type": "gpu"
+            },
+            {
+                "type": "persist",
+                "name": "web-app-data",
+                "path": "/data"
+            }
+        ],
+        "readiness": {
+            "tcpSocket": { "port": 8000 },
+            "timeoutSeconds": 30
+        },
+        "hooks": {
+            "postStart": {
+                "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:8000"
+            }
         }
-      }
     }
     ```
 
-    The `readiness` probe tells the CLI to wait until port `3002` is accepting connections before proceeding. The `postStart` hook automatically opens your browser once the app is ready.
+    - **network (host mode)**: binds directly to the device's network so the dashboard is reachable
+    - **camera / audio / gpu**: grant access to webcams, microphones/speakers, and the GPU for the corresponding dashboard pages
+    - **persist**: mounts a named volume (`web-app-data`) at `/data`, where the cars SQLite database lives
+    - **readiness**: waits until port `8000` accepts connections before the `postStart` hook runs
+    - **postStart**: automatically opens your browser once the app is ready
     </Step>
 </Steps>
 
@@ -363,8 +360,7 @@ wendy run
 ✔︎ Container built and uploaded successfully!
 ✔ Success
   Started app
-Server running on http://wendyos-true-probe.local:3002
-Serving frontend from: /app/frontend/dist
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
 ## Test Your Web App
@@ -372,30 +368,35 @@ Serving frontend from: /app/frontend/dist
 Your browser will open automatically once the app is ready, thanks to the `postStart` hook. If it doesn't, navigate to:
 
 ```
-http://wendyos-true-probe.local:3002
+http://wendyos-true-probe.local:8000
 ```
 
 <Callout type="warning">
   **Replace the hostname**: Each WendyOS device has a unique hostname. Replace `wendyos-true-probe` with your device's actual hostname shown in the CLI output.
 </Callout>
 
-You should see:
-- The "WendyOS" heading
-- A "Fetch Car" button
-- When you click the button, a table appears showing randomly generated car data
-- Each click adds a new car to the top of the table (keeping the last 10)
+You should see the dashboard with a sidebar. The default page is **Camera**; the sidebar also links to **Audio**, **Persistence**, **GPU**, and **System**. On the Persistence page you can add, edit, and delete cars — and they'll still be there after you redeploy, thanks to the persistent volume.
 
 ## Test the API Directly
 
-You can also test the API endpoint directly:
+You can also hit the API endpoints directly. For example, fetch system info:
 
 ```bash
-curl http://wendyos-true-probe.local:3002/api/random-car
+curl http://wendyos-true-probe.local:8000/api/system
 ```
 
-Response:
-```json
-{"name":"Toyota","make":"Camry","year":2015,"color":"#A4F2C1","createdAt":"2024-01-15T10:30:00.000Z"}
+Or list the persisted cars:
+
+```bash
+curl http://wendyos-true-probe.local:8000/api/cars
+```
+
+Add a car:
+
+```bash
+curl -X POST http://wendyos-true-probe.local:8000/api/cars \
+  -H "Content-Type: application/json" \
+  -d '{"make": "Tesla", "model": "Model 3", "color": "#cc0000", "year": 2024}'
 ```
 
 ## Learn More
@@ -403,16 +404,16 @@ Response:
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [Vite Documentation](https://vitejs.dev/)
 - [shadcn/ui Components](https://ui.shadcn.com/)
+- [React Router](https://reactrouter.com/)
 
 ## Next Steps
 
-Now that you have a full-stack web app running:
+Now that you have a full-stack device dashboard running:
 
-- Add more API endpoints for CRUD operations
-- Implement real-time updates with WebSockets
-- Connect to WendyOS device sensors and display data in the UI
+- Add a new page and matching `/api` router for another device capability
+- Extend the SQLite schema and CRUD for your own data model
+- Stream additional sensor data to the UI over WebSockets
 - Add authentication to protect your API
-- Use a database for persistent storage
 
 <Accordions>
   <Accordion title="Testing locally without a WendyOS device">
@@ -421,24 +422,20 @@ Now that you have a full-stack web app running:
     ### Build and Run with Docker
 
     ```bash
-    docker build -t python-web-app .
-    docker run -p 3002:3002 python-web-app
+    docker build -t web-app .
+    docker run -p 8000:8000 web-app
     ```
 
-    Then open `http://localhost:3002` in your browser.
+    Then open `http://localhost:8000` in your browser. Note that camera, audio, and GPU pages depend on hardware/devices that may not be available on your laptop; the System and Persistence pages work anywhere.
 
-    ### Run the Backend Directly
+    ### Run the Frontend in Dev Mode
 
-    For faster development iteration:
+    For faster UI iteration, run the Vite dev server (you'll still need the backend running for `/api` calls):
 
     ```bash
-    # Build the frontend first
-    cd frontend && npm run build && cd ..
-
-    # Run the backend
-    cd server
-    pip install -r requirements.txt
-    python app.py
+    cd frontend
+    npm install
+    npm run dev
     ```
   </Accordion>
 </Accordions>

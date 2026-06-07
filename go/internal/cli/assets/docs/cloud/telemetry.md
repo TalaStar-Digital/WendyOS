@@ -13,8 +13,9 @@ on top of the image's own env. Two are always present (all network modes):
 
 | Variable | Value |
 |---|---|
-| `WENDY_HOSTNAME` | The device's mDNS hostname (omitted when unresolvable). |
+| `WENDY_HOSTNAME` | For single-container apps: the device's mDNS hostname (omitted when unresolvable). For multi-service apps (`serviceName` set): `{serviceName}.local`, giving each service a distinct hostname identity. |
 | `WENDY_APP_ID` | The `appId` from `wendy.json` (omitted when empty). |
+| `WENDY_APP_GROUP` | The `appId` of the owning app. **Multi-service only** — injected when `serviceName` is non-empty so a service can discover its siblings. Absent for single-container apps. |
 
 The OpenTelemetry variables are injected **only when the app has the host
 `network` entitlement**, because the agent's local OTLP receiver listens on the

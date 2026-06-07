@@ -110,6 +110,10 @@ func (m *mockContainerdClient) GetContainerRestartPolicyLabel(_ context.Context,
 	return m.restartPolicyLabel, m.restartPolicyLabelErr
 }
 
+func (m *mockContainerdClient) ContainerIDsForApp(_ context.Context, appID string) ([]string, error) {
+	return []string{appID}, nil
+}
+
 // attachTestMock embeds mockContainerdClient and overrides StartContainerWithStdin
 // so tests can capture the appName and stdin reader passed by AttachContainer.
 type attachTestMock struct {
@@ -1047,6 +1051,72 @@ func TestStreamMCP_ContainerNotRunning(t *testing.T) {
 	}
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("expected FailedPrecondition, got %v", err)
+	}
+}
+
+// groupMock overrides ContainerIDsForApp to simulate a multi-service app.
+type groupMock struct {
+	mockContainerdClient
+	containerIDs []string
+	startedNames []string
+}
+
+func (m *groupMock) ContainerIDsForApp(_ context.Context, _ string) ([]string, error) {
+	return m.containerIDs, nil
+}
+
+func (m *groupMock) StartContainer(_ context.Context, name, _ string, _ *agentpb.RestartPolicy) (<-chan ContainerOutput, error) {
+	m.startedNames = append(m.startedNames, name)
+	ch := make(chan ContainerOutput, 1)
+	ch <- ContainerOutput{Done: true}
+	close(ch)
+	return ch, nil
+}
+
+func TestStartContainer_GroupStartsAllServices(t *testing.T) {
+	mc := &groupMock{
+		containerIDs: []string{"com.example.robot_camera", "com.example.robot_detector"},
+	}
+	mc.startOutputCh = make(chan ContainerOutput)
+	close(mc.startOutputCh)
+
+	mon := &mockMonitorRegistrar{}
+	client, cleanup := startContainerServerWithMonitor(t, mc, mon)
+	defer cleanup()
+
+	stream, err := client.StartContainer(context.Background(), &agentpb.StartContainerRequest{
+		AppName: "com.example.robot",
+	})
+	if err != nil {
+		t.Fatalf("StartContainer: %v", err)
+	}
+
+	// Expect a single Started response followed by EOF.
+	resp, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	if resp.GetStarted() == nil {
+		t.Fatalf("expected Started response, got %T", resp.GetResponseType())
+	}
+	if _, err = stream.Recv(); err != io.EOF {
+		t.Fatalf("expected EOF after Started, got %v", err)
+	}
+
+	// Both service containers must have been started individually.
+	if len(mc.startedNames) != 2 {
+		t.Fatalf("expected 2 StartContainer calls, got %d: %v", len(mc.startedNames), mc.startedNames)
+	}
+	if mc.startedNames[0] != "com.example.robot_camera" {
+		t.Errorf("first started = %q; want com.example.robot_camera", mc.startedNames[0])
+	}
+	if mc.startedNames[1] != "com.example.robot_detector" {
+		t.Errorf("second started = %q; want com.example.robot_detector", mc.startedNames[1])
+	}
+
+	// ClearExplicitStop must be called once per service.
+	if len(mon.clearStopCalls) != 2 {
+		t.Fatalf("ClearExplicitStop call count = %d; want 2", len(mon.clearStopCalls))
 	}
 }
 

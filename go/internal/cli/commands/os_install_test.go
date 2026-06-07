@@ -5,6 +5,7 @@ package commands
 import (
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -256,6 +257,94 @@ func TestStreamZipImageEntry(t *testing.T) {
 	t.Run("nonexistent file returns error", func(t *testing.T) {
 		_, _, err := streamZipImageEntry("/nonexistent/path/image.zip")
 		if err == nil {
+			t.Fatal("expected error for nonexistent file")
+		}
+	})
+}
+
+func makeTestGzip(t *testing.T, namePattern string, content []byte) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), namePattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	gw := gzip.NewWriter(f)
+	if _, err := gw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return f.Name()
+}
+
+func makeTestPlainFile(t *testing.T, namePattern string, content []byte) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), namePattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	return f.Name()
+}
+
+func TestIsGzipFile(t *testing.T) {
+	content := []byte("fake image data 12345")
+
+	t.Run("detects gzip regardless of extension", func(t *testing.T) {
+		// gzip content stored under a non-.gz name — the cache path may not
+		// retain the original .gz extension.
+		path := makeTestGzip(t, "image-*.img", content)
+		if !isGzipFile(path) {
+			t.Error("isGzipFile() = false; want true for gzip content under a .img name")
+		}
+	})
+
+	t.Run("returns false for non-gzip content", func(t *testing.T) {
+		path := makeTestPlainFile(t, "image-*.img.gz", content)
+		if isGzipFile(path) {
+			t.Error("isGzipFile() = true; want false for plain (non-gzip) content")
+		}
+	})
+
+	t.Run("returns false for nonexistent file", func(t *testing.T) {
+		if isGzipFile("/nonexistent/path/image.img.gz") {
+			t.Error("isGzipFile() = true; want false for nonexistent file")
+		}
+	})
+}
+
+func TestStreamGzipImage(t *testing.T) {
+	content := []byte("fake decompressed wendyos image payload")
+
+	t.Run("decompresses content and reports ISIZE", func(t *testing.T) {
+		path := makeTestGzip(t, "image-*.img.gz", content)
+		r, size, err := streamGzipImage(path)
+		if err != nil {
+			t.Fatalf("streamGzipImage() error = %v", err)
+		}
+		defer r.Close()
+
+		if size != int64(len(content)) {
+			t.Errorf("size = %d; want %d (gzip ISIZE trailer)", size, len(content))
+		}
+
+		got, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatalf("reading decompressed stream: %v", err)
+		}
+		if !bytes.Equal(got, content) {
+			t.Errorf("decompressed content = %q; want %q", got, content)
+		}
+	})
+
+	t.Run("nonexistent file returns error", func(t *testing.T) {
+		if _, _, err := streamGzipImage("/nonexistent/path/image.img.gz"); err == nil {
 			t.Fatal("expected error for nonexistent file")
 		}
 	})

@@ -43,6 +43,29 @@ const provisionedAgentUnauthorizedMessage = "Unauthorized. Run 'wendy auth login
 
 var errProvisionedAgentUnauthorized = errors.New(provisionedAgentUnauthorizedMessage)
 
+type provisionedAgentUnauthorizedError struct {
+	cause error
+}
+
+func newProvisionedAgentUnauthorizedError(cause error) error {
+	if cause == nil {
+		return errProvisionedAgentUnauthorized
+	}
+	return provisionedAgentUnauthorizedError{cause: cause}
+}
+
+func (e provisionedAgentUnauthorizedError) Error() string {
+	return fmt.Sprintf("%s\nLast mTLS error: %v", provisionedAgentUnauthorizedMessage, e.cause)
+}
+
+func (e provisionedAgentUnauthorizedError) Is(target error) bool {
+	return target == errProvisionedAgentUnauthorized
+}
+
+func (e provisionedAgentUnauthorizedError) Unwrap() error {
+	return e.cause
+}
+
 var getAgentVersionAtAddress = func(ctx context.Context, address string) (bool, *agentpb.GetAgentVersionResponse, error) {
 	conn, err := connectWithAutoTLS(ctx, address)
 	if err != nil {
@@ -426,7 +449,7 @@ func connectAgentAtAddress(ctx context.Context, addr string) (*grpcclient.AgentC
 }
 
 func connectAgentAtAddressWithProvisionedHint(ctx context.Context, addr string, knownProvisionedMTLS bool) (*grpcclient.AgentConnection, error) {
-	conn, err := connectWithAutoTLS(ctx, addr)
+	conn, mtlsErr, err := connectWithAutoTLSDiagnostics(ctx, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +466,7 @@ func connectAgentAtAddressWithProvisionedHint(ctx context.Context, addr string, 
 			// Running discovery after the failed probe would make the auth
 			// decision depend on a second, unrelated network observation.
 			if knownProvisionedMTLS {
-				return nil, errProvisionedAgentUnauthorized
+				return nil, newProvisionedAgentUnauthorizedError(mtlsErr)
 			}
 			return nil, probeErr
 		}
@@ -575,8 +598,19 @@ func connectFromSelectedDevice(target *SelectedDevice, cfg resolveConfig) (*grpc
 // the misleading "connection refused" from the plaintext port masking the real
 // cause (e.g. clock skew causing "certificate not yet valid").
 func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.AgentConnection, error) {
+	conn, _, err := connectWithAutoTLSDiagnostics(ctx, plaintextAddr)
+	return conn, err
+}
+
+func connectWithAutoTLSDiagnostics(ctx context.Context, plaintextAddr string) (*grpcclient.AgentConnection, error, error) {
 	tlsDebug := os.Getenv("WENDY_TLS_DEBUG") != ""
 	allCerts := loadAllCLICerts()
+	var lastMTLSErr error
+	recordMTLSErr := func(addr string, err error) {
+		if err != nil {
+			lastMTLSErr = fmt.Errorf("%s: %w", addr, err)
+		}
+	}
 	if len(allCerts) > 0 {
 		host, portStr, _ := net.SplitHostPort(plaintextAddr)
 		if port, err := strconv.Atoi(portStr); err == nil {
@@ -602,6 +636,7 @@ func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.
 				for i := range allCerts {
 					conn, tlsErr := grpcclient.ConnectWithTLS(ctx, mtlsAddr, &allCerts[i])
 					if tlsErr != nil {
+						recordMTLSErr(mtlsAddr, tlsErr)
 						if tlsDebug {
 							fmt.Fprintf(os.Stderr, "[tls-debug] ConnectWithTLS(%s) error: %v\n", mtlsAddr, tlsErr)
 						}
@@ -614,8 +649,9 @@ func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.
 					_, probeErr := conn.AgentService.GetAgentVersion(probeCtx, &agentpb.GetAgentVersionRequest{})
 					cancel()
 					if probeErr == nil {
-						return conn, nil
+						return conn, nil, nil
 					}
+					recordMTLSErr(mtlsAddr, probeErr)
 					if tlsDebug {
 						fmt.Fprintf(os.Stderr, "[tls-debug] GetAgentVersion(%s) error: %v\n", mtlsAddr, probeErr)
 					}
@@ -634,11 +670,12 @@ func connectWithAutoTLS(ctx context.Context, plaintextAddr string) (*grpcclient.
 				}
 			}
 			if plaintextAddrCertReject || (mtlsPortCertFails > 0 && mtlsPortNonCertFails == 0) {
-				return nil, fmt.Errorf("TLS handshake rejected by device (possible clock skew or cert mismatch).\n  Check the device clock: ssh wendy@<host> 'timedatectl status'\n  For full TLS details rerun with WENDY_TLS_DEBUG=1")
+				return nil, lastMTLSErr, fmt.Errorf("TLS handshake rejected by device (possible clock skew or cert mismatch).\n  Check the device clock: ssh wendy@<host> 'timedatectl status'\n  For full TLS details rerun with WENDY_TLS_DEBUG=1")
 			}
 		}
 	}
-	return grpcclient.Connect(ctx, plaintextAddr)
+	conn, err := grpcclient.Connect(ctx, plaintextAddr)
+	return conn, lastMTLSErr, err
 }
 
 // isCertRejectionError reports whether a gRPC probe error is a server-sent TLS
