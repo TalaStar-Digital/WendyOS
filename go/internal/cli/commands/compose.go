@@ -366,8 +366,9 @@ func composeCompanionWarnings(companion *appconfig.AppConfig, composeCfg *compos
 //     container as "{appId}/{serviceName}" (WDY-878) and injects WENDY_APP_ID /
 //     WENDY_HOSTNAME correctly.
 //   - Top-level isolation and frameworks from the companion are applied to every service.
-//   - Per-service entitlements in the companion are appended to the synthesised
+//   - Top-level entitlements from the companion are appended to every service's
 //     entitlements (compose-derived network/persist entitlements are preserved).
+//   - Per-service entitlements are appended on top of the shared ones.
 //   - Per-service frameworks override the group-level frameworks for that service.
 func applyComposeCompanion(appCfg *appconfig.AppConfig, companion *appconfig.AppConfig, serviceName string) {
 	if companion == nil {
@@ -377,6 +378,7 @@ func applyComposeCompanion(appCfg *appconfig.AppConfig, companion *appconfig.App
 	appCfg.ServiceName = serviceName
 	appCfg.Isolation = companion.Isolation
 	appCfg.Frameworks = companion.Frameworks
+	appCfg.Entitlements = append(appCfg.Entitlements, companion.Entitlements...)
 	if svc, ok := companion.Services[serviceName]; ok && svc != nil {
 		appCfg.Entitlements = append(appCfg.Entitlements, svc.Entitlements...)
 		if svc.Frameworks != nil {

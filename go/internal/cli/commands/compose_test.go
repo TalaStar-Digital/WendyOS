@@ -486,9 +486,10 @@ func TestApplyComposeCompanion(t *testing.T) {
 		}
 	})
 
-	t.Run("appends per-service entitlements", func(t *testing.T) {
+	t.Run("appends shared then per-service entitlements", func(t *testing.T) {
 		companion := &appconfig.AppConfig{
-			AppID: "com.example.robot",
+			AppID:        "com.example.robot",
+			Entitlements: []appconfig.Entitlement{{Type: appconfig.EntitlementBluetooth}},
 			Services: map[string]*appconfig.ServiceConfig{
 				"camera": {
 					Entitlements: []appconfig.Entitlement{
@@ -500,8 +501,9 @@ func TestApplyComposeCompanion(t *testing.T) {
 		}
 		got := baseAppCfg()
 		applyComposeCompanion(got, companion, "camera")
-		if len(got.Entitlements) != 3 {
-			t.Fatalf("want 3 entitlements (1 compose + 2 companion), got %d: %+v", len(got.Entitlements), got.Entitlements)
+		// 1 compose + 1 shared + 2 per-service = 4
+		if len(got.Entitlements) != 4 {
+			t.Fatalf("want 4 entitlements (1 compose + 1 shared + 2 per-service), got %d: %+v", len(got.Entitlements), got.Entitlements)
 		}
 	})
 
