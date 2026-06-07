@@ -1,6 +1,9 @@
 package oci
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // JoinGroupNamespaces modifies spec so the container joins the Linux namespaces
 // owned by the primary container (identified by primaryPID).
@@ -32,7 +35,15 @@ func JoinGroupNamespaces(spec *Spec, primaryPID uint32, isolation string) error 
 
 	for i, ns := range spec.Linux.Namespaces {
 		if join[ns.Type] {
-			spec.Linux.Namespaces[i].Path = fmt.Sprintf("/proc/%d/ns/%s", primaryPID, ns.Type)
+			nsPath := fmt.Sprintf("/proc/%d/ns/%s", primaryPID, ns.Type)
+			// Verify the namespace path exists before writing it into the spec.
+			// An absent path means the primary container has already exited;
+			// fail fast rather than silently joining a recycled PID's namespace
+			// (SOC2-CC6, NIST-SC-7: PID-reuse defence-in-depth).
+			if _, err := os.Lstat(nsPath); err != nil {
+				return fmt.Errorf("JoinGroupNamespaces: namespace path %q not available (primary container exited?): %w", nsPath, err)
+			}
+			spec.Linux.Namespaces[i].Path = nsPath
 		}
 	}
 	return nil

@@ -8,7 +8,8 @@ import (
 )
 
 func TestBuildCNIConfig(t *testing.T) {
-	cfg := buildBridgeCNIConfig("com.example.myapp", "10.12.186.224/28")
+	subnet := allocateSubnet("com.example.myapp")
+	cfg := buildBridgeCNIConfig("com.example.myapp", subnet)
 	var m map[string]interface{}
 	if err := json.Unmarshal([]byte(cfg), &m); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
@@ -31,8 +32,8 @@ func TestBuildCNIConfig(t *testing.T) {
 	if ipam["type"] != "host-local" {
 		t.Errorf("ipam.type = %q, want host-local", ipam["type"])
 	}
-	if ipam["subnet"] != "10.12.186.224/28" {
-		t.Errorf("ipam.subnet = %q, want 10.12.186.224/28", ipam["subnet"])
+	if ipam["subnet"] != subnet {
+		t.Errorf("ipam.subnet = %q, want %q", ipam["subnet"], subnet)
 	}
 }
 
@@ -77,14 +78,32 @@ func TestAllocateSubnet(t *testing.T) {
 }
 
 func TestValidateCNIInputs(t *testing.T) {
-	if err := validateCNIInputs("com.example.app", "com.example.app@svc"); err != nil {
+	validNetns := "/proc/1234/ns/net"
+	validFD := "/proc/self/fd/5"
+
+	if err := validateCNIInputs("com.example.app", "com.example.app@svc", validNetns); err != nil {
 		t.Errorf("valid inputs rejected: %v", err)
 	}
-	if err := validateCNIInputs("..", "container"); err == nil {
+	if err := validateCNIInputs("com.example.app", "com.example.app@svc", validFD); err != nil {
+		t.Errorf("fd-style netnsPath rejected: %v", err)
+	}
+	if err := validateCNIInputs("..", "container", validNetns); err == nil {
 		t.Error("pure-dot appID should be rejected")
 	}
-	if err := validateCNIInputs("valid", ""); err == nil {
+	if err := validateCNIInputs("valid", "", validNetns); err == nil {
 		t.Error("empty containerID should be rejected")
+	}
+	if err := validateCNIInputs("valid", "bad\x00id", validNetns); err == nil {
+		t.Error("containerID with NUL should be rejected")
+	}
+	if err := validateCNIInputs("valid", "bad\nid", validNetns); err == nil {
+		t.Error("containerID with LF should be rejected")
+	}
+	if err := validateCNIInputs("valid", "ctr", "/etc/passwd"); err == nil {
+		t.Error("arbitrary netnsPath should be rejected")
+	}
+	if err := validateCNIInputs("valid", "ctr", "/proc/abc/ns/net"); err == nil {
+		t.Error("non-numeric PID in netnsPath should be rejected")
 	}
 }
 

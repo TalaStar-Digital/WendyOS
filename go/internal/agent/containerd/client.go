@@ -886,15 +886,33 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 		}
 	}
 
+	// Anchor the network namespace with an open fd BEFORE releasing the mutex.
+	// This eliminates the TOCTOU race where a concurrent StopContainer could
+	// recycle the PID between mutex release and CNI ADD, causing the plugin to
+	// operate on the wrong process's netns (SOC2-CC6, NIST-SC-7, ISO27001-A.8).
+	var netnsRef *os.File
+	if isolation == "isolated" && serviceName != "" {
+		nsPath := fmt.Sprintf("/proc/%d/ns/net", task.Pid())
+		var nsErr error
+		netnsRef, nsErr = os.Open(nsPath)
+		if nsErr != nil {
+			c.logger.Warn("could not anchor netns fd before mutex release; CNI ADD skipped",
+				zap.String("app_id", appID), zap.Error(nsErr))
+		}
+	}
+
 	// Release the mutex before launching the streaming goroutine, which does
 	// not need it (it only reads from pipes).
 	muHeld = false
 	c.mu.Unlock()
 
 	// CNI ADD for isolated multi-service apps: assign IP and update /etc/hosts.
-	if isolation == "isolated" && serviceName != "" {
-		netnsPath := fmt.Sprintf("/proc/%d/ns/net", task.Pid())
+	// The netnsRef fd anchors the namespace so PID recycling cannot redirect
+	// the CNI plugin to an unrelated process's network namespace.
+	if isolation == "isolated" && serviceName != "" && netnsRef != nil {
+		netnsPath := fmt.Sprintf("/proc/self/fd/%d", netnsRef.Fd())
 		ip, cniErr := c.CNIAdd(ctx, appID, appName, netnsPath)
+		netnsRef.Close()
 		if cniErr != nil {
 			c.logger.Error("CNI ADD failed", zap.String("app_id", appID), zap.Error(cniErr))
 		} else {
@@ -1563,6 +1581,11 @@ func (c *Client) StopContainer(ctx context.Context, appID string) error {
 		}
 	}
 	c.clearPrimaryPID(appID)
+	// Release per-app metadata to prevent unbounded map growth on devices with
+	// many app lifecycle cycles (SOC2-CC8, ISO27001-A.12).
+	delete(c.appServices, appID)
+	delete(c.appIsolation, appID)
+	delete(c.serviceIPs, appID)
 	return errors.Join(errs...)
 }
 
