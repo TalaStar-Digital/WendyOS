@@ -252,7 +252,7 @@ func TestComposeAppConfig(t *testing.T) {
 
 	t.Run("ports synthesise network entitlement", func(t *testing.T) {
 		svc := parse(t, "services:\n  svc:\n    ports:\n      - \"8080:80\"\n      - \"9000\"\n")
-		cfg := composeAppConfig("proj", "svc", svc)
+		cfg := composeAppConfig("proj", "svc", svc, 1)
 		if cfg.AppID != "proj-svc" {
 			t.Fatalf("appID: %s", cfg.AppID)
 		}
@@ -269,7 +269,7 @@ func TestComposeAppConfig(t *testing.T) {
 
 	t.Run("network_mode host overrides ports", func(t *testing.T) {
 		svc := parse(t, "services:\n  svc:\n    network_mode: host\n    ports:\n      - \"80:80\"\n")
-		cfg := composeAppConfig("proj", "svc", svc)
+		cfg := composeAppConfig("proj", "svc", svc, 1)
 		var found bool
 		for _, e := range cfg.Entitlements {
 			if e.Type == appconfig.EntitlementNetwork && e.Mode == "host" {
@@ -283,7 +283,7 @@ func TestComposeAppConfig(t *testing.T) {
 
 	t.Run("named volumes become persist entitlements; bind mounts skipped", func(t *testing.T) {
 		svc := parse(t, "services:\n  svc:\n    volumes:\n      - data:/var/lib\n      - ./host:/in/container\n      - /abs/host:/in/container\n      - cache:/cache:ro\n")
-		cfg := composeAppConfig("proj", "svc", svc)
+		cfg := composeAppConfig("proj", "svc", svc, 1)
 		var persists []appconfig.Entitlement
 		for _, e := range cfg.Entitlements {
 			if e.Type == appconfig.EntitlementPersist {
@@ -296,6 +296,31 @@ func TestComposeAppConfig(t *testing.T) {
 		names := map[string]string{persists[0].Name: persists[0].Path, persists[1].Name: persists[1].Path}
 		if names["data"] != "/var/lib" || names["cache"] != "/cache" {
 			t.Fatalf("unexpected persist mapping: %+v", names)
+		}
+	})
+
+	t.Run("multi-service groups under projectName without companion", func(t *testing.T) {
+		emptySvc := parse(t, "services:\n  api:\n    image: nginx\n")
+		api := composeAppConfig("myapp", "api", emptySvc, 2)
+		if api.AppID != "myapp" {
+			t.Fatalf("multi-service appID: want %q, got %q", "myapp", api.AppID)
+		}
+		if api.ServiceName != "api" {
+			t.Fatalf("multi-service ServiceName: want %q, got %q", "api", api.ServiceName)
+		}
+		if api.ContainerName() != "myapp_api" {
+			t.Fatalf("multi-service ContainerName: want %q, got %q", "myapp_api", api.ContainerName())
+		}
+	})
+
+	t.Run("single-service keeps legacy appID without companion", func(t *testing.T) {
+		emptySvc := parse(t, "services:\n  web:\n    image: nginx\n")
+		cfg := composeAppConfig("myapp", "web", emptySvc, 1)
+		if cfg.AppID != "myapp-web" {
+			t.Fatalf("single-service appID: want %q, got %q", "myapp-web", cfg.AppID)
+		}
+		if cfg.ServiceName != "" {
+			t.Fatalf("single-service ServiceName: want empty, got %q", cfg.ServiceName)
 		}
 	})
 }

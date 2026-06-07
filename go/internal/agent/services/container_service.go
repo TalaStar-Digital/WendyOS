@@ -242,7 +242,55 @@ func (s *ContainerService) RunContainer(req *agentpb.RunContainerLayersRequest, 
 
 func (s *ContainerService) StartContainer(req *agentpb.StartContainerRequest, stream grpc.ServerStreamingServer[agentpb.RunContainerLayersResponse]) error {
 	appName := req.GetAppName()
-	return s.streamContainerOutput(stream.Context(), appName, postStartAgentHookFromContext(stream.Context()), req.GetRestartPolicy(), stream)
+	ctx := stream.Context()
+
+	// Multi-service groups: start each service container without streaming.
+	// Streaming output from multiple containers concurrently is not supported;
+	// group start behaves like --detach for every service.
+	ids, err := s.containerd.ContainerIDsForApp(ctx, appName)
+	if err == nil && len(ids) > 1 {
+		return s.startGroup(ctx, appName, ids, req.GetRestartPolicy(), stream)
+	}
+
+	return s.streamContainerOutput(ctx, appName, postStartAgentHookFromContext(ctx), req.GetRestartPolicy(), stream)
+}
+
+// startGroup starts each service container in a multi-service app in detach
+// mode and sends a single Started response. Output from individual services
+// is discarded; use wendy device logs to tail per-service logs.
+func (s *ContainerService) startGroup(
+	ctx context.Context,
+	appName string,
+	containerIDs []string,
+	restartPolicy *agentpb.RestartPolicy,
+	stream grpc.ServerStreamingServer[agentpb.RunContainerLayersResponse],
+) error {
+	unlock := s.appMu.lockApp(appName)
+	defer unlock()
+
+	for _, id := range containerIDs {
+		outputCh, startErr := s.containerd.StartContainer(ctx, id, "", restartPolicy)
+		if startErr != nil {
+			return status.Errorf(codes.Internal, "failed to start service %q: %v", id, startErr)
+		}
+		// Drain the output channel in the background so the containerd goroutine
+		// does not block. The container runs independently after this.
+		go func(ch <-chan ContainerOutput) {
+			for range ch {
+			}
+		}(outputCh)
+
+		if s.monitor != nil {
+			s.monitor.ClearExplicitStop(id)
+		}
+		s.registerContainerWithMonitor(ctx, id, restartPolicy)
+	}
+
+	return stream.Send(&agentpb.RunContainerLayersResponse{
+		ResponseType: &agentpb.RunContainerLayersResponse_Started_{
+			Started: &agentpb.RunContainerLayersResponse_Started{},
+		},
+	})
 }
 
 func postStartAgentHookFromContext(ctx context.Context) string {

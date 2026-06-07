@@ -276,8 +276,21 @@ func parseComposeVolume(v string) (source, target, mode string) {
 // composeAppConfig builds an AppConfig for a compose service.
 // It synthesises network entitlements from ports/network_mode and persist
 // entitlements from named volumes.
-func composeAppConfig(projectName, serviceName string, svc composeService) *appconfig.AppConfig {
-	appID := projectName + "-" + serviceName
+//
+// numServices is the total number of services in the compose file. When
+// numServices > 1 and no companion wendy.json overrides the appID, all
+// services are grouped under the project name (appID = projectName,
+// ServiceName = serviceName). Single-service apps keep the legacy
+// "projectName-serviceName" appID so existing deployments are unaffected.
+func composeAppConfig(projectName, serviceName string, svc composeService, numServices int) *appconfig.AppConfig {
+	var appID string
+	var svcName string
+	if numServices > 1 {
+		appID = projectName
+		svcName = serviceName
+	} else {
+		appID = projectName + "-" + serviceName
+	}
 
 	var entitlements []appconfig.Entitlement
 
@@ -336,6 +349,7 @@ func composeAppConfig(projectName, serviceName string, svc composeService) *appc
 
 	return &appconfig.AppConfig{
 		AppID:        appID,
+		ServiceName:  svcName,
 		Entitlements: entitlements,
 	}
 }
@@ -640,7 +654,7 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 	}
 	for _, name := range ordered {
 		svc := cfg.Services[name]
-		appCfg := composeAppConfig(projectName, name, svc)
+		appCfg := composeAppConfig(projectName, name, svc, len(cfg.Services))
 		applyComposeCompanion(appCfg, companion, name)
 
 		// Determine image: built image or declared image. Public image refs
@@ -721,11 +735,13 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 		for i := len(ordered) - 1; i >= 0; i-- {
 			name := ordered[i]
 			svc := cfg.Services[name]
-			appCfg := composeAppConfig(projectName, name, svc)
+			appCfg := composeAppConfig(projectName, name, svc, len(cfg.Services))
 			applyComposeCompanion(appCfg, companion, name)
 			cliLogln("Stopping %s...", name)
+			// Use AppID (not ContainerName) so StopContainer's label-based lookup
+			// finds the container regardless of whether a companion sets ServiceName.
 			_, _ = conn.ContainerService.StopContainer(stopCtx, &agentpb.StopContainerRequest{
-				AppName: appCfg.ContainerName(),
+				AppName: appCfg.AppID,
 			})
 			stopped++
 		}
@@ -736,7 +752,7 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 	if opts.detach {
 		for _, name := range ordered {
 			svc := cfg.Services[name]
-			appCfg := composeAppConfig(projectName, name, svc)
+			appCfg := composeAppConfig(projectName, name, svc, len(cfg.Services))
 			applyComposeCompanion(appCfg, companion, name)
 			stream, err := conn.ContainerService.StartContainer(ctx, &agentpb.StartContainerRequest{
 				AppName: appCfg.ContainerName(),
@@ -765,7 +781,7 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 
 	for _, name := range ordered {
 		svc := cfg.Services[name]
-		appCfg := composeAppConfig(projectName, name, svc)
+		appCfg := composeAppConfig(projectName, name, svc, len(cfg.Services))
 		applyComposeCompanion(appCfg, companion, name)
 
 		wg.Add(1)
