@@ -256,10 +256,7 @@ func TestWendyLabels_Basic(t *testing.T) {
 		t.Error("should not have restart policy label when policy is nil")
 	}
 
-	// Single-container apps must not get app-group or service labels.
-	if _, ok := labels[labelKeyAppGroup]; ok {
-		t.Error("single-container app must not have app-group label")
-	}
+	// Single-container apps must not get a service label.
 	if _, ok := labels[labelKeyServiceName]; ok {
 		t.Error("single-container app must not have service label")
 	}
@@ -268,9 +265,6 @@ func TestWendyLabels_Basic(t *testing.T) {
 func TestWendyLabels_MultiService(t *testing.T) {
 	labels := wendyLabels("com.example.app", "api", "2.0", nil, nil)
 
-	if v := labels[labelKeyAppGroup]; v != "com.example.app" {
-		t.Errorf("app-group label = %q; want %q", v, "com.example.app")
-	}
 	if v := labels[labelKeyServiceName]; v != "api" {
 		t.Errorf("service label = %q; want %q", v, "api")
 	}

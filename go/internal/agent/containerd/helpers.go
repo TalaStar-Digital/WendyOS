@@ -57,10 +57,6 @@ const labelKeyWendyLayer = "sh.wendy.layer"
 // relying on container-name conventions.
 const labelKeyAppID = "sh.wendy/app.id"
 
-// labelKeyAppGroup labels a multi-service container with the app ID that owns it.
-// Only set when serviceName is non-empty.
-const labelKeyAppGroup = "sh.wendy/app.group"
-
 // labelKeyServiceName is the service name for a multi-service container.
 // Set whenever appCfg.ServiceName is non-empty.
 const labelKeyServiceName = "sh.wendy/service"
@@ -191,8 +187,8 @@ func sanitizeForLog(s string, maxLen int) string {
 // wendyLabels builds the standard set of containerd labels for a Wendy-managed
 // container. These labels are used to identify, filter, and manage containers.
 //
-// When serviceName is non-empty (multi-service app), two additional labels are
-// set: labelKeyAppGroup ({appName}) and labelKeyServiceName ({serviceName}).
+// When serviceName is non-empty (multi-service app), labelKeyServiceName is
+// additionally set to serviceName.
 func wendyLabels(appName, serviceName, version string, restartPolicy *agentpb.RestartPolicy, entitlements []appconfig.Entitlement) map[string]string {
 	labels := map[string]string{
 		labelKeyAppVersion: version,
@@ -200,7 +196,6 @@ func wendyLabels(appName, serviceName, version string, restartPolicy *agentpb.Re
 	}
 
 	if serviceName != "" {
-		labels[labelKeyAppGroup] = appName
 		labels[labelKeyServiceName] = serviceName
 	}
 
