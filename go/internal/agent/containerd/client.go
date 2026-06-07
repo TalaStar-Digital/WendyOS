@@ -652,6 +652,11 @@ func (c *Client) applyCDIGPU(spec *localoci.Spec) {
 }
 
 func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentCommand string, restartPolicy *agentpb.RestartPolicy) (<-chan services.ContainerOutput, error) {
+	// Validate appName before any containerd call so a crafted value cannot
+	// reach the label filter in the containersForApp fallback path (SOC2-CC6).
+	if err := appconfig.ValidateAppID(appName); err != nil {
+		return nil, fmt.Errorf("StartContainer: invalid app name: %w", err)
+	}
 	ctx = c.withNamespace(ctx)
 
 	container, err := c.client.LoadContainer(ctx, appName)
@@ -745,6 +750,9 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 // StartContainerWithStdin is like StartContainer but attaches the provided
 // stdin reader to the container's standard input.
 func (c *Client) StartContainerWithStdin(ctx context.Context, appName string, stdin io.Reader, postStartAgentCommand string, restartPolicy *agentpb.RestartPolicy) (<-chan services.ContainerOutput, error) {
+	if err := appconfig.ValidateAppID(appName); err != nil {
+		return nil, fmt.Errorf("StartContainerWithStdin: invalid app name: %w", err)
+	}
 	ctx = c.withNamespace(ctx)
 
 	container, err := c.client.LoadContainer(ctx, appName)
@@ -858,10 +866,18 @@ func buildContainerBaseEnv(appID, serviceName string) ([]string, error) {
 		if err := appconfig.ValidateAppID(appID); err != nil {
 			return nil, fmt.Errorf("buildContainerBaseEnv: invalid appID: %w", err)
 		}
+		// Explicit fast-fail: ValidateAppID's regex rejects these, but guard
+		// explicitly at the concatenation site as well.
+		if strings.ContainsAny(appID, "\x00\n\r=\t") {
+			return nil, fmt.Errorf("buildContainerBaseEnv: appID contains forbidden characters")
+		}
 	}
 	if serviceName != "" {
 		if err := appconfig.ValidateServiceName(serviceName); err != nil {
 			return nil, fmt.Errorf("buildContainerBaseEnv: invalid serviceName: %w", err)
+		}
+		if strings.ContainsAny(serviceName, "\x00\n\r=\t") {
+			return nil, fmt.Errorf("buildContainerBaseEnv: serviceName contains forbidden characters")
 		}
 	}
 
@@ -1175,6 +1191,12 @@ func (c *Client) streamOutput(
 // dependency on container-name conventions.
 // ctx must already have the containerd namespace set.
 func (c *Client) containersForApp(ctx context.Context, appID string) ([]containerd.Container, error) {
+	// Defence-in-depth: re-validate appID at the injection site so that a future
+	// caller that bypasses the RPC entry-point validation cannot inject into the
+	// containerd filter expression (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+	if err := appconfig.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("containersForApp: invalid appID: %w", err)
+	}
 	ctrs, err := c.client.Containers(ctx, fmt.Sprintf("labels.%q==%q", labelKeyAppID, appID))
 	if err != nil {
 		return nil, fmt.Errorf("listing containers for app %q: %w", appID, err)
@@ -1266,7 +1288,13 @@ func (c *Client) stopOne(ctx context.Context, containerID string) error {
 
 // StopContainer stops all containers belonging to appID. For single-container
 // apps this is one container; for multi-service apps it stops every service.
+// c.mu is held for the full duration to prevent a concurrent
+// CreateContainerWithProgress from inserting a new service container between
+// the list query and the stop loop (TOCTOU, SOC2-CC6, NIST-AC-4).
 func (c *Client) StopContainer(ctx context.Context, appID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	ctx = c.withNamespace(ctx)
 	ctrs, err := c.containersForApp(ctx, appID)
 	if err != nil {

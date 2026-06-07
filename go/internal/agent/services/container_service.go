@@ -36,41 +36,20 @@ type ContainerService struct {
 	appMu appMutex
 }
 
-// appMutex provides per-app name mutual exclusion.
+// appMutex provides per-app name mutual exclusion. Entries are permanent
+// (never deleted) to avoid reference-counting deletion races under concurrent
+// contention (SOC2-CC6, NIST-AC-4). Memory overhead is negligible: one
+// *sync.Mutex per distinct appName seen during the process lifetime.
 type appMutex struct {
-	mu    sync.Mutex
-	locks map[string]*appLock
-}
-
-type appLock struct {
-	mu      sync.Mutex
-	waiters int
+	m sync.Map // map[string]*sync.Mutex
 }
 
 // lockApp acquires the per-app lock for appName and returns an unlock function.
 func (a *appMutex) lockApp(appName string) func() {
-	a.mu.Lock()
-	if a.locks == nil {
-		a.locks = make(map[string]*appLock)
-	}
-	l, ok := a.locks[appName]
-	if !ok {
-		l = &appLock{}
-		a.locks[appName] = l
-	}
-	l.waiters++
-	a.mu.Unlock()
-
-	l.mu.Lock()
-	return func() {
-		l.mu.Unlock()
-		a.mu.Lock()
-		l.waiters--
-		if l.waiters == 0 {
-			delete(a.locks, appName)
-		}
-		a.mu.Unlock()
-	}
+	v, _ := a.m.LoadOrStore(appName, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func NewContainerService(logger *zap.Logger, client ContainerdClient, opts ...ContainerServiceOption) *ContainerService {
@@ -569,7 +548,10 @@ func (s *ContainerService) StopContainer(ctx context.Context, req *agentpb.StopC
 	// monitor can mark each before any stop is issued. Marking only the bare
 	// appName would miss {appID}/{serviceName} entries registered by the monitor.
 	ids, err := s.containerd.ContainerIDsForApp(ctx, appName)
-	if err != nil || len(ids) == 0 {
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "resolving containers for app %q: %v", appName, err)
+	}
+	if len(ids) == 0 {
 		ids = []string{appName}
 	}
 
@@ -607,7 +589,10 @@ func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.Del
 	// {appID}/{serviceName} monitor entries alive and potentially trigger
 	// spurious restart attempts while the container is being removed.
 	ids, err := s.containerd.ContainerIDsForApp(ctx, appName)
-	if err != nil || len(ids) == 0 {
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "resolving containers for app %q: %v", appName, err)
+	}
+	if len(ids) == 0 {
 		ids = []string{appName}
 	}
 
