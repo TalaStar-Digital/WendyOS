@@ -565,6 +565,41 @@ func TestApplyComposeCompanion(t *testing.T) {
 	})
 }
 
+func TestDeduplicateEntitlements(t *testing.T) {
+	gpu := appconfig.Entitlement{Type: appconfig.EntitlementGPU}
+	cam := appconfig.Entitlement{Type: appconfig.EntitlementCamera}
+	net := appconfig.Entitlement{Type: appconfig.EntitlementNetwork, Mode: "host"}
+	persist1 := appconfig.Entitlement{Type: appconfig.EntitlementPersist, Name: "data"}
+	persist2 := appconfig.Entitlement{Type: appconfig.EntitlementPersist, Name: "logs"}
+
+	t.Run("removes exact duplicates", func(t *testing.T) {
+		got := deduplicateEntitlements([]appconfig.Entitlement{gpu, cam, gpu})
+		if len(got) != 2 {
+			t.Fatalf("want 2, got %d: %+v", len(got), got)
+		}
+	})
+
+	t.Run("preserves order, first occurrence wins", func(t *testing.T) {
+		got := deduplicateEntitlements([]appconfig.Entitlement{gpu, cam, gpu, net})
+		if len(got) != 3 || got[0].Type != appconfig.EntitlementGPU || got[1].Type != appconfig.EntitlementCamera {
+			t.Fatalf("unexpected order: %+v", got)
+		}
+	})
+
+	t.Run("distinct persist names are kept", func(t *testing.T) {
+		got := deduplicateEntitlements([]appconfig.Entitlement{persist1, persist2, persist1})
+		if len(got) != 2 {
+			t.Fatalf("want 2, got %d: %+v", len(got), got)
+		}
+	})
+
+	t.Run("empty input", func(t *testing.T) {
+		if got := deduplicateEntitlements(nil); len(got) != 0 {
+			t.Fatalf("want empty, got %+v", got)
+		}
+	})
+}
+
 func TestComposeRestartPolicy(t *testing.T) {
 	cases := []struct {
 		in   string

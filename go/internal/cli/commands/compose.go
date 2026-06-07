@@ -370,6 +370,8 @@ func composeCompanionWarnings(companion *appconfig.AppConfig, composeCfg *compos
 //     entitlements (compose-derived network/persist entitlements are preserved).
 //   - Per-service entitlements are appended on top of the shared ones.
 //   - Per-service frameworks override the group-level frameworks for that service.
+//   - Duplicate entitlements (same type+name+mode) are removed; the first
+//     occurrence wins so compose-synthesised entitlements take precedence.
 func applyComposeCompanion(appCfg *appconfig.AppConfig, companion *appconfig.AppConfig, serviceName string) {
 	if companion == nil {
 		return
@@ -385,6 +387,26 @@ func applyComposeCompanion(appCfg *appconfig.AppConfig, companion *appconfig.App
 			appCfg.Frameworks = svc.Frameworks
 		}
 	}
+	appCfg.Entitlements = deduplicateEntitlements(appCfg.Entitlements)
+}
+
+// deduplicateEntitlements returns a copy of ents with duplicates removed.
+// Two entitlements are considered duplicates when their type, name, and mode
+// are equal; the first occurrence is kept. This covers the common cases:
+//   - GPU declared in both shared and per-service sections
+//   - Network mode declared in both compose (network_mode:host) and companion
+//   - Persist volumes declared multiple times with the same name
+func deduplicateEntitlements(ents []appconfig.Entitlement) []appconfig.Entitlement {
+	seen := make(map[string]bool, len(ents))
+	out := make([]appconfig.Entitlement, 0, len(ents))
+	for _, e := range ents {
+		key := string(e.Type) + "\x00" + e.Name + "\x00" + e.Mode
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // serviceOrder returns service names sorted by depends_on so dependencies
