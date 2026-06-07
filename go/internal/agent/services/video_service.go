@@ -135,11 +135,11 @@ type nativeH264NotSupported struct{ msg string }
 func (e nativeH264NotSupported) Error() string { return e.msg }
 
 // videoFrame carries a single encoded video frame from a producer to subscribers.
-// IMMUTABLE after the call to broadcast(): the data slice is allocated once, copied
-// from the V4L2 mmap region or GStreamer pipe, and never written again. Multiple
-// subscriber goroutines may hold the same videoFrame value concurrently; each must
-// copy data before passing it to any function that might write through the pointer
-// (e.g. proto marshalling, TLS record packing). See StreamVideo for the copy site.
+// IMMUTABLE after creation: the data slice is allocated once (copied from the V4L2
+// mmap region or GStreamer pipe) and never written again. Frames are distributed as
+// *videoFrame pointers so all subscribers share the same allocation with zero copies
+// at broadcast time. stream.Send() serialises the proto synchronously before returning,
+// so reading frame.data without a per-subscriber copy is safe.
 type videoFrame struct {
 	data  []byte
 	tsNs  uint64
@@ -149,7 +149,7 @@ type videoFrame struct {
 // deviceHub multiplexes one camera producer to multiple gRPC subscribers.
 type deviceHub struct {
 	mu     sync.Mutex
-	subs   map[int]chan videoFrame
+	subs   map[int]chan *videoFrame
 	nextID int
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -172,8 +172,8 @@ const maxSubscribersPerHub = 16
 // Returns codes.Unavailable if the hub's context has already been cancelled
 // (checked atomically under h.mu so no subscriber can be added to a dying hub),
 // or codes.ResourceExhausted if the hub already has maxSubscribersPerHub active subscribers.
-func (h *deviceHub) subscribe() (int, chan videoFrame, error) {
-	ch := make(chan videoFrame, 4)
+func (h *deviceHub) subscribe() (int, chan *videoFrame, error) {
+	ch := make(chan *videoFrame, 4)
 	h.mu.Lock()
 	if h.ctx.Err() != nil {
 		h.mu.Unlock()
@@ -228,7 +228,7 @@ const maxFrameBytes = 2 * 1024 * 1024 // 2 MiB
 // subscriber channels concurrently — sending on a closed channel panics. With
 // maxSubscribersPerHub = 16 and non-blocking selects, the lock is held for
 // O(16) nanoseconds, making the contention cost negligible.
-func (h *deviceHub) broadcast(frame videoFrame) bool {
+func (h *deviceHub) broadcast(frame *videoFrame) bool {
 	if len(frame.data) > maxFrameBytes {
 		return true // oversized frame: drop silently, keep the hub alive
 	}
@@ -350,7 +350,7 @@ const (
 // getOrCreateHub returns the existing hub for path, or starts a new producer and hub.
 // The caller receives a hub with at least one subscriber already registered (the returned id/ch).
 // Returns an error if a hub already exists with different stream parameters.
-func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *agentpb.StreamVideoRequest) (h *deviceHub, id int, ch chan videoFrame, err error) {
+func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *agentpb.StreamVideoRequest) (h *deviceHub, id int, ch chan *videoFrame, err error) {
 	for retries := 0; ; retries++ {
 		if retries >= maxHubRetries {
 			s.logger.Warn("hub retry limit exceeded", zap.String("device", path), zap.Int("retries", retries))
@@ -426,7 +426,7 @@ func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *age
 
 	hctx, cancel := context.WithCancel(s.ctx)
 	h = &deviceHub{
-		subs:      make(map[int]chan videoFrame),
+		subs:      make(map[int]chan *videoFrame),
 		ctx:       hctx,
 		cancel:    cancel,
 		done:      make(chan struct{}),
@@ -450,7 +450,7 @@ func (s *VideoService) getOrCreateHub(ctx context.Context, path string, req *age
 func (s *VideoService) runProducer(ctx context.Context, h *deviceHub, path string, req *agentpb.StreamVideoRequest) {
 	defer s.wg.Done()
 	broadcast := func(data []byte, tsNs uint64, codec agentpb.VideoCodec) bool {
-		return h.broadcast(videoFrame{data: data, tsNs: tsNs, codec: codec})
+		return h.broadcast(&videoFrame{data: data, tsNs: tsNs, codec: codec})
 	}
 
 	err := s.streamV4L2Native(ctx, broadcast, path, req)

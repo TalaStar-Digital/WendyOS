@@ -556,7 +556,7 @@ func newTestHub(t *testing.T) (*deviceHub, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &deviceHub{
-		subs:   make(map[int]chan videoFrame),
+		subs:   make(map[int]chan *videoFrame),
 		ctx:    ctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
@@ -573,12 +573,12 @@ func TestDeviceHub_TwoSubscribersReceiveSameFrame(t *testing.T) {
 	defer h.unsubscribe(id1)
 	defer h.unsubscribe(id2)
 
-	frame := videoFrame{data: []byte{0xAB, 0xCD}, tsNs: 12345}
+	frame := &videoFrame{data: []byte{0xAB, 0xCD}, tsNs: 12345}
 	if !h.broadcast(frame) {
 		t.Fatal("broadcast returned false with two active subscribers")
 	}
 
-	for _, ch := range []chan videoFrame{ch1, ch2} {
+	for _, ch := range []chan *videoFrame{ch1, ch2} {
 		select {
 		case f := <-ch:
 			if !bytes.Equal(f.data, frame.data) || f.tsNs != frame.tsNs {
@@ -616,7 +616,7 @@ func TestDeviceHub_SlowSubscriberDropsFrames(t *testing.T) {
 
 	// Send more frames than the channel buffer (capacity 4).
 	for i := 0; i < 10; i++ {
-		h.broadcast(videoFrame{data: []byte{byte(i)}})
+		h.broadcast(&videoFrame{data: []byte{byte(i)}})
 	}
 
 	if len(ch) > cap(ch) {
@@ -635,7 +635,7 @@ func TestDeviceHub_BroadcastReturnsFalseWithNoSubscribers(t *testing.T) {
 	id, _, _ := h.subscribe()
 	h.unsubscribe(id)
 
-	if h.broadcast(videoFrame{data: []byte{1}}) {
+	if h.broadcast(&videoFrame{data: []byte{1}}) {
 		t.Error("broadcast should return false when there are no subscribers")
 	}
 }
