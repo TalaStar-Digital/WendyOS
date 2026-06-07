@@ -689,11 +689,6 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			restartPolicy = composeRestartPolicy(svc.Restart)
 		}
 
-		// TODO: compose `environment:` values aren't sent to the device yet.
-		// CreateContainerRequest has no env field, and stuffing env strings
-		// into UserArgs (the previous behaviour) appended them to argv. Add a
-		// proto env field and plumb composeEnv(svc) through it.
-
 		createReq := &agentpb.CreateContainerRequest{
 			ImageName:     imageName,
 			AppName:       appCfg.ContainerName(),
@@ -701,6 +696,7 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			Cmd:           cmd,
 			RestartPolicy: restartPolicy,
 			UserArgs:      extraArgs,
+			Env:           composeEnv(svc),
 		}
 
 		cliLogln("Creating container for service %s (%s)...", name, appCfg.ContainerName())
