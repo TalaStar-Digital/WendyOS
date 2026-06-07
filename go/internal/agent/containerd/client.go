@@ -531,7 +531,10 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	}
 
 	// Build environment variables: image env first, then our overrides.
-	env := buildContainerBaseEnv(appID, serviceName)
+	env, err := buildContainerBaseEnv(appID, serviceName)
+	if err != nil {
+		return fmt.Errorf("building container env: %w", err)
+	}
 	if specErr == nil {
 		env = append(imageSpec.Config.Env, env...)
 	}
@@ -820,19 +823,19 @@ var deviceHostnameWithSuffix = func() string {
 //   - WENDY_HOSTNAME is set to "{serviceName}.local" so each service has a
 //     distinct hostname identity.
 //   - WENDY_APP_GROUP is set to appID so the service can discover its siblings.
-func buildContainerBaseEnv(appID, serviceName string) []string {
+func buildContainerBaseEnv(appID, serviceName string) ([]string, error) {
 	// Defence-in-depth: reject non-empty inputs that fail validation at the
-	// injection site, so callers can't accidentally inject control characters
+	// injection site so callers can't accidentally inject control characters
 	// into OCI env vars (SOC2-CC6, ISO27001-A.8, NIST-SI-10). Empty values are
 	// allowed; they simply skip the corresponding env var (see guards below).
 	if appID != "" {
 		if err := appconfig.ValidateAppID(appID); err != nil {
-			panic(fmt.Sprintf("buildContainerBaseEnv: invalid appID %q: %v", appID, err))
+			return nil, fmt.Errorf("buildContainerBaseEnv: invalid appID: %w", err)
 		}
 	}
 	if serviceName != "" {
 		if err := appconfig.ValidateServiceName(serviceName); err != nil {
-			panic(fmt.Sprintf("buildContainerBaseEnv: invalid serviceName %q: %v", serviceName, err))
+			return nil, fmt.Errorf("buildContainerBaseEnv: invalid serviceName: %w", err)
 		}
 	}
 
@@ -856,7 +859,7 @@ func buildContainerBaseEnv(appID, serviceName string) []string {
 	if appID != "" {
 		env = append(env, "WENDY_APP_ID="+appID)
 	}
-	return env
+	return env, nil
 }
 
 // injectOTELEnvIfNeeded appends OTEL exporter env vars to env when host

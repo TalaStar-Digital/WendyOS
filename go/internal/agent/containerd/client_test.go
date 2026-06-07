@@ -87,7 +87,10 @@ func TestBuildContainerBaseEnvIncludesWendyHostname(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "wendyos-test-device.local" }
 
-	env := buildContainerBaseEnv("demo-app", "")
+	env, err := buildContainerBaseEnv("demo-app", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	want := "WENDY_HOSTNAME=wendyos-test-device.local"
 	for _, kv := range env {
@@ -103,7 +106,10 @@ func TestBuildContainerBaseEnvOmitsWendyHostnameWhenUnavailable(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "" }
 
-	env := buildContainerBaseEnv("demo-app", "")
+	env, err := buildContainerBaseEnv("demo-app", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	for _, kv := range env {
 		if len(kv) >= len("WENDY_HOSTNAME=") && kv[:len("WENDY_HOSTNAME=")] == "WENDY_HOSTNAME=" {
@@ -117,7 +123,10 @@ func TestBuildContainerBaseEnvIncludesAppID(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "" }
 
-	env := buildContainerBaseEnv("demo-app", "")
+	env, err := buildContainerBaseEnv("demo-app", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	want := "WENDY_APP_ID=demo-app"
 	for _, kv := range env {
@@ -133,7 +142,10 @@ func TestBuildContainerBaseEnvOmitsAppIDWhenEmpty(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "" }
 
-	env := buildContainerBaseEnv("", "")
+	env, err := buildContainerBaseEnv("", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "WENDY_APP_ID=") {
@@ -147,7 +159,10 @@ func TestBuildContainerBaseEnvMultiServiceHostname(t *testing.T) {
 	t.Cleanup(func() { deviceHostnameWithSuffix = old })
 	deviceHostnameWithSuffix = func() string { return "wendyos-test-device.local" }
 
-	env := buildContainerBaseEnv("com.example.app", "api")
+	env, err := buildContainerBaseEnv("com.example.app", "api")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	wantHostname := "WENDY_HOSTNAME=api.local"
 	wantGroup := "WENDY_APP_GROUP=com.example.app"
@@ -180,7 +195,10 @@ func TestBuildContainerBaseEnvMultiServiceNoDeviceHostname(t *testing.T) {
 	deviceHostnameWithSuffix = func() string { return "device.local" }
 
 	// For multi-service containers the device hostname must not appear.
-	env := buildContainerBaseEnv("com.example.app", "worker")
+	env, err := buildContainerBaseEnv("com.example.app", "worker")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	for _, kv := range env {
 		if kv == "WENDY_HOSTNAME=device.local" {

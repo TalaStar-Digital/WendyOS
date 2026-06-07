@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -27,6 +28,49 @@ type ContainerService struct {
 	containerd ContainerdClient
 	logManager *ContainerLogManager
 	monitor    ContainerMonitorRegistrar
+
+	// appMu serialises create/stop/delete operations per appID so that
+	// ContainerIDsForApp and the subsequent monitor marks + containerd call are
+	// atomic with respect to concurrent RPCs for the same app (TOCTOU prevention,
+	// SOC2-CC6, NIST-AC-4).
+	appMu appMutex
+}
+
+// appMutex provides per-app name mutual exclusion.
+type appMutex struct {
+	mu    sync.Mutex
+	locks map[string]*appLock
+}
+
+type appLock struct {
+	mu      sync.Mutex
+	waiters int
+}
+
+// lockApp acquires the per-app lock for appName and returns an unlock function.
+func (a *appMutex) lockApp(appName string) func() {
+	a.mu.Lock()
+	if a.locks == nil {
+		a.locks = make(map[string]*appLock)
+	}
+	l, ok := a.locks[appName]
+	if !ok {
+		l = &appLock{}
+		a.locks[appName] = l
+	}
+	l.waiters++
+	a.mu.Unlock()
+
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		a.mu.Lock()
+		l.waiters--
+		if l.waiters == 0 {
+			delete(a.locks, appName)
+		}
+		a.mu.Unlock()
+	}
 }
 
 func NewContainerService(logger *zap.Logger, client ContainerdClient, opts ...ContainerServiceOption) *ContainerService {
@@ -514,6 +558,12 @@ func (s *ContainerService) AttachContainer(stream grpc.BidiStreamingServer[agent
 func (s *ContainerService) StopContainer(ctx context.Context, req *agentpb.StopContainerRequest) (*agentpb.StopContainerResponse, error) {
 	appName := req.GetAppName()
 
+	// Hold the per-app lock so that ContainerIDsForApp, MarkExplicitStop, and
+	// the actual stop are atomic with respect to concurrent CreateContainer or
+	// DeleteContainer calls for the same app (SOC2-CC6, NIST-AC-4).
+	unlock := s.appMu.lockApp(appName)
+	defer unlock()
+
 	// Resolve every container ID that belongs to this app (one for
 	// single-container apps, one per service for multi-service apps) so the
 	// monitor can mark each before any stop is issued. Marking only the bare
@@ -545,6 +595,12 @@ func (s *ContainerService) StopContainer(ctx context.Context, req *agentpb.StopC
 
 func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.DeleteContainerRequest) (*agentpb.DeleteContainerResponse, error) {
 	appName := req.GetAppName()
+
+	// Hold the per-app lock so that ContainerIDsForApp, monitor unregister, and
+	// the actual delete are atomic with respect to concurrent CreateContainer or
+	// StopContainer calls for the same app (SOC2-CC6, NIST-AC-4).
+	unlock := s.appMu.lockApp(appName)
+	defer unlock()
 
 	// Resolve all container IDs before deletion so the monitor can unregister
 	// each one. Unregistering only the bare appName would leave
