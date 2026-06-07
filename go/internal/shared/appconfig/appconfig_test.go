@@ -1309,7 +1309,7 @@ func TestLoadComposeCompanion_Valid(t *testing.T) {
 	data := `{
 		"appId": "com.example.robot",
 		"isolation": "shared-ipc",
-		"runtimes": { "ros2": { "domainId": 5, "rmw": "cyclonedds" } },
+		"frameworks": { "ros2": { "domainId": 5, "rmw": "cyclonedds" } },
 		"entitlements": [{ "type": "gpu" }]
 	}`
 	if err := os.WriteFile(filepath.Join(dir, "wendy.json"), []byte(data), 0o644); err != nil {
@@ -1329,14 +1329,14 @@ func TestLoadComposeCompanion_Valid(t *testing.T) {
 	if cfg.Isolation != "shared-ipc" {
 		t.Errorf("Isolation = %q, want %q", cfg.Isolation, "shared-ipc")
 	}
-	if cfg.Runtimes == nil || cfg.Runtimes.ROS2 == nil {
-		t.Fatal("Runtimes.ROS2 is nil")
+	if cfg.Frameworks == nil || cfg.Frameworks.ROS2 == nil {
+		t.Fatal("Frameworks.ROS2 is nil")
 	}
-	if cfg.Runtimes.ROS2.DomainID != 5 {
-		t.Errorf("ROS2.DomainID = %d, want 5", cfg.Runtimes.ROS2.DomainID)
+	if cfg.Frameworks.ROS2.DomainID != 5 {
+		t.Errorf("ROS2.DomainID = %d, want 5", cfg.Frameworks.ROS2.DomainID)
 	}
-	if cfg.Runtimes.ROS2.RMW != "cyclonedds" {
-		t.Errorf("ROS2.RMW = %q, want %q", cfg.Runtimes.ROS2.RMW, "cyclonedds")
+	if cfg.Frameworks.ROS2.RMW != "cyclonedds" {
+		t.Errorf("ROS2.RMW = %q, want %q", cfg.Frameworks.ROS2.RMW, "cyclonedds")
 	}
 	if len(cfg.Entitlements) != 1 || cfg.Entitlements[0].Type != "gpu" {
 		t.Errorf("Entitlements = %+v", cfg.Entitlements)
@@ -1353,7 +1353,7 @@ func TestLoadComposeCompanion_WithServices(t *testing.T) {
 		"services": {
 			"camera": {
 				"entitlements": [{ "type": "camera" }, { "type": "gpu" }],
-				"runtimes": { "ros2": { "domainId": 42 } }
+				"frameworks": { "ros2": { "domainId": 42 } }
 			},
 			"detector": {
 				"entitlements": [{ "type": "gpu" }]
@@ -1378,8 +1378,8 @@ func TestLoadComposeCompanion_WithServices(t *testing.T) {
 	if len(camera.Entitlements) != 2 {
 		t.Errorf("camera entitlements = %d, want 2", len(camera.Entitlements))
 	}
-	if camera.Runtimes == nil || camera.Runtimes.ROS2 == nil || camera.Runtimes.ROS2.DomainID != 42 {
-		t.Errorf("camera.Runtimes.ROS2.DomainID mismatch")
+	if camera.Frameworks == nil || camera.Frameworks.ROS2 == nil || camera.Frameworks.ROS2.DomainID != 42 {
+		t.Errorf("camera.Frameworks.ROS2.DomainID mismatch")
 	}
 	if cfg.Services["detector"] == nil {
 		t.Fatal("detector service is nil")
@@ -1446,10 +1446,10 @@ func TestLoadComposeCompanion_ContextNotRequired(t *testing.T) {
 	}
 }
 
-func TestRuntimesConfig_ParseJSON(t *testing.T) {
+func TestFrameworksConfig_ParseJSON(t *testing.T) {
 	data := `{
 		"appId": "com.example.app",
-		"runtimes": {
+		"frameworks": {
 			"ros2": { "domainId": 10, "rmw": "fastrtps" }
 		}
 	}`
@@ -1457,17 +1457,17 @@ func TestRuntimesConfig_ParseJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFromBytes: %v", err)
 	}
-	if cfg.Runtimes == nil {
-		t.Fatal("Runtimes is nil")
+	if cfg.Frameworks == nil {
+		t.Fatal("Frameworks is nil")
 	}
-	if cfg.Runtimes.ROS2 == nil {
-		t.Fatal("Runtimes.ROS2 is nil")
+	if cfg.Frameworks.ROS2 == nil {
+		t.Fatal("Frameworks.ROS2 is nil")
 	}
-	if cfg.Runtimes.ROS2.DomainID != 10 {
-		t.Errorf("DomainID = %d, want 10", cfg.Runtimes.ROS2.DomainID)
+	if cfg.Frameworks.ROS2.DomainID != 10 {
+		t.Errorf("DomainID = %d, want 10", cfg.Frameworks.ROS2.DomainID)
 	}
-	if cfg.Runtimes.ROS2.RMW != "fastrtps" {
-		t.Errorf("RMW = %q, want %q", cfg.Runtimes.ROS2.RMW, "fastrtps")
+	if cfg.Frameworks.ROS2.RMW != "fastrtps" {
+		t.Errorf("RMW = %q, want %q", cfg.Frameworks.ROS2.RMW, "fastrtps")
 	}
 }
 

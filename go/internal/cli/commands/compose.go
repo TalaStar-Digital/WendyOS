@@ -362,20 +362,20 @@ func composeCompanionWarnings(companion *appconfig.AppConfig, composeCfg *compos
 // wendy.json present).
 //
 // Merge rules:
-//   - Top-level isolation and runtimes from the companion are applied to every service.
+//   - Top-level isolation and frameworks from the companion are applied to every service.
 //   - Per-service entitlements in the companion are appended to the synthesised
 //     entitlements (compose-derived network/persist entitlements are preserved).
-//   - Per-service runtimes override the group-level runtimes for that service.
+//   - Per-service frameworks override the group-level frameworks for that service.
 func applyComposeCompanion(appCfg *appconfig.AppConfig, companion *appconfig.AppConfig, serviceName string) {
 	if companion == nil {
 		return
 	}
 	appCfg.Isolation = companion.Isolation
-	appCfg.Runtimes = companion.Runtimes
+	appCfg.Frameworks = companion.Frameworks
 	if svc, ok := companion.Services[serviceName]; ok && svc != nil {
 		appCfg.Entitlements = append(appCfg.Entitlements, svc.Entitlements...)
-		if svc.Runtimes != nil {
-			appCfg.Runtimes = svc.Runtimes
+		if svc.Frameworks != nil {
+			appCfg.Frameworks = svc.Frameworks
 		}
 	}
 }
@@ -497,7 +497,7 @@ func (w *serviceLogWriter) Flush() {
 // builds service images, pushes them to the device registry, creates containers,
 // and streams their combined output. When a companion wendy.json exists in the
 // same directory it is merged to supply Wendy-specific config (entitlements,
-// isolation, runtimes) without modifying the compose file.
+// isolation, frameworks) without modifying the compose file.
 func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, projectDir string, opts runOptions) error {
 	cfg, composeFilename, err := parseComposeFile(projectDir)
 	if err != nil {

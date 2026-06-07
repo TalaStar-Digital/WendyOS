@@ -459,24 +459,24 @@ func TestApplyComposeCompanion(t *testing.T) {
 	t.Run("nil companion is a no-op", func(t *testing.T) {
 		got := baseAppCfg()
 		applyComposeCompanion(got, nil, "camera")
-		if len(got.Entitlements) != 1 || got.Isolation != "" || got.Runtimes != nil {
+		if len(got.Entitlements) != 1 || got.Isolation != "" || got.Frameworks != nil {
 			t.Errorf("nil companion should not change AppConfig: %+v", got)
 		}
 	})
 
-	t.Run("sets isolation and group runtimes", func(t *testing.T) {
+	t.Run("sets isolation and group frameworks", func(t *testing.T) {
 		companion := &appconfig.AppConfig{
-			AppID:     "com.example.robot",
-			Isolation: "shared-ipc",
-			Runtimes:  &appconfig.RuntimesConfig{ROS2: &appconfig.ROS2Config{DomainID: 0}},
+			AppID:      "com.example.robot",
+			Isolation:  "shared-ipc",
+			Frameworks: &appconfig.FrameworksConfig{ROS2: &appconfig.ROS2Config{DomainID: 0}},
 		}
 		got := baseAppCfg()
 		applyComposeCompanion(got, companion, "camera")
 		if got.Isolation != "shared-ipc" {
 			t.Errorf("Isolation = %q, want %q", got.Isolation, "shared-ipc")
 		}
-		if got.Runtimes == nil || got.Runtimes.ROS2 == nil {
-			t.Error("Runtimes.ROS2 should be set")
+		if got.Frameworks == nil || got.Frameworks.ROS2 == nil {
+			t.Error("Frameworks.ROS2 should be set")
 		}
 	})
 
@@ -499,41 +499,41 @@ func TestApplyComposeCompanion(t *testing.T) {
 		}
 	})
 
-	t.Run("per-service runtimes override group runtimes", func(t *testing.T) {
+	t.Run("per-service frameworks override group frameworks", func(t *testing.T) {
 		groupROS2 := &appconfig.ROS2Config{DomainID: 0}
 		svcROS2 := &appconfig.ROS2Config{DomainID: 42}
 		companion := &appconfig.AppConfig{
-			AppID:    "com.example.robot",
-			Runtimes: &appconfig.RuntimesConfig{ROS2: groupROS2},
+			AppID:      "com.example.robot",
+			Frameworks: &appconfig.FrameworksConfig{ROS2: groupROS2},
 			Services: map[string]*appconfig.ServiceConfig{
 				"camera": {
-					Runtimes: &appconfig.RuntimesConfig{ROS2: svcROS2},
+					Frameworks: &appconfig.FrameworksConfig{ROS2: svcROS2},
 				},
 			},
 		}
 		got := baseAppCfg()
 		applyComposeCompanion(got, companion, "camera")
-		if got.Runtimes == nil || got.Runtimes.ROS2 == nil {
-			t.Fatal("Runtimes.ROS2 should be set")
+		if got.Frameworks == nil || got.Frameworks.ROS2 == nil {
+			t.Fatal("Frameworks.ROS2 should be set")
 		}
-		if got.Runtimes.ROS2.DomainID != 42 {
-			t.Errorf("DomainID = %d, want 42 (per-service override)", got.Runtimes.ROS2.DomainID)
+		if got.Frameworks.ROS2.DomainID != 42 {
+			t.Errorf("DomainID = %d, want 42 (per-service override)", got.Frameworks.ROS2.DomainID)
 		}
 	})
 
-	t.Run("group runtimes apply when service has no runtimes", func(t *testing.T) {
+	t.Run("group frameworks apply when service has no frameworks", func(t *testing.T) {
 		groupROS2 := &appconfig.ROS2Config{DomainID: 5}
 		companion := &appconfig.AppConfig{
-			AppID:    "com.example.robot",
-			Runtimes: &appconfig.RuntimesConfig{ROS2: groupROS2},
+			AppID:      "com.example.robot",
+			Frameworks: &appconfig.FrameworksConfig{ROS2: groupROS2},
 			Services: map[string]*appconfig.ServiceConfig{
 				"camera": {Entitlements: []appconfig.Entitlement{{Type: appconfig.EntitlementCamera}}},
 			},
 		}
 		got := baseAppCfg()
 		applyComposeCompanion(got, companion, "camera")
-		if got.Runtimes == nil || got.Runtimes.ROS2 == nil || got.Runtimes.ROS2.DomainID != 5 {
-			t.Errorf("expected group-level ROS2 DomainID=5, got %+v", got.Runtimes)
+		if got.Frameworks == nil || got.Frameworks.ROS2 == nil || got.Frameworks.ROS2.DomainID != 5 {
+			t.Errorf("expected group-level ROS2 DomainID=5, got %+v", got.Frameworks)
 		}
 	})
 

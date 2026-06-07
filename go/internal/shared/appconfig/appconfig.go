@@ -108,9 +108,9 @@ type ROS2Config struct {
 	RMW      string `json:"rmw,omitempty"`
 }
 
-// RuntimesConfig holds optional runtime environment configuration.
-// It is nested under the "runtimes" key in wendy.json (WDY-1339).
-type RuntimesConfig struct {
+// FrameworksConfig holds optional framework-level configuration (e.g. ROS 2).
+// It is nested under the "frameworks" key in wendy.json (WDY-1339).
+type FrameworksConfig struct {
 	ROS2 *ROS2Config `json:"ros2,omitempty"`
 }
 
@@ -119,10 +119,10 @@ type RuntimesConfig struct {
 type ServiceConfig struct {
 	// Context is the build context directory, relative to wendy.json.
 	// Required for standalone multi-service apps; omitted in compose companion files.
-	Context      string          `json:"context"`
-	Entitlements []Entitlement   `json:"entitlements,omitempty"`
-	DependsOn    []string        `json:"dependsOn,omitempty"`
-	Runtimes     *RuntimesConfig `json:"runtimes,omitempty"`
+	Context      string            `json:"context"`
+	Entitlements []Entitlement     `json:"entitlements,omitempty"`
+	DependsOn    []string          `json:"dependsOn,omitempty"`
+	Frameworks   *FrameworksConfig `json:"frameworks,omitempty"`
 }
 
 // AppConfig represents the wendy.json application configuration.
@@ -146,10 +146,10 @@ type AppConfig struct {
 	// Isolation sets the namespace isolation mode for multi-container deployments
 	// (e.g. "shared-ipc"). Enforced by the agent at container creation time.
 	Isolation string `json:"isolation,omitempty"`
-	// Runtimes holds optional runtime environment configuration (e.g. ROS 2).
-	// Nested under "runtimes" per WDY-1339.
-	Runtimes *RuntimesConfig           `json:"runtimes,omitempty"`
-	Services map[string]*ServiceConfig `json:"services,omitempty"`
+	// Frameworks holds optional framework-level configuration (e.g. ROS 2).
+	// Nested under "frameworks" per WDY-1339.
+	Frameworks *FrameworksConfig         `json:"frameworks,omitempty"`
+	Services   map[string]*ServiceConfig `json:"services,omitempty"`
 }
 
 // XcodeConfig holds Xcode-specific build settings.
