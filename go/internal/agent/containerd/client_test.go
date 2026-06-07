@@ -207,6 +207,93 @@ func TestBuildContainerBaseEnvMultiServiceNoDeviceHostname(t *testing.T) {
 	}
 }
 
+// TestBuildContainerBaseEnvIdentityVars documents the full env-var contract
+// for WENDY_HOSTNAME, WENDY_APP_GROUP, and WENDY_APP_ID across both app types.
+//
+// Single-container app  (serviceName == ""):
+//
+//	WENDY_HOSTNAME = device hostname (e.g. "wendyos-abc.local")
+//	WENDY_APP_ID   = appID
+//	(WENDY_APP_GROUP is not set)
+//
+// Multi-service app (serviceName != ""):
+//
+//	WENDY_HOSTNAME  = "{serviceName}.local"   ← distinct per service, not the device
+//	WENDY_APP_GROUP = appID                   ← lets a service discover its siblings
+//	WENDY_APP_ID    = appID
+func TestBuildContainerBaseEnvIdentityVars(t *testing.T) {
+	const deviceHost = "wendyos-abc.local"
+	old := deviceHostnameWithSuffix
+	t.Cleanup(func() { deviceHostnameWithSuffix = old })
+	deviceHostnameWithSuffix = func() string { return deviceHost }
+
+	tests := []struct {
+		name         string
+		appID        string
+		serviceName  string
+		wantHostname string
+		wantGroup    string // "" means the var must NOT be present
+		wantAppID    string
+	}{
+		{
+			name:         "single-container: hostname is device, no app group",
+			appID:        "com.example.myapp",
+			serviceName:  "",
+			wantHostname: deviceHost,
+			wantGroup:    "",
+			wantAppID:    "com.example.myapp",
+		},
+		{
+			name:         "multi-service api: hostname is serviceName.local",
+			appID:        "com.example.myapp",
+			serviceName:  "api",
+			wantHostname: "api.local",
+			wantGroup:    "com.example.myapp",
+			wantAppID:    "com.example.myapp",
+		},
+		{
+			name:         "multi-service worker: hostname is serviceName.local",
+			appID:        "com.example.myapp",
+			serviceName:  "worker",
+			wantHostname: "worker.local",
+			wantGroup:    "com.example.myapp",
+			wantAppID:    "com.example.myapp",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env, err := buildContainerBaseEnv(tc.appID, tc.serviceName)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			envMap := make(map[string]string)
+			for _, kv := range env {
+				if i := strings.Index(kv, "="); i >= 0 {
+					envMap[kv[:i]] = kv[i+1:]
+				}
+			}
+
+			if got := envMap["WENDY_HOSTNAME"]; got != tc.wantHostname {
+				t.Errorf("WENDY_HOSTNAME = %q, want %q", got, tc.wantHostname)
+			}
+			if tc.wantGroup == "" {
+				if _, ok := envMap["WENDY_APP_GROUP"]; ok {
+					t.Errorf("WENDY_APP_GROUP must not be set for single-container apps; got %q", envMap["WENDY_APP_GROUP"])
+				}
+			} else {
+				if got := envMap["WENDY_APP_GROUP"]; got != tc.wantGroup {
+					t.Errorf("WENDY_APP_GROUP = %q, want %q", got, tc.wantGroup)
+				}
+			}
+			if got := envMap["WENDY_APP_ID"]; got != tc.wantAppID {
+				t.Errorf("WENDY_APP_ID = %q, want %q", got, tc.wantAppID)
+			}
+		})
+	}
+}
+
 func hostNetworkCfg() *appconfig.AppConfig {
 	return &appconfig.AppConfig{
 		Entitlements: []appconfig.Entitlement{

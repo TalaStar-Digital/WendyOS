@@ -557,7 +557,14 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	opts := localoci.ApplyOptions{
 		DBusProxyAvailable: c.proxyManager != nil,
 	}
-	if err := localoci.ApplyEntitlements(spec, appCfg, opts); err != nil {
+	// Pass a shallow copy of appCfg with AppID and ServiceName set to the
+	// derived (validated) values. This ensures ApplyEntitlements always receives
+	// a non-empty AppID even when the caller used the raw-RPC fallback path
+	// where appCfg.AppID was empty and appID was derived from req.GetAppName().
+	entCfg := *appCfg
+	entCfg.AppID = appID
+	entCfg.ServiceName = serviceName
+	if err := localoci.ApplyEntitlements(spec, &entCfg, opts); err != nil {
 		return fmt.Errorf("applying entitlements: %w", err)
 	}
 
@@ -649,7 +656,19 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 
 	container, err := c.client.LoadContainer(ctx, appName)
 	if err != nil {
-		return nil, fmt.Errorf("loading container %q: %w", appName, err)
+		// Fall back to a label-based lookup so that callers can pass the bare
+		// appID (e.g. "myapp") even when the container was created under a
+		// multi-service name (e.g. "myapp/api" for serviceName="api").
+		// If the label query returns exactly one container we use it; if it
+		// returns multiple the caller must be more specific.
+		ctrs, labelErr := c.containersForApp(ctx, appName)
+		if labelErr != nil || len(ctrs) == 0 {
+			return nil, fmt.Errorf("loading container %q: %w", appName, err)
+		}
+		if len(ctrs) > 1 {
+			return nil, fmt.Errorf("app %q has multiple service containers; use the full container name (appID/serviceName) to start a specific service", appName)
+		}
+		container = ctrs[0]
 	}
 
 	if restartPolicy != nil {
@@ -730,7 +749,14 @@ func (c *Client) StartContainerWithStdin(ctx context.Context, appName string, st
 
 	container, err := c.client.LoadContainer(ctx, appName)
 	if err != nil {
-		return nil, fmt.Errorf("loading container %q: %w", appName, err)
+		ctrs, labelErr := c.containersForApp(ctx, appName)
+		if labelErr != nil || len(ctrs) == 0 {
+			return nil, fmt.Errorf("loading container %q: %w", appName, err)
+		}
+		if len(ctrs) > 1 {
+			return nil, fmt.Errorf("app %q has multiple service containers; use the full container name (appID/serviceName) to start a specific service", appName)
+		}
+		container = ctrs[0]
 	}
 
 	if restartPolicy != nil {
