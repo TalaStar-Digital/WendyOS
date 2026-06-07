@@ -62,52 +62,9 @@ func resolveServiceSubset(services map[string]*appconfig.ServiceConfig, only str
 	return subset, nil
 }
 
-// serviceTopoOrder returns service names in topological order so that every
-// service appears after its dependsOn entries. Returns an error for cyclic
-// graphs. All deps must already be present in services (resolveServiceSubset
-// guarantees transitive closure); a missing dep returns an error.
+// serviceTopoOrder delegates to the shared appconfig package.
 func serviceTopoOrder(services map[string]*appconfig.ServiceConfig) ([]string, error) {
-	visited := make(map[string]bool, len(services))
-	inStack := make(map[string]bool, len(services))
-	ordered := make([]string, 0, len(services))
-
-	var visit func(name string) error
-	visit = func(name string) error {
-		if visited[name] {
-			return nil
-		}
-		if inStack[name] {
-			return fmt.Errorf("cycle detected in dependsOn graph involving service %q", name)
-		}
-		inStack[name] = true
-		if svc, ok := services[name]; ok {
-			for _, dep := range svc.DependsOn {
-				if _, present := services[dep]; !present {
-					return fmt.Errorf("service %q depends on %q which is not in the build subset", name, dep)
-				}
-				if err := visit(dep); err != nil {
-					return err
-				}
-			}
-		}
-		delete(inStack, name)
-		visited[name] = true
-		ordered = append(ordered, name)
-		return nil
-	}
-
-	// Iterate in a stable order: collect names, sort, then visit.
-	names := make([]string, 0, len(services))
-	for n := range services {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		if err := visit(n); err != nil {
-			return nil, err
-		}
-	}
-	return ordered, nil
+	return appconfig.ServiceTopoOrder(services)
 }
 
 // runMultiServiceWithAgent orchestrates the full build → push → create →
