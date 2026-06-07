@@ -1015,3 +1015,51 @@ func TestUseArgusSource(t *testing.T) {
 		})
 	}
 }
+
+func TestHasVideoCapture(t *testing.T) {
+	cases := []struct {
+		name         string
+		capabilities uint32
+		deviceCaps   uint32
+		want         bool
+	}{
+		{
+			// Raspberry Pi 5 CSI capture node (rp1-cfe-csi2_ch0) advertises
+			// VIDEO_CAPTURE *and* METADATA_CAPTURE on the same node (observed
+			// device caps 0x24a00001). It must be treated as a capture device, or
+			// `device camera list` hides the actual ribbon camera.
+			name:         "csi node with video+metadata caps",
+			capabilities: 0xaca00001, // DEVICE_CAPS bit set -> deviceCaps is authoritative
+			deviceCaps:   0x24a00001,
+			want:         true,
+		},
+		{
+			// A UVC metadata companion (e.g. /dev/video1) is METADATA_CAPTURE only
+			// and must be excluded.
+			name:         "metadata-only companion excluded",
+			capabilities: v4l2CapDeviceCaps | v4l2CapMetaCapture,
+			deviceCaps:   v4l2CapMetaCapture,
+			want:         false,
+		},
+		{
+			name:         "plain video capture included",
+			capabilities: v4l2CapDeviceCaps | v4l2CapVideoCapture,
+			deviceCaps:   v4l2CapVideoCapture,
+			want:         true,
+		},
+		{
+			name:         "no capture caps excluded",
+			capabilities: v4l2CapDeviceCaps,
+			deviceCaps:   0,
+			want:         false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := v4l2Capability{Capabilities: tc.capabilities, DeviceCaps: tc.deviceCaps}
+			if got := c.hasVideoCapture(); got != tc.want {
+				t.Errorf("hasVideoCapture() = %v, want %v (caps=%#x devcaps=%#x)", got, tc.want, tc.capabilities, tc.deviceCaps)
+			}
+		})
+	}
+}

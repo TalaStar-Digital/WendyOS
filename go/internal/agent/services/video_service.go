@@ -109,9 +109,15 @@ func (c *v4l2Capability) hasVideoCapture() bool {
 	if caps&v4l2CapDeviceCaps != 0 {
 		caps = c.DeviceCaps
 	}
-	// Require VIDEO_CAPTURE and exclude metadata-only nodes (e.g. the UVC
-	// metadata companion device that some drivers expose on /dev/video1).
-	return caps&v4l2CapVideoCapture != 0 && caps&v4l2CapMetaCapture == 0
+	// A usable capture node must advertise VIDEO_CAPTURE. Metadata-only companion
+	// nodes (e.g. the UVC metadata device some drivers expose on /dev/video1)
+	// advertise METADATA_CAPTURE *without* VIDEO_CAPTURE, so the VIDEO_CAPTURE
+	// check alone already excludes them. We must NOT additionally exclude on
+	// METADATA_CAPTURE: the Raspberry Pi CSI capture node (rp1-cfe) sets both
+	// VIDEO_CAPTURE and METADATA_CAPTURE on the same node (device caps
+	// 0x24a00001), and excluding it would hide the ribbon camera from
+	// `device camera list`.
+	return caps&v4l2CapVideoCapture != 0
 }
 
 // v4l2ExtControl is a fixed-size array matching the __packed struct
