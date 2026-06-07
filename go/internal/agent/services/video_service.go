@@ -579,16 +579,13 @@ func (s *VideoService) StreamVideo(req *agentpb.StreamVideoRequest, stream grpc.
 				}
 				return status.Errorf(codes.Internal, "video producer stopped unexpectedly")
 			}
-			// Copy frame.data per subscriber so the serialisation path inside
-			// stream.Send() — proto marshalling, TLS record packing — operates on
-			// a slice that is not aliased by any other concurrent goroutine.
-			// broadcast() sends the same videoFrame to all subscriber channels for
-			// O(1) distribution; the copy is deferred to here so it is made exactly
-			// once per goroutine, just before the write-capable Send call.
-			data := make([]byte, len(frame.data))
-			copy(data, frame.data)
+			// frame.data is an immutable, per-frame allocation produced by the
+			// capture loop and never modified after broadcast(). stream.Send()
+			// serialises the proto synchronously (marshal → TLS write) before
+			// returning, so passing the shared slice directly is safe and avoids
+			// an O(N × frameSize) heap allocation per broadcast.
 			if err := stream.Send(&agentpb.VideoFrame{
-				Data:        data,
+				Data:        frame.data,
 				TimestampNs: frame.tsNs,
 				Codec:       frame.codec,
 			}); err != nil {
@@ -1090,6 +1087,12 @@ const leakyRawQueue = "queue max-size-buffers=2 max-size-bytes=0 max-size-time=0
 // tokens — making the security property a hard failure at construction time rather
 // than relying solely on caller-side allowlist validation.
 func buildGStreamerArgs(gstPath, devicePath string, req *agentpb.StreamVideoRequest, encoder string, hasH264Parse bool) ([]string, error) {
+	// Validate numeric request parameters here (not only at StreamVideo entry) so
+	// buildGStreamerArgs is safe regardless of call site — prevents injection via
+	// unbounded width/height/framerate values if called from a different path.
+	if err := validateStreamParams(req); err != nil {
+		return nil, fmt.Errorf("invalid stream parameters for GStreamer pipeline: %w", err)
+	}
 	for _, s := range []string{devicePath, encoder} {
 		// Space and tab are included because buildGStreamerArgs splits the pipeline
 		// string with strings.Fields — a space in a validated value would inject
