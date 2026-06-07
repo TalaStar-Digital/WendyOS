@@ -536,6 +536,13 @@ func (s *ContainerService) AttachContainer(stream grpc.BidiStreamingServer[agent
 
 func (s *ContainerService) StopContainer(ctx context.Context, req *agentpb.StopContainerRequest) (*agentpb.StopContainerResponse, error) {
 	appName := req.GetAppName()
+	// Validate before acquiring the mutex so that invalid names never reach the
+	// appMutex map (preventing unbounded map growth from adversarial RPC input,
+	// SOC2-CC6, NIST-SC-5) and so the monitor fallback below always receives a
+	// well-formed identifier (SOC2-CC6 INFORMATIONAL-12).
+	if err := appconfig.ValidateAppID(appName); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid app name: %v", err)
+	}
 
 	// Hold the per-app lock so that ContainerIDsForApp, MarkExplicitStop, and
 	// the actual stop are atomic with respect to concurrent CreateContainer or
@@ -577,6 +584,9 @@ func (s *ContainerService) StopContainer(ctx context.Context, req *agentpb.StopC
 
 func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.DeleteContainerRequest) (*agentpb.DeleteContainerResponse, error) {
 	appName := req.GetAppName()
+	if err := appconfig.ValidateAppID(appName); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid app name: %v", err)
+	}
 
 	// Hold the per-app lock so that ContainerIDsForApp, monitor unregister, and
 	// the actual delete are atomic with respect to concurrent CreateContainer or

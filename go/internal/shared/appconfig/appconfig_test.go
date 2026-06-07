@@ -134,6 +134,14 @@ func TestValidate_AppIDCharset(t *testing.T) {
 		"app with spaces",  // disallowed
 		"app\nnewline",     // would inject an env entry
 		"emoji-\U0001F600", // non-ASCII
+		// containerd filter-grammar special characters (SOC2-CC6, NIST-SI-10):
+		// ValidateAppID must reject all of these so containersForApp can safely
+		// interpolate appID into a label filter string via fmt.Sprintf/%q.
+		`app"quoted`, // double-quote — closes the %q-quoted value early
+		`app\slash`,  // backslash — escape in filter grammar
+		"app~tilde",  // tilde — used as regex operator in containerd filters
+		"app/slash",  // forward-slash — path separator in container names
+		"app@at",     // @ — snapshot key separator used by SnapshotKey
 	}
 	for _, id := range invalid {
 		cfg := &AppConfig{AppID: id}

@@ -576,6 +576,12 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	// collision risk that a hyphen separator would have introduced.
 	//   - Single-container: "system.slice:{systemdSvc}:{appID}"
 	//   - Multi-service:    "system.slice:{systemdSvc}:{appID}@{serviceName}"
+	//
+	// INVARIANT: ApplyEntitlements and CDI helpers must not set CgroupsPath.
+	// The assertion below detects any future violation at runtime (SOC2-CC6).
+	if spec.Linux.CgroupsPath != "" {
+		return fmt.Errorf("security: CgroupsPath was unexpectedly set before assignment (%q); ApplyEntitlements or CDI must not set it", spec.Linux.CgroupsPath)
+	}
 	cgroupSuffix := appID
 	if serviceName != "" {
 		cgroupSuffix = appID + "@" + serviceName
@@ -658,6 +664,17 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 	if _, _, err := ParseContainerName(appName); err != nil {
 		return nil, fmt.Errorf("StartContainer: invalid app name: %w", err)
 	}
+	// Hold c.mu for container lookup and task creation to prevent a concurrent
+	// DeleteContainer from removing the container between the label-based lookup
+	// and NewTask (TOCTOU, SOC2-CC6). Released before the streaming goroutine
+	// launch via the muHeld flag pattern.
+	c.mu.Lock()
+	muHeld := true
+	defer func() {
+		if muHeld {
+			c.mu.Unlock()
+		}
+	}()
 	ctx = c.withNamespace(ctx)
 
 	container, err := c.client.LoadContainer(ctx, appName)
@@ -741,6 +758,11 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 	c.logger.Info("Container started", zap.String("app_name", appName))
 	c.startPostStartAgentHook(postStartAgentCommand, appName)
 
+	// Release the mutex before launching the streaming goroutine, which does
+	// not need it (it only reads from pipes).
+	muHeld = false
+	c.mu.Unlock()
+
 	// Stream output from the pipes.
 	outputCh := make(chan services.ContainerOutput, 64)
 	go c.streamOutput(ctx, task, exitStatusCh, outputCh, appName, stdoutR, stderrR, stdoutW, stderrW)
@@ -754,6 +776,13 @@ func (c *Client) StartContainerWithStdin(ctx context.Context, appName string, st
 	if _, _, err := ParseContainerName(appName); err != nil {
 		return nil, fmt.Errorf("StartContainerWithStdin: invalid app name: %w", err)
 	}
+	c.mu.Lock()
+	muHeld := true
+	defer func() {
+		if muHeld {
+			c.mu.Unlock()
+		}
+	}()
 	ctx = c.withNamespace(ctx)
 
 	container, err := c.client.LoadContainer(ctx, appName)
@@ -823,6 +852,9 @@ func (c *Client) StartContainerWithStdin(ctx context.Context, appName string, st
 
 	c.logger.Info("Container started with stdin", zap.String("app_name", appName))
 	c.startPostStartAgentHook(postStartAgentCommand, appName)
+
+	muHeld = false
+	c.mu.Unlock()
 
 	outputCh := make(chan services.ContainerOutput, 64)
 	go c.streamOutput(ctx, task, exitStatusCh, outputCh, appName, stdoutR, stderrR, stdoutW, stderrW)
@@ -1091,18 +1123,17 @@ func (c *Client) recreateContainer(ctx context.Context, ctr containerd.Container
 		return fmt.Errorf("marshaling spec: %w", err)
 	}
 
-	// Delete the container (cascades to orphaned task).
-	if err := ctr.Delete(ctx, containerd.WithSnapshotCleanup); err != nil {
-		return fmt.Errorf("deleting container: %w", err)
-	}
-
-	// ParseContainerName validates the container ID from the containerd store
-	// and splits it into appID + serviceName. This ensures the reconstructed
-	// container name and snapshot key are always consistent and well-formed,
-	// even if the store was tampered with between creation and recreation.
+	// Validate the container name BEFORE deleting so that a tampered or
+	// malformed name in the containerd store does not leave the container
+	// deleted without a replacement (SOC2-CC8).
 	parsedAppID, parsedSvcName, err := ParseContainerName(appName)
 	if err != nil {
 		return fmt.Errorf("refusing to recreate container with malformed name: %w", err)
+	}
+
+	// Delete the container (cascades to orphaned task).
+	if err := ctr.Delete(ctx, containerd.WithSnapshotCleanup); err != nil {
+		return fmt.Errorf("deleting container: %w", err)
 	}
 	snapshotKey := SnapshotKey(parsedAppID, parsedSvcName)
 	_, err = c.client.NewContainer(ctx, ContainerName(parsedAppID, parsedSvcName),
@@ -1213,7 +1244,9 @@ func (c *Client) containersForApp(ctx context.Context, appID string) ([]containe
 	}
 	// Post-filter in Go to confirm the label value matches exactly, providing
 	// defence-in-depth against any future filter grammar edge case.
-	ctrs := all[:0]
+	// Use a fresh slice — reusing all[:0] would alias the backing array and
+	// risk reading overwritten elements during the range loop (SOC2-CC6).
+	var ctrs []containerd.Container
 	for _, ctr := range all {
 		labels, lerr := ctr.Labels(ctx)
 		if lerr != nil || labels[labelKeyAppID] != appID {
