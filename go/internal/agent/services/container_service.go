@@ -610,9 +610,10 @@ func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.Del
 	}
 
 	if req.GetDeleteVolumes() {
-		for _, id := range ids {
-			s.deleteVolumes(id)
-		}
+		// Volumes are keyed by appID, not by per-service container ID, so we
+		// call deleteVolumes once with the app name rather than once per service
+		// container (which would be "appID/serviceName" and find nothing).
+		s.deleteVolumes(appName)
 	}
 
 	s.logger.Info("App deleted",
@@ -628,6 +629,14 @@ func (s *ContainerService) DeleteContainer(ctx context.Context, req *agentpb.Del
 var volumesDir = "/var/lib/wendy/volumes"
 
 func (s *ContainerService) deleteVolumes(appName string) {
+	// Guard: volumes are always keyed by plain appID (no "/"). A slash-containing
+	// name would find no matching directories, but reject it explicitly to prevent
+	// any future path-construction change from introducing a traversal vector
+	// (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+	if strings.Contains(appName, "/") {
+		s.logger.Warn("deleteVolumes: app name contains '/'; volumes are keyed by appID only — skipping")
+		return
+	}
 	entries, err := os.ReadDir(volumesDir)
 	if err != nil {
 		s.logger.Warn("Failed to read volumes directory",

@@ -165,13 +165,16 @@ func TestBuildContainerBaseEnvMultiServiceHostname(t *testing.T) {
 	}
 
 	wantHostname := "WENDY_HOSTNAME=api.local"
+	wantDeviceHostname := "WENDY_DEVICE_HOSTNAME=wendyos-test-device.local"
 	wantGroup := "WENDY_APP_GROUP=com.example.app"
 	wantAppID := "WENDY_APP_ID=com.example.app"
-	foundHostname, foundGroup, foundAppID := false, false, false
+	foundHostname, foundDeviceHostname, foundGroup, foundAppID := false, false, false, false
 	for _, kv := range env {
 		switch kv {
 		case wantHostname:
 			foundHostname = true
+		case wantDeviceHostname:
+			foundDeviceHostname = true
 		case wantGroup:
 			foundGroup = true
 		case wantAppID:
@@ -180,6 +183,9 @@ func TestBuildContainerBaseEnvMultiServiceHostname(t *testing.T) {
 	}
 	if !foundHostname {
 		t.Errorf("env missing %q; got %v", wantHostname, env)
+	}
+	if !foundDeviceHostname {
+		t.Errorf("env missing %q; got %v", wantDeviceHostname, env)
 	}
 	if !foundGroup {
 		t.Errorf("env missing %q; got %v", wantGroup, env)
@@ -208,19 +214,22 @@ func TestBuildContainerBaseEnvMultiServiceNoDeviceHostname(t *testing.T) {
 }
 
 // TestBuildContainerBaseEnvIdentityVars documents the full env-var contract
-// for WENDY_HOSTNAME, WENDY_APP_GROUP, and WENDY_APP_ID across both app types.
+// for WENDY_HOSTNAME, WENDY_DEVICE_HOSTNAME, WENDY_APP_GROUP, and WENDY_APP_ID
+// across both app types.
 //
 // Single-container app  (serviceName == ""):
 //
-//	WENDY_HOSTNAME = device hostname (e.g. "wendyos-abc.local")
-//	WENDY_APP_ID   = appID
+//	WENDY_HOSTNAME        = device hostname (e.g. "wendyos-abc.local")
+//	WENDY_DEVICE_HOSTNAME = device hostname (same as WENDY_HOSTNAME)
+//	WENDY_APP_ID          = appID
 //	(WENDY_APP_GROUP is not set)
 //
 // Multi-service app (serviceName != ""):
 //
-//	WENDY_HOSTNAME  = "{serviceName}.local"   ← distinct per service, not the device
-//	WENDY_APP_GROUP = appID                   ← lets a service discover its siblings
-//	WENDY_APP_ID    = appID
+//	WENDY_HOSTNAME        = "{serviceName}.local"   ← distinct per service
+//	WENDY_DEVICE_HOSTNAME = device hostname          ← always the host mDNS name
+//	WENDY_APP_GROUP       = appID                   ← lets a service discover siblings
+//	WENDY_APP_ID          = appID
 func TestBuildContainerBaseEnvIdentityVars(t *testing.T) {
 	const deviceHost = "wendyos-abc.local"
 	old := deviceHostnameWithSuffix
@@ -228,36 +237,40 @@ func TestBuildContainerBaseEnvIdentityVars(t *testing.T) {
 	deviceHostnameWithSuffix = func() string { return deviceHost }
 
 	tests := []struct {
-		name         string
-		appID        string
-		serviceName  string
-		wantHostname string
-		wantGroup    string // "" means the var must NOT be present
-		wantAppID    string
+		name               string
+		appID              string
+		serviceName        string
+		wantHostname       string
+		wantDeviceHostname string
+		wantGroup          string // "" means the var must NOT be present
+		wantAppID          string
 	}{
 		{
-			name:         "single-container: hostname is device, no app group",
-			appID:        "com.example.myapp",
-			serviceName:  "",
-			wantHostname: deviceHost,
-			wantGroup:    "",
-			wantAppID:    "com.example.myapp",
+			name:               "single-container: hostname is device, no app group",
+			appID:              "com.example.myapp",
+			serviceName:        "",
+			wantHostname:       deviceHost,
+			wantDeviceHostname: deviceHost,
+			wantGroup:          "",
+			wantAppID:          "com.example.myapp",
 		},
 		{
-			name:         "multi-service api: hostname is serviceName.local",
-			appID:        "com.example.myapp",
-			serviceName:  "api",
-			wantHostname: "api.local",
-			wantGroup:    "com.example.myapp",
-			wantAppID:    "com.example.myapp",
+			name:               "multi-service api: hostname is serviceName.local, device hostname still set",
+			appID:              "com.example.myapp",
+			serviceName:        "api",
+			wantHostname:       "api.local",
+			wantDeviceHostname: deviceHost,
+			wantGroup:          "com.example.myapp",
+			wantAppID:          "com.example.myapp",
 		},
 		{
-			name:         "multi-service worker: hostname is serviceName.local",
-			appID:        "com.example.myapp",
-			serviceName:  "worker",
-			wantHostname: "worker.local",
-			wantGroup:    "com.example.myapp",
-			wantAppID:    "com.example.myapp",
+			name:               "multi-service worker: hostname is serviceName.local, device hostname still set",
+			appID:              "com.example.myapp",
+			serviceName:        "worker",
+			wantHostname:       "worker.local",
+			wantDeviceHostname: deviceHost,
+			wantGroup:          "com.example.myapp",
+			wantAppID:          "com.example.myapp",
 		},
 	}
 
@@ -277,6 +290,9 @@ func TestBuildContainerBaseEnvIdentityVars(t *testing.T) {
 
 			if got := envMap["WENDY_HOSTNAME"]; got != tc.wantHostname {
 				t.Errorf("WENDY_HOSTNAME = %q, want %q", got, tc.wantHostname)
+			}
+			if got := envMap["WENDY_DEVICE_HOSTNAME"]; got != tc.wantDeviceHostname {
+				t.Errorf("WENDY_DEVICE_HOSTNAME = %q, want %q", got, tc.wantDeviceHostname)
 			}
 			if tc.wantGroup == "" {
 				if _, ok := envMap["WENDY_APP_GROUP"]; ok {

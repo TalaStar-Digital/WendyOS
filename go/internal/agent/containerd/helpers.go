@@ -114,12 +114,12 @@ func ParseContainerName(name string) (appID, serviceName string, err error) {
 	parts := strings.SplitN(name, "/", 2)
 	appID = parts[0]
 	if err := appconfig.ValidateAppID(appID); err != nil {
-		return "", "", fmt.Errorf("invalid container name %q: %w", name, err)
+		return "", "", fmt.Errorf("invalid container name %q: %w", sanitizeForLog(name, 300), err)
 	}
 	if len(parts) == 2 {
 		serviceName = parts[1]
 		if err := appconfig.ValidateServiceName(serviceName); err != nil {
-			return "", "", fmt.Errorf("invalid container name %q: %w", name, err)
+			return "", "", fmt.Errorf("invalid container name %q: %w", sanitizeForLog(name, 300), err)
 		}
 	}
 	return appID, serviceName, nil

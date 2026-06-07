@@ -652,9 +652,10 @@ func (c *Client) applyCDIGPU(spec *localoci.Spec) {
 }
 
 func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentCommand string, restartPolicy *agentpb.RestartPolicy) (<-chan services.ContainerOutput, error) {
-	// Validate appName before any containerd call so a crafted value cannot
-	// reach the label filter in the containersForApp fallback path (SOC2-CC6).
-	if err := appconfig.ValidateAppID(appName); err != nil {
+	// Accept both "appID" and "appID/serviceName" forms. ParseContainerName
+	// validates both components so a crafted value cannot reach the label filter
+	// in the containersForApp fallback path (SOC2-CC6, ISO27001-A.8).
+	if _, _, err := ParseContainerName(appName); err != nil {
 		return nil, fmt.Errorf("StartContainer: invalid app name: %w", err)
 	}
 	ctx = c.withNamespace(ctx)
@@ -750,7 +751,7 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 // StartContainerWithStdin is like StartContainer but attaches the provided
 // stdin reader to the container's standard input.
 func (c *Client) StartContainerWithStdin(ctx context.Context, appName string, stdin io.Reader, postStartAgentCommand string, restartPolicy *agentpb.RestartPolicy) (<-chan services.ContainerOutput, error) {
-	if err := appconfig.ValidateAppID(appName); err != nil {
+	if _, _, err := ParseContainerName(appName); err != nil {
 		return nil, fmt.Errorf("StartContainerWithStdin: invalid app name: %w", err)
 	}
 	ctx = c.withNamespace(ctx)
@@ -885,14 +886,21 @@ func buildContainerBaseEnv(appID, serviceName string) ([]string, error) {
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"TERM=xterm",
 	}
+	deviceHost := deviceHostnameWithSuffix()
 	if serviceName != "" {
 		// Multi-service: hostname is the service name, not the device hostname.
 		env = append(env, "WENDY_HOSTNAME="+serviceName+".local")
 		env = append(env, "WENDY_APP_GROUP="+appID)
 	} else {
-		if h := deviceHostnameWithSuffix(); h != "" {
-			env = append(env, "WENDY_HOSTNAME="+h)
+		if deviceHost != "" {
+			env = append(env, "WENDY_HOSTNAME="+deviceHost)
 		}
+	}
+	// WENDY_DEVICE_HOSTNAME is the mDNS hostname of the host device, available
+	// in both single- and multi-service containers so workloads can always reach
+	// the device regardless of what WENDY_HOSTNAME is set to.
+	if deviceHost != "" {
+		env = append(env, "WENDY_DEVICE_HOSTNAME="+deviceHost)
 	}
 	// WENDY_APP_ID is injected unconditionally (all network modes) so app code
 	// can always read its own identity. The OTel identity vars are injected only
@@ -1194,12 +1202,24 @@ func (c *Client) containersForApp(ctx context.Context, appID string) ([]containe
 	// Defence-in-depth: re-validate appID at the injection site so that a future
 	// caller that bypasses the RPC entry-point validation cannot inject into the
 	// containerd filter expression (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+	// ValidateAppID allows only [a-zA-Z0-9._-], none of which are special in
+	// the containerd filter grammar, so %q quoting is safe for this character set.
 	if err := appconfig.ValidateAppID(appID); err != nil {
 		return nil, fmt.Errorf("containersForApp: invalid appID: %w", err)
 	}
-	ctrs, err := c.client.Containers(ctx, fmt.Sprintf("labels.%q==%q", labelKeyAppID, appID))
+	all, err := c.client.Containers(ctx, fmt.Sprintf("labels.%q==%q", labelKeyAppID, appID))
 	if err != nil {
 		return nil, fmt.Errorf("listing containers for app %q: %w", appID, err)
+	}
+	// Post-filter in Go to confirm the label value matches exactly, providing
+	// defence-in-depth against any future filter grammar edge case.
+	ctrs := all[:0]
+	for _, ctr := range all {
+		labels, lerr := ctr.Labels(ctx)
+		if lerr != nil || labels[labelKeyAppID] != appID {
+			continue
+		}
+		ctrs = append(ctrs, ctr)
 	}
 	return ctrs, nil
 }
@@ -1301,11 +1321,17 @@ func (c *Client) StopContainer(ctx context.Context, appID string) error {
 		return err
 	}
 	if len(ctrs) == 0 {
-		return fmt.Errorf("no containers found for app %q", appID)
+		// Idempotent: already stopped / never created.
+		c.logger.Info("StopContainer: no containers found, already stopped",
+			zap.String("app_id", sanitizeForLog(appID, 253)))
+		return nil
 	}
 	var errs []error
 	for _, ctr := range ctrs {
 		if err := c.stopOne(ctx, ctr.ID()); err != nil {
+			c.logger.Error("Failed to stop service container",
+				zap.String("container_id", ctr.ID()),
+				zap.Error(err))
 			errs = append(errs, err)
 		}
 	}
@@ -1330,7 +1356,11 @@ func (c *Client) deleteOne(ctx context.Context, ctr containerd.Container, wantIm
 		return "", fmt.Errorf("deleting container %q: %w", ctr.ID(), err)
 	}
 	if c.proxyManager != nil {
-		_ = c.proxyManager.Stop(ctr.ID())
+		if proxyErr := c.proxyManager.Stop(ctr.ID()); proxyErr != nil {
+			c.logger.Warn("Failed to stop D-Bus proxy",
+				zap.String("container_id", ctr.ID()),
+				zap.Error(proxyErr))
+		}
 	}
 	c.logger.Info("Container deleted", zap.String("container_id", ctr.ID()))
 	return imgName, nil
@@ -1357,6 +1387,9 @@ func (c *Client) DeleteContainer(ctx context.Context, appID string, deleteImage 
 	for _, ctr := range ctrs {
 		imgName, delErr := c.deleteOne(ctx, ctr, deleteImage)
 		if delErr != nil {
+			c.logger.Error("Failed to delete service container",
+				zap.String("container_id", ctr.ID()),
+				zap.Error(delErr))
 			errs = append(errs, delErr)
 			continue
 		}
