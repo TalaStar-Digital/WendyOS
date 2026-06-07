@@ -723,6 +723,49 @@ func TestBuildGStreamerArgs_CSI_LibcamerasrcMissing_FallsBackToV4l2(t *testing.T
 	}
 }
 
+func TestBuildGStreamerArgs_CSI_PinsNV12SourceFormat(t *testing.T) {
+	// libcamerasrc must be pinned to a processed format immediately after the
+	// source. On a PiSP/CFE camera (Raspberry Pi 5) an unconstrained libcamerasrc
+	// negotiates raw Bayer, which no videoconvert/encoder can consume
+	// (Camera::configure() -22, not-negotiated). The NV12 caps must sit between
+	// the source and the leaky queue.
+	args := buildGStreamerArgs("gst", "/dev/video0", &agentpb.StreamVideoRequest{}, "x264enc", true, camera.TransportCSI, "", defaultElements())
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "video/x-raw,format=NV12") {
+		t.Fatalf("CSI/libcamerasrc pipeline must pin format=NV12 on the source caps: %v", args)
+	}
+	srcIdx := strings.Index(joined, "libcamerasrc")
+	nv12Idx := strings.Index(joined, "video/x-raw,format=NV12")
+	queueIdx := strings.Index(joined, "queue ")
+	if !(srcIdx < nv12Idx && nv12Idx < queueIdx) {
+		t.Errorf("NV12 source caps must sit between libcamerasrc and the leaky queue: %v", args)
+	}
+}
+
+func TestBuildGStreamerArgs_CSI_NV12SourceFormatWithDimensions(t *testing.T) {
+	// Requested dimensions must be folded into the SAME format-pinned source
+	// capsfilter, not a separate formatless one — a formatless width/height
+	// capsfilter still lets libcamerasrc select raw Bayer.
+	req := &agentpb.StreamVideoRequest{Width: 1280, Height: 720, Framerate: 30}
+	args := buildGStreamerArgs("gst", "/dev/video0", req, "x264enc", true, camera.TransportCSI, "", defaultElements())
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "video/x-raw,format=NV12,width=1280,height=720,framerate=30/1") {
+		t.Errorf("CSI source caps must combine NV12 with the requested dimensions: %v", args)
+	}
+}
+
+func TestBuildGStreamerArgs_USB_DoesNotForceNV12SourceFormat(t *testing.T) {
+	// The NV12 source pin is specific to libcamerasrc. A USB v4l2src must keep
+	// negotiating its native format (YUYV/MJPEG/...); forcing NV12 on the source
+	// would break cameras that don't emit it. With x264enc the only possible NV12
+	// mention would be such a source pin, so none must appear.
+	args := buildGStreamerArgs("gst", "/dev/video0", &agentpb.StreamVideoRequest{}, "x264enc", true, camera.TransportUSB, "", defaultElements())
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "video/x-raw,format=NV12") {
+		t.Errorf("USB/v4l2src pipeline must not pin NV12 on the source: %v", args)
+	}
+}
+
 func TestBuildSourceElement_NilAvailableMapTreatedAsLibcamerasrcAbsent(t *testing.T) {
 	src := buildSourceElement("/dev/video0", camera.TransportCSI, "/cam", nil)
 	if src != "v4l2src device=/dev/video0" {

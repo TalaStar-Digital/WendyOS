@@ -872,7 +872,18 @@ func buildGStreamerArgs(gstPath, devicePath string, req *agentpb.StreamVideoRequ
 	src := buildSourceElement(devicePath, transport, libcameraID, available)
 	gop := keyframeIntervalFrames(req.GetFramerate())
 
+	// libcamerasrc (CSI/PiSP) must be pinned to a processed format or it
+	// negotiates raw Bayer (e.g. the Raspberry Pi 5 rp1-cfe/PiSP pipeline),
+	// which no downstream videoconvert/encoder can consume — the camera reports
+	// Camera::configure() -22 and the pipeline dies with not-negotiated. NV12 is
+	// the PiSP ISP's native output. A USB v4l2src keeps negotiating its own
+	// native format (YUYV/MJPEG/...). Any requested dimensions are folded into
+	// this same source capsfilter; a formatless width/height filter still lets
+	// libcamerasrc fall back to Bayer.
 	var capsParts []string
+	if strings.HasPrefix(src, "libcamerasrc") {
+		capsParts = append(capsParts, "format=NV12")
+	}
 	if req.GetWidth() > 0 {
 		capsParts = append(capsParts, fmt.Sprintf("width=%d", req.GetWidth()))
 	}
