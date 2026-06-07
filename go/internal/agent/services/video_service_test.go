@@ -16,6 +16,16 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// mustBuildGStreamerArgs calls buildGStreamerArgs and fails the test if it returns an error.
+func mustBuildGStreamerArgs(t *testing.T, gstPath, devicePath string, req *agentpb.StreamVideoRequest, encoder string, hasH264Parse bool) []string {
+	t.Helper()
+	args, err := buildGStreamerArgs(gstPath, devicePath, req, encoder, hasH264Parse)
+	if err != nil {
+		t.Fatalf("unexpected error from buildGStreamerArgs: %v", err)
+	}
+	return args
+}
+
 // newTestVideoService creates a VideoService with injectable filesystem functions.
 // hasVideoCapture defaults to always returning true so tests are not gated on real V4L2 devices.
 func newTestVideoService(glob func() ([]string, error), readName func(string) (string, error)) *VideoService {
@@ -142,7 +152,7 @@ func TestVideoService_ListVideoDevices_GlobError(t *testing.T) {
 
 func TestBuildGStreamerArgs_NoDimensions(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
 	if len(args) == 0 || args[0] != "/usr/bin/gst-launch-1.0" {
 		t.Errorf("expected first arg to be gst-launch-1.0 path, got %v", args)
 	}
@@ -169,7 +179,7 @@ func TestBuildGStreamerArgs_NoDimensions(t *testing.T) {
 
 func TestBuildGStreamerArgs_WithoutH264Parse(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", false)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", false)
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "h264parse") {
 		t.Errorf("pipeline must not use h264parse when unavailable: %v", args)
@@ -183,7 +193,7 @@ func TestBuildGStreamerArgs_WithoutH264Parse(t *testing.T) {
 
 func TestBuildGStreamerArgs_X264ProfileIsCapsFilter(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
 	joined := strings.Join(args, " ")
 	// profile=high must be an output capsfilter (,profile=high), not an x264enc
 	// element property ( profile=high) — as a property x264enc may select a
@@ -216,7 +226,7 @@ func TestKeyframeIntervalFrames(t *testing.T) {
 
 func TestBuildGStreamerArgs_X264SetsShortKeyframeInterval(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
 	joined := strings.Join(args, " ")
 	// fps 0 -> default 30 -> a keyframe every ~0.5s -> 15 frames. A short GOP
 	// lets a client resync within ~0.5s after a dropped or skipped frame.
@@ -230,7 +240,7 @@ func TestBuildGStreamerArgs_X264SetsShortKeyframeInterval(t *testing.T) {
 
 func TestBuildGStreamerArgs_KeyframeIntervalScalesWithFramerate(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{Framerate: 60}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "key-int-max=30") {
 		t.Errorf("at 60fps the GOP should be 30 frames (~0.5s): %v", args)
@@ -239,7 +249,7 @@ func TestBuildGStreamerArgs_KeyframeIntervalScalesWithFramerate(t *testing.T) {
 
 func TestBuildGStreamerArgs_VP8SetsShortKeyframeInterval(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "vp8enc", false)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "vp8enc", false)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "keyframe-max-dist=15") {
 		t.Errorf("vp8enc pipeline must cap the GOP via keyframe-max-dist: %v", args)
@@ -248,7 +258,7 @@ func TestBuildGStreamerArgs_VP8SetsShortKeyframeInterval(t *testing.T) {
 
 func TestBuildGStreamerArgs_NVV4L2SetsKeyframeInterval(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "nvv4l2h264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "nvv4l2h264enc", true)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "iframeinterval=15") {
 		t.Errorf("nvv4l2h264enc pipeline must set iframeinterval: %v", args)
@@ -257,7 +267,7 @@ func TestBuildGStreamerArgs_NVV4L2SetsKeyframeInterval(t *testing.T) {
 
 func TestBuildGStreamerArgs_V4L2SetsKeyframeInterval(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "v4l2h264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "v4l2h264enc", true)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "h264_i_frame_period=15") {
 		t.Errorf("v4l2h264enc pipeline must set the I-frame period via extra-controls: %v", args)
@@ -266,7 +276,7 @@ func TestBuildGStreamerArgs_V4L2SetsKeyframeInterval(t *testing.T) {
 
 func TestBuildGStreamerArgs_WithDimensionsAndFramerate(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{Width: 1280, Height: 720, Framerate: 30}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "width=1280") || !strings.Contains(joined, "height=720") || !strings.Contains(joined, "framerate=30/1") {
 		t.Errorf("expected dimension caps in args: %v", args)
@@ -275,7 +285,7 @@ func TestBuildGStreamerArgs_WithDimensionsAndFramerate(t *testing.T) {
 
 func TestBuildGStreamerArgs_V4L2HardwareEncoder(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "v4l2h264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "v4l2h264enc", true)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "v4l2h264enc") || !strings.Contains(joined, "video/x-h264") {
 		t.Errorf("expected v4l2h264enc pipeline segment: %v", args)
@@ -284,7 +294,7 @@ func TestBuildGStreamerArgs_V4L2HardwareEncoder(t *testing.T) {
 
 func TestBuildGStreamerArgs_NVV4L2HardwareEncoder(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "nvv4l2h264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "nvv4l2h264enc", true)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "nvv4l2h264enc") {
 		t.Errorf("expected nvv4l2h264enc in pipeline: %v", args)
@@ -296,7 +306,7 @@ func TestBuildGStreamerArgs_NVV4L2HardwareEncoder(t *testing.T) {
 
 func TestBuildGStreamerArgs_VP8Encoder(t *testing.T) {
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "vp8enc", false)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "vp8enc", false)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "vp8enc") || !strings.Contains(joined, "webmmux") {
 		t.Errorf("expected vp8enc+webmmux pipeline segment: %v", args)
@@ -311,7 +321,7 @@ func TestBuildGStreamerArgs_LeakyRawQueueBeforeEncoder(t *testing.T) {
 	// the encoder always works on the freshest raw frame and a capture backlog
 	// drains by dropping raw frames rather than encoding stale ones.
 	req := &agentpb.StreamVideoRequest{}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream") {
 		t.Fatalf("pipeline must insert a leaky raw queue before the encoder: %v", args)
@@ -328,7 +338,7 @@ func TestBuildGStreamerArgs_LeakyRawQueueWithCaps(t *testing.T) {
 	// With raw caps requested, the leaky queue must come after the caps filter
 	// and before the encoder segment.
 	req := &agentpb.StreamVideoRequest{Width: 1280, Height: 720, Framerate: 30}
-	args := buildGStreamerArgs("/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
+	args := mustBuildGStreamerArgs(t, "/usr/bin/gst-launch-1.0", "/dev/video0", req, "x264enc", true)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream") {
 		t.Fatalf("pipeline must insert a leaky raw queue before the encoder: %v", args)

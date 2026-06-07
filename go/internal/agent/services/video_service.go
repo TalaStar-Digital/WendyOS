@@ -234,19 +234,13 @@ func (h *deviceHub) broadcast(frame videoFrame) bool {
 		snapshot = append(snapshot, ch)
 	}
 	h.mu.Unlock()
-	// Copy frame.data once per subscriber so each goroutine owns its slice and
-	// there is no aliasing between concurrent stream.Send() calls. The
-	// subscriber count is bounded by maxSubscribersPerHub (16), so the total
-	// allocation per frame is at most 16 × maxFrameBytes = 32 MiB, and typical
-	// frames are far smaller.
+	// frame.data is write-once: copied from the V4L2 mmap region or GStreamer
+	// pipe before broadcast() is called and never written again. All subscriber
+	// goroutines receive the same videoFrame value; stream.Send() reads but never
+	// writes the data slice, so concurrent reads are safe per the Go memory model.
 	for _, ch := range snapshot {
-		f := videoFrame{
-			data:  append([]byte(nil), frame.data...),
-			tsNs:  frame.tsNs,
-			codec: frame.codec,
-		}
 		select {
-		case ch <- f:
+		case ch <- frame:
 		default:
 		}
 	}
@@ -862,7 +856,10 @@ func (s *VideoService) streamGStreamer(ctx context.Context, broadcast func([]byt
 	}
 	s.logger.Info("GStreamer encoder selected", zap.String("encoder", enc.element), zap.String("codec", enc.codec.String()))
 
-	args := buildGStreamerArgs(gstPath, path, req, enc.element, enc.hasH264Parse)
+	args, err := buildGStreamerArgs(gstPath, path, req, enc.element, enc.hasH264Parse)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to build GStreamer pipeline: %v", err)
+	}
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
@@ -1044,7 +1041,15 @@ func keyframeIntervalFrames(fps uint32) int {
 const leakyRawQueue = "queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream"
 
 // buildGStreamerArgs constructs the gst-launch-1.0 argument list for V4L2 encode.
-func buildGStreamerArgs(gstPath, devicePath string, req *agentpb.StreamVideoRequest, encoder string, hasH264Parse bool) []string {
+// Returns an error if any interpolated string contains GStreamer pipeline injection
+// tokens — making the security property a hard failure at construction time rather
+// than relying solely on caller-side allowlist validation.
+func buildGStreamerArgs(gstPath, devicePath string, req *agentpb.StreamVideoRequest, encoder string, hasH264Parse bool) ([]string, error) {
+	for _, s := range []string{devicePath, encoder} {
+		if strings.ContainsAny(s, "!();") {
+			return nil, fmt.Errorf("GStreamer argument contains pipeline injection token: %q", s)
+		}
+	}
 	src := fmt.Sprintf("v4l2src device=%s", devicePath)
 	gop := keyframeIntervalFrames(req.GetFramerate())
 
@@ -1068,7 +1073,7 @@ func buildGStreamerArgs(gstPath, devicePath string, req *agentpb.StreamVideoRequ
 	}
 	// -q suppresses gst-launch's status messages (e.g. "Setting pipeline to PLAYING")
 	// from being written to stdout and corrupting the binary H264 stream.
-	return append([]string{gstPath, "-q"}, strings.Fields(pipeline)...)
+	return append([]string{gstPath, "-q"}, strings.Fields(pipeline)...), nil
 }
 
 // h264ByteStream normalizes any encoder's H.264 output to Annex B byte-stream
