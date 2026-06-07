@@ -411,13 +411,37 @@ func applyCamera(spec *Spec) {
 
 // cameraExtraGlobs is the list of device-node patterns the camera entitlement
 // scans on every host. Exposed as a var so tests can redirect into a tempdir.
+//
+// SECURITY SCOPE (deliberate): each matched node grants its whole device *major*
+// (rw, no mknod), not a single minor. This is broader than the camera strictly
+// needs — e.g. /dev/dma_heap/* shares its major with heaps used by GPU/display
+// codecs — but is intentional and required, not an oversight:
+//   - These subsystems are how libcamera/V4L2 capture works: media controllers
+//     (/dev/media*), sub-device nodes (/dev/v4l-subdev*) and dma-buf heaps
+//     (/dev/dma_heap/*) are all opened by a containerized camera app at runtime.
+//   - Minor numbers are NOT stable: USB-webcam replug and dynamic media-graph
+//     creation re-mint minors, so a minor pinned at apply time would deny the
+//     device after a hotplug. The /dev bind mount (see applyCamera) surfaces the
+//     live nodes; a per-major rule is what keeps them reachable.
+//   - The cgroup device model keys on major:minor, so "only the cma/system
+//     dma-heap" cannot be expressed without enumerating minors that libcamera is
+//     free to choose at allocation time — narrowing would be both fragile and
+//     capture-breaking.
+//
+// The entitlement is therefore coarse by design for a single-purpose embedded
+// device. Containers still get rw (not rwm), withholding the mknod escape
+// primitive. Operators granting `camera` should understand it implies access to
+// the host's media/dma-heap majors.
 var cameraExtraGlobs = []string{
 	"/dev/media*",
 	"/dev/v4l-subdev*",
 	"/dev/dma_heap/*",
 }
 
-// jetsonExtraGlobs adds Jetson-only device patterns. Same rationale.
+// jetsonExtraGlobs adds Jetson-only device patterns. Same major-level rationale
+// and tradeoff as cameraExtraGlobs: the nvargus stack needs the nvhost/nvmap
+// majors and they cannot be minor-scoped to "camera only" without breaking the
+// Argus ISP/encoder path.
 var jetsonExtraGlobs = []string{
 	"/dev/nvhost-*",
 	"/dev/nvmap",

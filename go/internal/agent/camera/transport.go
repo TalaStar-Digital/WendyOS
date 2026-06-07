@@ -15,6 +15,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -126,11 +127,41 @@ func transportFromDriver(driver string) Transport {
 	return TransportUnknown
 }
 
+// maxCamListBytes caps how much `cam --list` output is read into memory. Real
+// output is a few short lines; the bound prevents a pathological or compromised
+// `cam` binary from exhausting agent memory — libcameraTimeout bounds how long
+// the subprocess runs, but not how much it can write.
+const maxCamListBytes = 1 << 20 // 1 MiB
+
+// readCamListBounded reads at most maxCamListBytes from r. Output beyond the cap
+// is silently truncated; cam --list never approaches the bound in practice.
+func readCamListBounded(r io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r, maxCamListBytes))
+}
+
 // runCamList is the injection point for executing `cam --list`. Tests
 // override this to return canned output without spawning a subprocess.
 var runCamList = func(ctx context.Context, binary string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, binary, "--list")
-	return cmd.Output()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	data, readErr := readCamListBounded(stdout)
+	// Drain anything past the cap so the child never blocks writing to a full
+	// pipe, then reap it (also surfaces the context-timeout kill as a wait error).
+	_, _ = io.Copy(io.Discard, stdout)
+	waitErr := cmd.Wait()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if waitErr != nil {
+		return nil, waitErr
+	}
+	return data, nil
 }
 
 // EnumerateLibcamera invokes `cam --list` with a 1-second timeout and parses

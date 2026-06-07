@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -253,5 +254,29 @@ func TestClassify_DefaultsAreSafe(t *testing.T) {
 	got, drv := Classify(fmt.Sprintf("video-does-not-exist-%d", time.Now().UnixNano()))
 	if got != TransportUnknown || drv != "" {
 		t.Fatalf("got (%v, %q), want (Unknown, empty)", got, drv)
+	}
+}
+
+func TestReadCamListBounded_CapsOversizedOutput(t *testing.T) {
+	// A pathological or compromised `cam` could emit unbounded output; the reader
+	// must cap what it buffers into memory rather than growing without limit.
+	big := strings.Repeat("imx477\n", (maxCamListBytes/7)+1000) // > maxCamListBytes
+	out, err := readCamListBounded(strings.NewReader(big))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out) > maxCamListBytes {
+		t.Errorf("output must be capped at %d bytes, got %d", maxCamListBytes, len(out))
+	}
+}
+
+func TestReadCamListBounded_SmallOutputPassesThrough(t *testing.T) {
+	const sample = "1: 'imx477' (/base/axi/pcie@120000/rp1/i2c@80000/imx477@1a)\n"
+	out, err := readCamListBounded(strings.NewReader(sample))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(out) != sample {
+		t.Errorf("small output must pass through unchanged, got %q", out)
 	}
 }
