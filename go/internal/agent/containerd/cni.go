@@ -381,7 +381,11 @@ func (c *Client) CNIAdd(ctx context.Context, appID, containerID, netnsPath strin
 	cmd.Env = []string{
 		// Explicit minimal environment — never inherit the agent's environment,
 		// which may contain credentials or Wendy-internal tokens (SOC2-CC6, NIST-SC-7).
-		"PATH=/opt/cni/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		// PATH restricted to /opt/cni/bin only: the bridge plugin and its IPAM
+		// subprocess (host-local) both live there; including system paths would
+		// allow a compromised /usr/bin to intercept IPAM exec calls (SOC2-CC6,
+		// NIST-SC-7, ISO27001-A.8).
+		"PATH=/opt/cni/bin",
 		"CNI_COMMAND=ADD",
 		"CNI_CONTAINERID=" + containerID,
 		"CNI_NETNS=" + netnsPath,
@@ -542,8 +546,9 @@ func (c *Client) CNIDel(ctx context.Context, appID, containerID, netnsPath strin
 	cmd.Stdin = strings.NewReader(cfgJSON)
 	cmd.Env = []string{
 		// Explicit minimal environment — never inherit the agent's environment
-		// (SOC2-CC6, NIST-SC-7).
-		"PATH=/opt/cni/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		// (SOC2-CC6, NIST-SC-7). PATH restricted to /opt/cni/bin only so the
+		// bridge plugin cannot resolve IPAM helpers from attacker-controlled paths.
+		"PATH=/opt/cni/bin",
 		"CNI_COMMAND=DEL",
 		"CNI_CONTAINERID=" + containerID,
 		"CNI_NETNS=" + netnsPath,

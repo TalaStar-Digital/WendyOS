@@ -1188,8 +1188,22 @@ var blockedEnvPrefixes = []string{
 	"WENDY_", // Wendy-internal variables must not be overrideable by callers
 }
 
+// maxUserEnvEntries is the maximum number of caller-supplied env entries accepted.
+// Prevents OCI spec bloat / DoS via unbounded env injection (SOC2-CC6, NIST-SI-10).
+const maxUserEnvEntries = 512
+
+// maxUserEnvEntryLen is the maximum byte length of a single KEY=VALUE entry.
+// 32 KB covers all practical use cases while bounding spec-JSON size (SOC2-CC6, NIST-SI-10).
+const maxUserEnvEntryLen = 32 * 1024
+
 func validateUserEnv(entries []string) error {
+	if len(entries) > maxUserEnvEntries {
+		return fmt.Errorf("too many env entries: %d exceeds limit of %d (SOC2-CC6, NIST-SI-10)", len(entries), maxUserEnvEntries)
+	}
 	for _, kv := range entries {
+		if len(kv) > maxUserEnvEntryLen {
+			return fmt.Errorf("env entry exceeds maximum length of %d bytes (SOC2-CC6, NIST-SI-10)", maxUserEnvEntryLen)
+		}
 		if strings.ContainsAny(kv, "\x00\n\r") {
 			return fmt.Errorf("env entry contains forbidden control character: %q", sanitizeForLog(kv, 80))
 		}
@@ -1804,9 +1818,15 @@ func ensureSharedSHM(appID string) (string, error) {
 	// 0o1770 → 0o1750 or looser during the MkdirAll call, creating a window
 	// before the subsequent Chmod during which the directory is accessible to
 	// unintended users.
+	// 0o1700: owner-only sticky directory. The agent runs as root (uid 0) and
+	// is the sole writer; group/other bits are cleared so no GID-0 sibling
+	// daemon can traverse or modify the shm tree (SOC2-CC6, NIST-AC-3,
+	// ISO27001-A.9). The sticky bit prevents any in-container process from
+	// unlinking entries owned by a different container even if it somehow
+	// gains access to the host mount.
 	runtime.LockOSThread()
 	oldUmask := syscall.Umask(0)
-	mkdirErr := os.MkdirAll(path, 0o1770)
+	mkdirErr := os.MkdirAll(path, 0o1700)
 	syscall.Umask(oldUmask)
 	runtime.UnlockOSThread()
 	if mkdirErr != nil {
@@ -1814,7 +1834,7 @@ func ensureSharedSHM(appID string) (string, error) {
 	}
 	// Explicit Chmod to handle the case where the directory already existed
 	// with looser permissions (MkdirAll is a no-op for existing dirs).
-	if err := os.Chmod(path, 0o1770); err != nil {
+	if err := os.Chmod(path, 0o1700); err != nil {
 		return "", fmt.Errorf("setting permissions on shared shm dir %q: %w", path, err)
 	}
 	return path, nil
