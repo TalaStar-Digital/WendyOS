@@ -392,6 +392,13 @@ func applyCamera(spec *Spec) {
 	// name after unplug/replug, and an OCI device snapshot cannot update inside
 	// a running container. Binding host /dev keeps /dev/video* and /dev/v4l
 	// current without requiring container restart.
+	//
+	// nodev is intentionally omitted here (unlike the /run/udev bind below):
+	// the camera entitlement's whole purpose is to let the container *open the
+	// device nodes* under /dev — applying nodev would make every /dev/video*,
+	// /dev/media* etc. unusable as a device. Access is still gated by the
+	// per-major cgroup allow rules above (deny-all baseline), so this does not
+	// expose arbitrary host devices. Do not add nodev to this mount.
 	replaceMount(spec, Mount{
 		Destination: "/dev",
 		Source:      "/dev",
