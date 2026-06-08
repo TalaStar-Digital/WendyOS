@@ -283,6 +283,17 @@ func defaultSeccomp() *LinuxSeccomp {
 	}
 }
 
+// InjectHostsMount adds a bind-mount that overlays /etc/hosts with the file at
+// hostsPath. Use this for isolated-mode containers so service names resolve.
+func InjectHostsMount(spec *Spec, hostsPath string) {
+	spec.Mounts = append(spec.Mounts, Mount{
+		Destination: "/etc/hosts",
+		Type:        "bind",
+		Source:      hostsPath,
+		Options:     []string{"rbind", "ro"},
+	})
+}
+
 func defaultMounts() []Mount {
 	return []Mount{
 		{

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +17,25 @@ import (
 	"github.com/wendylabsinc/wendy/go/internal/shared/appconfig"
 	agentpb "github.com/wendylabsinc/wendy/go/proto/gen/agentpb"
 )
+
+// safeJoin joins base and a single path component, returning an error if the
+// component contains a path separator or a dot-only segment, or if the result
+// does not fall directly under base. Use this wherever an attacker-controlled
+// string is joined with a trusted base directory to prevent path traversal
+// (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+func safeJoin(base, component string) (string, error) {
+	if strings.ContainsRune(component, filepath.Separator) {
+		return "", fmt.Errorf("path component %q contains path separator", component)
+	}
+	if component == "." || component == ".." {
+		return "", fmt.Errorf("path component %q is not allowed", component)
+	}
+	joined := filepath.Join(base, component)
+	if !strings.HasPrefix(filepath.Clean(joined), filepath.Clean(base)+string(filepath.Separator)) {
+		return "", fmt.Errorf("component %q escapes base directory %q", component, base)
+	}
+	return joined, nil
+}
 
 // normalizeImageName canonicalises a Docker short reference (e.g.
 // "python:3.11-slim", "nginx") to a fully-qualified form

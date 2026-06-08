@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -55,6 +56,28 @@ type Client struct {
 	namespace    string
 	mu           sync.Mutex
 	proxyManager *dbusproxy.Manager // nil if xdg-dbus-proxy is not available
+
+	// appServices caches the services map for multi-service apps, keyed by appID.
+	// Populated on CreateContainerWithProgress; used by resolveStopOrder.
+	appServices map[string]map[string]*appconfig.ServiceConfig
+
+	// primaryPIDs tracks the PID of the primary (namespace-owner) container
+	// for each shared-namespace app group. Protected by mu.
+	primaryPIDs map[string]uint32
+
+	// appIsolation caches the isolation mode for each appID.
+	// Populated on CreateContainerWithProgress; read by StartContainer.
+	appIsolation map[string]string
+
+	// serviceIPs maps appID → serviceName → IP for isolated-mode apps.
+	// Updated after each successful CNI ADD. Protected by mu.
+	serviceIPs map[string]map[string]string
+
+	// appStopping tracks appIDs that are currently being stopped.
+	// Set before releasing c.mu in StopContainer; cleared in the cleanup phase.
+	// Checked by CreateContainerWithProgress to reject concurrent create/stop races
+	// (SOC2-CC6, NIST-AC-3, ISO27001-A.8).
+	appStopping map[string]bool
 }
 
 func NewClient(logger *zap.Logger, address string, proxyMgr *dbusproxy.Manager) (*Client, error) {
@@ -72,6 +95,11 @@ func NewClient(logger *zap.Logger, address string, proxyMgr *dbusproxy.Manager) 
 		logger:       logger,
 		namespace:    "default",
 		proxyManager: proxyMgr,
+		appServices:  make(map[string]map[string]*appconfig.ServiceConfig),
+		primaryPIDs:  make(map[string]uint32),
+		appIsolation: make(map[string]string),
+		serviceIPs:   make(map[string]map[string]string),
+		appStopping:  make(map[string]bool),
 	}, nil
 }
 
@@ -86,6 +114,44 @@ func (c *Client) Close() error {
 
 func (c *Client) withNamespace(ctx context.Context) context.Context {
 	return namespaces.WithNamespace(ctx, c.namespace)
+}
+
+// setPrimaryPID records the PID of the primary container for appID.
+// Caller must hold c.mu.
+func (c *Client) setPrimaryPID(appID string, pid uint32) {
+	if c.primaryPIDs == nil {
+		c.primaryPIDs = make(map[string]uint32)
+	}
+	c.primaryPIDs[appID] = pid
+}
+
+// getPrimaryPID returns the PID of the primary container, if known.
+// Caller must hold c.mu.
+func (c *Client) getPrimaryPID(appID string) (uint32, bool) {
+	pid, ok := c.primaryPIDs[appID]
+	return pid, ok
+}
+
+// clearPrimaryPID removes the primary PID entry when the app group stops.
+// Caller must hold c.mu.
+func (c *Client) clearPrimaryPID(appID string) {
+	delete(c.primaryPIDs, appID)
+}
+
+// getIsolation returns the cached isolation mode for appID. Caller must hold c.mu.
+func (c *Client) getIsolation(appID string) string {
+	return c.appIsolation[appID]
+}
+
+// recordServiceIP stores the CNI-assigned IP for a service. Caller must hold c.mu.
+func (c *Client) recordServiceIP(appID, serviceName, ip string) {
+	if c.serviceIPs == nil {
+		c.serviceIPs = make(map[string]map[string]string)
+	}
+	if c.serviceIPs[appID] == nil {
+		c.serviceIPs[appID] = make(map[string]string)
+	}
+	c.serviceIPs[appID][serviceName] = ip
 }
 
 // ListLayers walks the content store and returns metadata for all layer blobs.
@@ -391,6 +457,14 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	// Both values are now validated; promote to short names for readability.
 	appID, serviceName := rawAppID, rawServiceName
 
+	// Reject creation while a concurrent StopContainer is tearing down this app.
+	// Without this check a new container could be created after resolveStopOrder
+	// snapshots the container list, leaving it running after StopContainer returns
+	// (TOCTOU; SOC2-CC6, NIST-AC-3, ISO27001-A.8).
+	if c.appStopping[appID] {
+		return fmt.Errorf("app %q is currently being stopped; retry after stop completes", appID)
+	}
+
 	containerName := ContainerName(appID, serviceName)
 
 	// Canonicalise the image reference so older CLIs sending Docker short
@@ -530,14 +604,23 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 		workingDir = "/"
 	}
 
-	// Build environment variables: image env first, then our overrides.
-	env, err := buildContainerBaseEnv(appID, serviceName)
+	// Build environment variables.
+	// Order: image built-in env → user-provided env (from request) → Wendy system env → OTEL injection.
+	// Wendy vars appear last so they always win in OCI semantics (last KEY wins).
+	wendyEnv, err := buildContainerBaseEnv(appID, serviceName)
 	if err != nil {
 		return fmt.Errorf("building container env: %w", err)
 	}
-	if specErr == nil {
-		env = append(imageSpec.Config.Env, env...)
+	if err := validateUserEnv(req.GetEnv()); err != nil {
+		return fmt.Errorf("invalid env var in request (SOC2-CC6, NIST-SI-10): %w", err)
 	}
+	var env []string
+	if specErr == nil {
+		env = append(env, imageSpec.Config.Env...)
+	}
+	env = append(env, req.GetEnv()...)
+	env = append(env, wendyEnv...)
+	env = append(env, buildROS2Env(appCfg)...)
 	env = injectOTELEnvIfNeeded(env, appCfg, appID)
 
 	// Build OCI spec using local oci package, then apply entitlements.
@@ -592,6 +675,64 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 
 	labels := wendyLabels(appID, serviceName, version, req.GetRestartPolicy(), appCfg.Entitlements)
 
+	// Inject /etc/hosts bind-mount for isolated multi-service apps so service
+	// names resolve via CNI-assigned IPs.
+	if appCfg.Isolation == "isolated" && len(appCfg.Services) > 1 {
+		// safeJoin rejects separators and dot-only segments, then verifies the
+		// result is directly under the base dir (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+		hostsPath, err := safeJoin("/run/wendy/hosts", appID)
+		if err != nil {
+			return fmt.Errorf("security: appID %q produces unsafe hosts path: %w", appID, err)
+		}
+		// Always create the directory (os.MkdirAll is idempotent) and seed the
+		// hosts file with IPs already known from previously-started sibling services.
+		// c.mu is held here (defer Unlock above), so reading c.serviceIPs is safe.
+		// Seeding with existing IPs means containers that start late see a useful
+		// /etc/hosts from the first moment rather than an empty file (SOC2-CC6).
+		// The atomic rename in writeHostsFile prevents truncated reads (NIST-SI-10).
+		if err := os.MkdirAll("/run/wendy/hosts", 0o700); err != nil {
+			return fmt.Errorf("creating hosts dir: %w", err)
+		}
+		if err := writeHostsFile(hostsPath, c.serviceIPs[appID]); err != nil {
+			return fmt.Errorf("initialising hosts file for %s: %w", appID, err)
+		}
+		localoci.InjectHostsMount(spec, hostsPath)
+	}
+
+	// Apply isolation-specific namespace and shm settings for shared-namespace groups.
+	if appconfig.IsSharedNamespaceIsolation(appCfg.Isolation) {
+		primaryPID, hasPrimary := c.getPrimaryPID(appID)
+		if hasPrimary {
+			// Secondary service: join the primary's namespaces.
+			// nsAnchors holds open fds for each namespace so the paths embedded
+			// in the spec (/proc/self/fd/{n}) remain valid until runc opens them.
+			nsAnchors, err := localoci.JoinGroupNamespaces(spec, primaryPID, appCfg.Isolation)
+			if err != nil {
+				return fmt.Errorf("joining group namespaces: %w", err)
+			}
+			defer func() {
+				for _, f := range nsAnchors {
+					f.Close()
+				}
+			}()
+			if appCfg.Isolation == "shared-ipc" {
+				shmPath, shmErr := ensureSharedSHM(appID)
+				if shmErr != nil {
+					return shmErr
+				}
+				localoci.RemoveDefaultSHM(spec)
+				spec.Mounts = append(spec.Mounts, localoci.SharedSHMMount(shmPath))
+			}
+		} else {
+			// Primary service: create shared shm dir so secondaries can find it.
+			if appCfg.Isolation == "shared-ipc" {
+				if _, shmErr := ensureSharedSHM(appID); shmErr != nil {
+					return shmErr
+				}
+			}
+		}
+	}
+
 	// Serialize our custom OCI spec to JSON for WithSpecFromBytes.
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
@@ -628,6 +769,22 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 	}
 	c.logger.Info("Container created", createdFields...)
 
+	// Cache services map for stop-order resolution and isolation mode for
+	// StartContainer PID tracking. c.mu is already held for the full function
+	// via defer c.mu.Unlock() above — no inner lock needed.
+	if len(appCfg.Services) > 0 {
+		if c.appServices == nil {
+			c.appServices = make(map[string]map[string]*appconfig.ServiceConfig)
+		}
+		c.appServices[appID] = appCfg.Services
+	}
+	if appCfg.Isolation != "" {
+		if c.appIsolation == nil {
+			c.appIsolation = make(map[string]string)
+		}
+		c.appIsolation[appID] = appCfg.Isolation
+	}
+
 	return nil
 }
 
@@ -661,7 +818,8 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 	// Accept both "appID" and "appID_serviceName" forms. ParseContainerName
 	// validates both components so a crafted value cannot reach the label filter
 	// in the containersForApp fallback path (SOC2-CC6, ISO27001-A.8).
-	if _, _, err := ParseContainerName(appName); err != nil {
+	appID, serviceName, err := ParseContainerName(appName)
+	if err != nil {
 		return nil, fmt.Errorf("StartContainer: invalid app name: %w", err)
 	}
 	// Hold c.mu for container lookup and task creation to prevent a concurrent
@@ -758,10 +916,79 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 	c.logger.Info("Container started", zap.String("app_name", appName))
 	c.startPostStartAgentHook(postStartAgentCommand, appName)
 
+	// Track the primary PID for shared-namespace app groups.
+	// getIsolation requires c.mu (held here via muHeld).
+	isolation := c.getIsolation(appID)
+	if appconfig.IsSharedNamespaceIsolation(isolation) {
+		if _, alreadyHasPrimary := c.getPrimaryPID(appID); !alreadyHasPrimary {
+			c.setPrimaryPID(appID, task.Pid())
+		}
+	}
+
+	// Anchor the network namespace with an open fd BEFORE releasing the mutex.
+	// This eliminates the TOCTOU race where a concurrent StopContainer could
+	// recycle the PID between mutex release and CNI ADD, causing the plugin to
+	// operate on the wrong process's netns (SOC2-CC6, NIST-SC-7, ISO27001-A.8).
+	var netnsRef *os.File
+	if isolation == "isolated" && serviceName != "" {
+		nsPath := fmt.Sprintf("/proc/%d/ns/net", task.Pid())
+		var nsErr error
+		netnsRef, nsErr = os.Open(nsPath)
+		if nsErr != nil {
+			c.logger.Warn("could not anchor netns fd before mutex release; CNI ADD skipped",
+				zap.String("app_id", appID), zap.Error(nsErr))
+		}
+	}
+
 	// Release the mutex before launching the streaming goroutine, which does
 	// not need it (it only reads from pipes).
 	muHeld = false
 	c.mu.Unlock()
+
+	// CNI ADD for isolated multi-service apps: assign IP and update /etc/hosts.
+	// bindNetnsForCNI creates a stable bind-mount under /run/wendy/netns/ so
+	// CNI_NETNS is a real filesystem path as required by the CNI spec — not a
+	// /proc/self/fd/<n> reference that third-party CNI plugins may not honour.
+	// It also closes the fd (the bind-mount anchors the namespace independently).
+	// On Linux the bind-mount is used; on other platforms the fd path is the fallback.
+	if isolation == "isolated" && serviceName != "" && netnsRef != nil {
+		netnsPath, cleanupNetns := bindNetnsForCNI(appName, netnsRef)
+		ip, cniErr := c.CNIAdd(ctx, appID, appName, netnsPath)
+		cleanupNetns()
+		if cniErr != nil {
+			c.logger.Error("CNI ADD failed", zap.String("app_id", appID), zap.Error(cniErr))
+		} else {
+			c.mu.Lock()
+			// Guard against a concurrent StopContainer that may have deleted
+			// c.appIsolation[appID] during the window between CNI ADD and this
+			// re-lock. If the app is already gone, discard the IP silently rather
+			// than writing stale state (SOC2-CC6, NIST-SI-16, ISO27001-A.8).
+			if c.appIsolation[appID] == "" {
+				c.mu.Unlock()
+				c.logger.Warn("CNI ADD: app already stopped before IP could be recorded, discarding IP",
+					zap.String("app_id", appID), zap.String("ip", ip))
+				_, _ = task.Delete(ctx, containerd.WithProcessKill)
+				return nil, fmt.Errorf("app %q stopped during CNI ADD; container not started", appID)
+			}
+			c.recordServiceIP(appID, serviceName, ip)
+			hostsPath, pathErr := safeJoin("/run/wendy/hosts", appID)
+			if pathErr != nil {
+				// Hard error: a validated appID must never produce an unsafe path.
+				// Remove the just-recorded IP so it cannot pollute future writeHostsFile
+				// calls for the same appID (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+				if c.serviceIPs != nil {
+					delete(c.serviceIPs[appID], serviceName)
+				}
+				c.logger.Error("security: appID produces unsafe hosts path",
+					zap.String("app_id", appID), zap.Error(pathErr))
+				c.mu.Unlock()
+				_, _ = task.Delete(ctx, containerd.WithProcessKill)
+				return nil, fmt.Errorf("security: appID %q produces unsafe hosts path: %w", appID, pathErr)
+			}
+			_ = writeHostsFile(hostsPath, c.serviceIPs[appID])
+			c.mu.Unlock()
+		}
+	}
 
 	// Stream output from the pipes.
 	outputCh := make(chan services.ContainerOutput, 64)
@@ -942,6 +1169,109 @@ func buildContainerBaseEnv(appID, serviceName string) ([]string, error) {
 		env = append(env, "WENDY_APP_ID="+appID)
 	}
 	return env, nil
+}
+
+// validateUserEnv rejects caller-supplied env entries that contain characters
+// which could break the OCI env format or enable injection attacks.
+// Mirrors the defence-in-depth checks in buildContainerBaseEnv (SOC2-CC6, NIST-SI-10).
+
+// posixEnvKeyPattern is an allowlist for POSIX-compliant environment variable
+// names. It accepts only ASCII letters, digits, and underscores, with an
+// underscore or letter as the first character. This allowlist prevents leading-
+// whitespace bypass (e.g. " LD_PRELOAD") and eliminates Unicode case-folding
+// ambiguity before the denylist check below (SOC2-CC6, NIST-SI-10).
+var posixEnvKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// blockedEnvPrefixes is the set of key prefixes that user-supplied env vars
+// must not use. These keys affect dynamic linker behavior (LD_*) or are
+// reserved by Wendy (WENDY_*); a compromised or malicious caller could use
+// them to preload arbitrary code or override Wendy internals
+// (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+var blockedEnvPrefixes = []string{
+	"LD_",    // LD_PRELOAD, LD_LIBRARY_PATH, LD_AUDIT, LD_DEBUG, etc.
+	"DYLD_",  // macOS dynamic linker (defense-in-depth for cross-platform images)
+	"WENDY_", // Wendy-internal variables must not be overrideable by callers
+}
+
+// maxUserEnvEntries is the maximum number of caller-supplied env entries accepted.
+// Prevents OCI spec bloat / DoS via unbounded env injection (SOC2-CC6, NIST-SI-10).
+const maxUserEnvEntries = 512
+
+// maxUserEnvEntryLen is the maximum byte length of a single KEY=VALUE entry.
+// 32 KB covers all practical use cases while bounding spec-JSON size (SOC2-CC6, NIST-SI-10).
+const maxUserEnvEntryLen = 32 * 1024
+
+func validateUserEnv(entries []string) error {
+	if len(entries) > maxUserEnvEntries {
+		return fmt.Errorf("too many env entries: %d exceeds limit of %d (SOC2-CC6, NIST-SI-10)", len(entries), maxUserEnvEntries)
+	}
+	for _, kv := range entries {
+		if len(kv) > maxUserEnvEntryLen {
+			return fmt.Errorf("env entry exceeds maximum length of %d bytes (SOC2-CC6, NIST-SI-10)", maxUserEnvEntryLen)
+		}
+		if strings.ContainsAny(kv, "\x00\n\r") {
+			return fmt.Errorf("env entry contains forbidden control character: %q", sanitizeForLog(kv, 80))
+		}
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			return fmt.Errorf("env entry missing '=' separator: %q", sanitizeForLog(kv, 80))
+		}
+		// Reject keys that do not conform to the POSIX env key format. This also
+		// closes the leading-whitespace bypass (" LD_PRELOAD") and the Unicode
+		// case-folding bypass that strings.ToUpper alone cannot prevent.
+		if !posixEnvKeyPattern.MatchString(key) {
+			return fmt.Errorf("env key %q is not a valid POSIX environment variable name (SOC2-CC6, NIST-SI-10)", sanitizeForLog(key, 80))
+		}
+		upper := strings.ToUpper(key) // safe: key is ASCII-only after pattern check
+		for _, prefix := range blockedEnvPrefixes {
+			if strings.HasPrefix(upper, prefix) {
+				return fmt.Errorf("env key %q is reserved and cannot be set by callers (SOC2-CC6, NIST-SI-10)", key)
+			}
+		}
+	}
+	return nil
+}
+
+// ros2DomainIDMax is the conservative upper bound for ROS 2 domain IDs.
+// The ROS 2 spec defines valid IDs as 0–101 (conservative); some platforms
+// allow up to 232 but 101 covers all standard deployments (SOC2-CC6, NIST-SI-10).
+const (
+	ros2DomainIDMin = 0
+	ros2DomainIDMax = 101
+)
+
+// validRMWImplementations is the allowlist of known RMW (ROS Middleware)
+// implementation identifiers. Validating against a fixed set prevents
+// injection of arbitrary strings into the container environment via the
+// RMW field in wendy.json (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+var validRMWImplementations = map[string]bool{
+	"rmw_cyclonedds_cpp": true,
+	"rmw_fastrtps_cpp":   true,
+	"rmw_connextdds":     true,
+	"rmw_gurumdds_cpp":   true,
+}
+
+// buildROS2Env returns ROS2 environment variables from the app's frameworks.ros2 config.
+func buildROS2Env(appCfg *appconfig.AppConfig) []string {
+	ros2 := appCfg.GetROS2Config()
+	if ros2 == nil {
+		return nil
+	}
+	if ros2.DomainID < ros2DomainIDMin || ros2.DomainID > ros2DomainIDMax {
+		return nil // invalid domain ID; caller should have validated at config parse time
+	}
+	env := []string{fmt.Sprintf("ROS_DOMAIN_ID=%d", ros2.DomainID)}
+	if ros2.RMW != "" {
+		// Allowlist validation: only known RMW identifiers are injected.
+		// A control-char check alone is insufficient — an unknown value with
+		// only printable chars could still corrupt the env or trigger
+		// plugin-specific parsing bugs (SOC2-CC6, NIST-SI-10).
+		if !validRMWImplementations[ros2.RMW] {
+			return env // unknown RMW: drop rather than inject
+		}
+		env = append(env, "RMW_IMPLEMENTATION="+ros2.RMW)
+	}
+	return env
 }
 
 // injectOTELEnvIfNeeded appends OTEL exporter env vars to env when host
@@ -1306,6 +1636,18 @@ func (c *Client) stopOne(ctx context.Context, containerID string) error {
 		return fmt.Errorf("getting task for %q: %w", containerID, err)
 	}
 
+	// For isolated multi-service containers, call CNI DEL while the task's
+	// network namespace still exists (the PID is live, so /proc/PID/ns/net is
+	// valid). After SIGTERM/SIGKILL the netns reference disappears. CNI DEL is
+	// best-effort — failure is logged but does not block the stop path.
+	if appID, svcName, parseErr := ParseContainerName(containerID); parseErr == nil && svcName != "" {
+		netnsPath := fmt.Sprintf("/proc/%d/ns/net", task.Pid())
+		if cniErr := c.CNIDel(ctx, appID, containerID, netnsPath); cniErr != nil {
+			c.logger.Warn("CNI DEL failed during stop (non-fatal)",
+				zap.String("container_id", containerID), zap.Error(cniErr))
+		}
+	}
+
 	// Send SIGTERM first for graceful shutdown.
 	if err := task.Kill(ctx, syscall.SIGTERM); err != nil {
 		if !errdefs.IsNotFound(err) {
@@ -1361,30 +1703,170 @@ func (c *Client) stopOne(ctx context.Context, containerID string) error {
 // CreateContainerWithProgress from inserting a new service container between
 // the list query and the stop loop (TOCTOU, SOC2-CC6, NIST-AC-4).
 func (c *Client) StopContainer(ctx context.Context, appID string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	ctx = c.withNamespace(ctx)
+
+	// Hold mutex only long enough to enumerate containers and resolve stop order.
+	// Releasing before stopOne prevents holding c.mu across potentially long
+	// blocking I/O (SIGTERM wait, 10 s timeout), which would starve concurrent
+	// StartContainer / CreateContainerWithProgress calls (SOC2-CC6, NIST-AC-3).
+	c.mu.Lock()
 	ctrs, err := c.containersForApp(ctx, appID)
 	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
 	if len(ctrs) == 0 {
 		// Idempotent: already stopped / never created.
 		c.logger.Info("StopContainer: no containers found, already stopped",
 			zap.String("app_id", sanitizeForLog(appID, 253)))
+		c.mu.Unlock()
 		return nil
 	}
+	stopOrder := c.resolveStopOrder(ctx, appID, ctrs)
+	// Mark app as stopping before releasing the mutex so any concurrent
+	// CreateContainerWithProgress call will see it and abort (SOC2-CC6, NIST-AC-3).
+	if c.appStopping == nil {
+		c.appStopping = make(map[string]bool)
+	}
+	c.appStopping[appID] = true
+	c.mu.Unlock()
+
 	var errs []error
-	for _, ctr := range ctrs {
-		if err := c.stopOne(ctx, ctr.ID()); err != nil {
+	for _, ctrID := range stopOrder {
+		if err := c.stopOne(ctx, ctrID); err != nil {
 			c.logger.Error("Failed to stop service container",
-				zap.String("container_id", ctr.ID()),
+				zap.String("container_id", ctrID),
 				zap.Error(err))
 			errs = append(errs, err)
 		}
 	}
+
+	// Re-acquire mutex for map cleanup. Both reads and writes of these maps
+	// are protected by c.mu to prevent data races with concurrent callers
+	// (SOC2-CC6, NIST-AC-3, ISO27001-A.8).
+	// clearPrimaryPID under the lock; other per-app metadata is kept alive until
+	// after the late sweep so that appIsolation is still readable by any
+	// concurrent code that observes appStopping (SOC2-CC6, NIST-AC-3).
+	c.mu.Lock()
+	c.clearPrimaryPID(appID)
+	c.mu.Unlock()
+
+	// Re-enumerate unconditionally to catch any containers that appeared after
+	// resolveStopOrder snapshotted the list (e.g. a concurrent StartContainer
+	// mid-CNI-ADD). stopOne is idempotent for already-stopped containers.
+	// appStopping is still set during this sweep to block new concurrent creates.
+	if lateCtrs, lateErr := c.containersForApp(ctx, appID); lateErr == nil && len(lateCtrs) > 0 {
+		for _, ctr := range lateCtrs {
+			if stopErr := c.stopOne(ctx, ctr.ID()); stopErr != nil {
+				c.logger.Error("StopContainer: failed to stop late-appearing container",
+					zap.String("container_id", ctr.ID()), zap.Error(stopErr))
+				errs = append(errs, stopErr)
+			}
+		}
+	}
+
+	// Release per-app metadata in one atomic section AFTER the late sweep, so
+	// no partial-state window exists between metadata deletion and appStopping
+	// clearance. Concurrent CreateContainerWithProgress remains blocked (via
+	// appStopping) until this section completes (SOC2-CC6, NIST-AC-3, NIST-SI-16,
+	// ISO27001-A.8, SOC2-CC8/ISO27001-A.12 unbounded-growth prevention).
+	c.mu.Lock()
+	delete(c.appServices, appID)
+	delete(c.appIsolation, appID)
+	delete(c.serviceIPs, appID)
+	delete(c.appStopping, appID)
+	c.mu.Unlock()
+
 	return errors.Join(errs...)
+}
+
+// resolveStopOrder returns container IDs in reverse dependency order (dependents first).
+// Falls back to arbitrary order for single-container apps or unknown graphs.
+// Caller must hold c.mu.
+func (c *Client) resolveStopOrder(ctx context.Context, appID string, ctrs []containerd.Container) []string {
+	if len(ctrs) <= 1 {
+		ids := make([]string, len(ctrs))
+		for i, ctr := range ctrs {
+			ids[i] = ctr.ID()
+		}
+		return ids
+	}
+
+	services := c.appServices[appID]
+	if len(services) == 0 {
+		ids := make([]string, len(ctrs))
+		for i, ctr := range ctrs {
+			ids[i] = ctr.ID()
+		}
+		return ids
+	}
+
+	// Build serviceName→containerID map from containerd labels.
+	svcToID := make(map[string]string, len(ctrs))
+	for _, ctr := range ctrs {
+		labels, err := ctr.Labels(ctx)
+		if err != nil {
+			continue
+		}
+		if svcName := labels[labelKeyServiceName]; svcName != "" {
+			svcToID[svcName] = ctr.ID()
+		}
+	}
+
+	ordered, err := appconfig.ServiceTopoOrder(services)
+	if err != nil {
+		c.logger.Warn("resolveStopOrder: topo sort failed, using arbitrary order",
+			zap.String("app_id", appID), zap.Error(err))
+		ids := make([]string, len(ctrs))
+		for i, ctr := range ctrs {
+			ids[i] = ctr.ID()
+		}
+		return ids
+	}
+
+	// Reverse for stop order: dependents first, then dependencies.
+	result := make([]string, 0, len(ctrs))
+	for i := len(ordered) - 1; i >= 0; i-- {
+		if id, ok := svcToID[ordered[i]]; ok {
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
+// ensureSharedSHM creates the host-side shared memory directory for a
+// shared-ipc app group. Returns the path so it can be bind-mounted.
+func ensureSharedSHM(appID string) (string, error) {
+	if err := appconfig.ValidateAppID(appID); err != nil {
+		return "", fmt.Errorf("ensureSharedSHM: %w", err)
+	}
+	path := "/run/wendy/shm/" + appID
+	// Lock the OS thread so that the umask change below is thread-local and
+	// does not race with other goroutines on the same process (SOC2-CC6,
+	// NIST-SC-7, ISO27001-A.8). Without this, a permissive umask could widen
+	// 0o1770 → 0o1750 or looser during the MkdirAll call, creating a window
+	// before the subsequent Chmod during which the directory is accessible to
+	// unintended users.
+	// 0o1700: owner-only sticky directory. The agent runs as root (uid 0) and
+	// is the sole writer; group/other bits are cleared so no GID-0 sibling
+	// daemon can traverse or modify the shm tree (SOC2-CC6, NIST-AC-3,
+	// ISO27001-A.9). The sticky bit prevents any in-container process from
+	// unlinking entries owned by a different container even if it somehow
+	// gains access to the host mount.
+	runtime.LockOSThread()
+	oldUmask := syscall.Umask(0)
+	mkdirErr := os.MkdirAll(path, 0o1700)
+	syscall.Umask(oldUmask)
+	runtime.UnlockOSThread()
+	if mkdirErr != nil {
+		return "", fmt.Errorf("creating shared shm dir %q: %w", path, mkdirErr)
+	}
+	// Explicit Chmod to handle the case where the directory already existed
+	// with looser permissions (MkdirAll is a no-op for existing dirs).
+	if err := os.Chmod(path, 0o1700); err != nil {
+		return "", fmt.Errorf("setting permissions on shared shm dir %q: %w", path, err)
+	}
+	return path, nil
 }
 
 // deleteOne kills any running task, deletes a single container and its

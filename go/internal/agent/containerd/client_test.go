@@ -662,3 +662,74 @@ func TestLayerMediaType_GzipDefault_GzipFalse(t *testing.T) {
 		t.Errorf("layerMediaType(GZIP, false) = %q; want %q", got, want)
 	}
 }
+
+func TestResolveStopOrder_ReversesTopoOrder(t *testing.T) {
+	services := map[string]*appconfig.ServiceConfig{
+		"db":  {},
+		"api": {DependsOn: []string{"db"}},
+	}
+	order, err := appconfig.ServiceTopoOrder(services)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Reverse for stop order: dependents first, then dependencies.
+	for i, j := 0, len(order)-1; i < j; i, j = i+1, j-1 {
+		order[i], order[j] = order[j], order[i]
+	}
+	if len(order) != 2 || order[0] != "api" || order[1] != "db" {
+		t.Errorf("expected [api db], got %v", order)
+	}
+}
+
+func TestPrimaryPIDTracking(t *testing.T) {
+	c := &Client{primaryPIDs: make(map[string]uint32)}
+	c.setPrimaryPID("com.example.app", 12345)
+	got, ok := c.getPrimaryPID("com.example.app")
+	if !ok {
+		t.Fatal("expected primary PID to be found")
+	}
+	if got != 12345 {
+		t.Fatalf("got PID %d, want 12345", got)
+	}
+	c.clearPrimaryPID("com.example.app")
+	_, ok = c.getPrimaryPID("com.example.app")
+	if ok {
+		t.Fatal("expected primary PID to be cleared")
+	}
+}
+
+func TestBuildROS2Env_WithConfig(t *testing.T) {
+	cfg := &appconfig.AppConfig{
+		Frameworks: &appconfig.FrameworksConfig{
+			ROS2: &appconfig.ROS2Config{
+				DomainID: 42,
+				RMW:      "rmw_cyclonedds_cpp",
+			},
+		},
+	}
+	got := buildROS2Env(cfg)
+	found42 := false
+	foundRMW := false
+	for _, e := range got {
+		if e == "ROS_DOMAIN_ID=42" {
+			found42 = true
+		}
+		if e == "RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" {
+			foundRMW = true
+		}
+	}
+	if !found42 {
+		t.Errorf("expected ROS_DOMAIN_ID=42 in env, got %v", got)
+	}
+	if !foundRMW {
+		t.Errorf("expected RMW_IMPLEMENTATION=rmw_cyclonedds_cpp in env, got %v", got)
+	}
+}
+
+func TestBuildROS2Env_NoConfig(t *testing.T) {
+	cfg := &appconfig.AppConfig{}
+	got := buildROS2Env(cfg)
+	if len(got) != 0 {
+		t.Errorf("expected empty env for no ROS2 config, got %v", got)
+	}
+}

@@ -503,3 +503,33 @@ func TestParseEntitlementsFromAnnotations_Empty(t *testing.T) {
 		t.Errorf("unrelated annotations: want empty, got %v", got)
 	}
 }
+
+func TestSafeJoin(t *testing.T) {
+	base := "/run/wendy/hosts"
+
+	// Valid component.
+	got, err := safeJoin(base, "com.example.app")
+	if err != nil {
+		t.Errorf("safeJoin valid: unexpected error: %v", err)
+	}
+	if got != base+"/com.example.app" {
+		t.Errorf("safeJoin valid: got %q, want %q", got, base+"/com.example.app")
+	}
+
+	// Reject path separator in component.
+	if _, err := safeJoin(base, "a/b"); err == nil {
+		t.Error("safeJoin: separator in component should be rejected")
+	}
+	// Reject dot component.
+	if _, err := safeJoin(base, "."); err == nil {
+		t.Error("safeJoin: dot component should be rejected")
+	}
+	// Reject dotdot component.
+	if _, err := safeJoin(base, ".."); err == nil {
+		t.Error("safeJoin: dotdot component should be rejected")
+	}
+	// Reject traversal via filepath.Join normalisation.
+	if _, err := safeJoin(base, "sub/../../../etc/passwd"); err == nil {
+		t.Error("safeJoin: traversal via .. should be rejected")
+	}
+}

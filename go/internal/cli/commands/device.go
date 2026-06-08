@@ -78,6 +78,7 @@ func newDeviceCmd() *cobra.Command {
 	addToGroup("data",
 		newAppsCmd(),
 		newVolumesCmd(),
+		newPsCmd(),
 	)
 
 	return cmd

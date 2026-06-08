@@ -223,6 +223,9 @@ func (s *ContainerService) RunContainer(req *agentpb.RunContainerLayersRequest, 
 		}
 	}
 
+	// Note: RunContainerLayersRequest has no Env field; env vars from callers
+	// using this legacy path (wendy run with layer upload) are not forwarded.
+	// Compose deployments use CreateContainerWithProgress which does carry Env.
 	createReq := &agentpb.CreateContainerRequest{
 		ImageName:     req.GetImageName(),
 		AppName:       req.GetAppName(),

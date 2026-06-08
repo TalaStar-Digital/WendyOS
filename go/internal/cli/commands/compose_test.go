@@ -644,3 +644,59 @@ func TestComposeRestartPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestComposeWarnUnsupportedFields(t *testing.T) {
+	raw := `
+services:
+  api:
+    image: python:3.11
+    devices:
+      - /dev/video0
+    privileged: true
+    ipc: host
+`
+	var cfg composeConfig
+	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := unsupportedComposeWarnings(cfg.Services["api"])
+
+	contains := func(field string) bool {
+		for _, w := range warnings {
+			if w == field {
+				return true
+			}
+		}
+		return false
+	}
+	if !contains("devices") {
+		t.Errorf("expected 'devices' in warnings, got %v", warnings)
+	}
+	if !contains("privileged") {
+		t.Errorf("expected 'privileged' in warnings, got %v", warnings)
+	}
+	if !contains("ipc") {
+		t.Errorf("expected 'ipc' in warnings, got %v", warnings)
+	}
+}
+
+func TestComposeWarnUnsupportedFields_NoneWhenClean(t *testing.T) {
+	raw := `
+services:
+  api:
+    image: python:3.11
+    environment:
+      - FOO=bar
+    restart: unless-stopped
+`
+	var cfg composeConfig
+	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := unsupportedComposeWarnings(cfg.Services["api"])
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for clean service, got %v", warnings)
+	}
+}

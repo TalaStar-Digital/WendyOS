@@ -142,6 +142,10 @@ func TestValidate_AppIDCharset(t *testing.T) {
 		"app~tilde",  // tilde — used as regex operator in containerd filters
 		"app/slash",  // forward-slash — path separator in container names
 		"app@at",     // @ — snapshot key separator used by SnapshotKey
+		// Path-traversal guards (SOC2-CC6, NIST-SI-10):
+		".",  // single dot — resolves to CWD in filesystem paths
+		"..", // double dot — directory traversal
+		"...",
 	}
 	for _, id := range invalid {
 		cfg := &AppConfig{AppID: id}

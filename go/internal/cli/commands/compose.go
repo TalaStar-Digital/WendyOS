@@ -54,6 +54,48 @@ type composeService struct {
 	DependsOn   yaml.Node `yaml:"depends_on"` // list or map
 	Restart     string    `yaml:"restart"`
 	NetworkMode string    `yaml:"network_mode"`
+
+	// Captured only for warning purposes — not used in deployment.
+	Devices     yaml.Node `yaml:"devices"`
+	Privileged  yaml.Node `yaml:"privileged"`
+	CapAdd      yaml.Node `yaml:"cap_add"`
+	SecurityOpt yaml.Node `yaml:"security_opt"`
+	IPC         string    `yaml:"ipc"`
+	PID         string    `yaml:"pid"`
+	ShmSize     string    `yaml:"shm_size"`
+	HealthCheck yaml.Node `yaml:"healthcheck"`
+	Profiles    yaml.Node `yaml:"profiles"`
+	Secrets     yaml.Node `yaml:"secrets"`
+	ExtraHosts  yaml.Node `yaml:"extra_hosts"`
+}
+
+// unsupportedComposeWarnings returns field names from svc that Wendy does not
+// honour during deployment. The caller should print these to the user.
+func unsupportedComposeWarnings(svc composeService) []string {
+	type check struct {
+		name  string
+		empty bool
+	}
+	checks := []check{
+		{"devices", svc.Devices.IsZero()},
+		{"privileged", svc.Privileged.IsZero()},
+		{"cap_add", svc.CapAdd.IsZero()},
+		{"security_opt", svc.SecurityOpt.IsZero()},
+		{"ipc", svc.IPC == ""},
+		{"pid", svc.PID == ""},
+		{"shm_size", svc.ShmSize == ""},
+		{"healthcheck", svc.HealthCheck.IsZero()},
+		{"profiles", svc.Profiles.IsZero()},
+		{"secrets", svc.Secrets.IsZero()},
+		{"extra_hosts", svc.ExtraHosts.IsZero()},
+	}
+	var warned []string
+	for _, c := range checks {
+		if !c.empty {
+			warned = append(warned, c.name)
+		}
+	}
+	return warned
 }
 
 type composeBuildConfig struct {
@@ -639,7 +681,7 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			return fmt.Errorf("service %s: custom Dockerfile path %q is not yet supported; rename it to 'Dockerfile'", name, dockerfile)
 		}
 
-		if err := buildAndPushImage(ctx, ctxDir, registryAddr, imageName, platform, "", allBuildArgs, os.Stdout, conn.IsMTLS); err != nil {
+		if err := buildAndPushImage(ctx, ctxDir, registryAddr, imageName, platform, "", allBuildArgs, os.Stdout, os.Stderr, conn.IsMTLS); err != nil {
 			return fmt.Errorf("building service %s: %w", name, err)
 		}
 		cliLogln("Service %s image built and pushed.", name)
@@ -689,10 +731,10 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			restartPolicy = composeRestartPolicy(svc.Restart)
 		}
 
-		// TODO: compose `environment:` values aren't sent to the device yet.
-		// CreateContainerRequest has no env field, and stuffing env strings
-		// into UserArgs (the previous behaviour) appended them to argv. Add a
-		// proto env field and plumb composeEnv(svc) through it.
+		if warns := unsupportedComposeWarnings(svc); len(warns) > 0 {
+			cliLogln("warning: service %q uses unsupported Compose fields (ignored by Wendy): %s",
+				name, strings.Join(warns, ", "))
+		}
 
 		createReq := &agentpb.CreateContainerRequest{
 			ImageName:     imageName,
@@ -701,6 +743,7 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			Cmd:           cmd,
 			RestartPolicy: restartPolicy,
 			UserArgs:      extraArgs,
+			Env:           composeEnv(svc),
 		}
 
 		cliLogln("Creating container for service %s (%s)...", name, appCfg.ContainerName())

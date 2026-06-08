@@ -593,6 +593,14 @@ func newAppsRemoveCmd() *cobra.Command {
 	return cmd
 }
 
+func newPsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ps",
+		Short: "List running containers (alias for 'apps list')",
+		RunE:  newAppsListCmd().RunE,
+	}
+}
+
 func stateIcon(state string) string {
 	switch strings.ToLower(state) {
 	case "running":

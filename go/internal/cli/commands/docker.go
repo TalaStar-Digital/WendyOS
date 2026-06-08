@@ -3,8 +3,10 @@ package commands
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -343,7 +345,7 @@ func injectDebugpy(ctx context.Context, registryAddr, registryImage, platform st
 		return fmt.Errorf("writing debugpy Dockerfile: %w", err)
 	}
 
-	return buildAndPushImage(ctx, tmpDir, registryAddr, registryImage, platform, "", buildArgs, streamOutput, useMTLS)
+	return buildAndPushImage(ctx, tmpDir, registryAddr, registryImage, platform, "", buildArgs, streamOutput, streamOutput, useMTLS)
 }
 
 func generatePythonDockerfile(dir string, debug bool) (string, error) {
@@ -726,7 +728,10 @@ func dockerRuntimeInstalled(rt dockerRuntime) bool {
 // exists and returns its name plus the effective registry address to use in
 // image references. For IPv6 addresses, a hostname alias is configured inside
 // the builder container to avoid brackets that break the TOML parser.
-func ensureBuildxBuilder(ctx context.Context, registryAddr string, useMTLS bool) (builderName, effectiveAddr string, err error) {
+func ensureBuildxBuilder(ctx context.Context, registryAddr string, useMTLS bool, w io.Writer) (builderName, effectiveAddr string, err error) {
+	ensureBuildxBuilderMu.Lock()
+	defer ensureBuildxBuilderMu.Unlock()
+
 	if err := ensureDockerDaemon(ctx); err != nil {
 		return "", "", err
 	}
@@ -749,9 +754,9 @@ func ensureBuildxBuilder(ctx context.Context, registryAddr string, useMTLS bool)
 	effectiveAddr, ipv6IP := splitIPv6RegistryAddr(registryAddr)
 
 	if !useMTLS {
-		builderName, err = ensurePlaintextBuilder(ctx, configDir, effectiveAddr)
+		builderName, err = ensurePlaintextBuilder(ctx, configDir, effectiveAddr, w)
 	} else {
-		builderName, err = ensureMTLSBuilder(ctx, configDir, effectiveAddr, containerCertDir)
+		builderName, err = ensureMTLSBuilder(ctx, configDir, effectiveAddr, containerCertDir, w)
 	}
 	if err != nil {
 		return "", "", err
@@ -811,7 +816,7 @@ func removeBuilder(ctx context.Context, name string) {
 // HTTP registry config. The config is injected into the builder container via
 // docker cp (not --buildkitd-config) to avoid the host-side TOML parser which
 // cannot handle IPv6 brackets in registry addresses.
-func ensurePlaintextBuilder(ctx context.Context, configDir, registryAddr string) (string, error) {
+func ensurePlaintextBuilder(ctx context.Context, configDir, registryAddr string, w io.Writer) (string, error) {
 	builderName := os.Getenv("WENDY_BUILDX_BUILDER")
 	if builderName == "" {
 		builderName = "wendy"
@@ -857,7 +862,7 @@ func ensurePlaintextBuilder(ctx context.Context, configDir, registryAddr string)
 	}
 
 	if configChanged || liveContainerConfig != fullConfig {
-		if err := updateBuilderConfig(ctx, builderName, fullConfig); err != nil {
+		if err := updateBuilderConfig(ctx, builderName, fullConfig, w); err != nil {
 			return "", fmt.Errorf("updating builder config: %w", err)
 		}
 		_ = os.WriteFile(appliedPath, []byte(fullConfig), 0o644)
@@ -874,7 +879,7 @@ func ensurePlaintextBuilder(ctx context.Context, configDir, registryAddr string)
 
 // ensureMTLSBuilder ensures the "wendy-mtls" buildx builder exists with mTLS
 // client certs for the device registry.
-func ensureMTLSBuilder(ctx context.Context, configDir, registryAddr, containerCertDir string) (string, error) {
+func ensureMTLSBuilder(ctx context.Context, configDir, registryAddr, containerCertDir string, w io.Writer) (string, error) {
 	base := os.Getenv("WENDY_BUILDX_BUILDER")
 	if base == "" {
 		base = "wendy"
@@ -921,8 +926,17 @@ func ensureMTLSBuilder(ctx context.Context, configDir, registryAddr, containerCe
 	keypair := &[2]string{containerCertDir + "/client-key.pem", containerCertDir + "/client-cert.pem"}
 	fullConfig := buildkitRegistryConfig(registryAddr, false, keypair)
 
+	// appliedState uses the buildkitd config plus a SHA-256 digest of the
+	// public leaf certificate. The certificate is public material; no private
+	// key material or derivative is persisted (SOC2-C1, NIST-SC-28, ISO27001-A.8).
+	// When the cert changes (rotation, new device), the digest changes and the
+	// builder is torn down and rebuilt.
+	certDigest := sha256.Sum256([]byte(leafCertPEM))
+	appliedState := fullConfig +
+		"\n---CERTHASH---\n" + hex.EncodeToString(certDigest[:])
+
 	appliedConfig, _ := os.ReadFile(appliedPath)
-	configChanged := string(appliedConfig) != fullConfig
+	configChanged := string(appliedConfig) != appliedState
 
 	cmd := exec.CommandContext(ctx, "docker", "buildx", "inspect", builderName)
 	builderExists := cmd.Run() == nil
@@ -941,17 +955,27 @@ func ensureMTLSBuilder(ctx context.Context, configDir, registryAddr, containerCe
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("creating buildx builder %q: %s: %w", builderName, string(out), err)
 		}
+		configChanged = true // always inject certs and config into a newly created builder
 	}
 
-	// Copy mTLS certs into the builder container and update buildkitd config.
-	if err := copyCertsToBuilder(ctx, builderName, hostCertDir, containerCertDir); err != nil {
-		return "", fmt.Errorf("copying certs to builder: %w", err)
-	}
-	if err := updateBuilderConfig(ctx, builderName, fullConfig); err != nil {
-		return "", fmt.Errorf("updating builder config: %w", err)
+	// Only copy certs and restart the builder when something actually changed.
+	// Restarting while another parallel build uses the same builder kills that build.
+	if configChanged {
+		if err := copyCertsToBuilder(ctx, builderName, hostCertDir, containerCertDir); err != nil {
+			return "", fmt.Errorf("copying certs to builder: %w", err)
+		}
+		if err := updateBuilderConfig(ctx, builderName, fullConfig, w); err != nil {
+			return "", fmt.Errorf("updating builder config: %w", err)
+		}
+		_ = os.WriteFile(appliedPath, []byte(appliedState), 0o600)
+	} else {
+		// Builder exists with correct config — just ensure it's running.
+		bootstrapCmd := exec.CommandContext(ctx, "docker", "buildx", "inspect", "--bootstrap", "--builder", builderName)
+		if out, err := bootstrapCmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("bootstrapping builder: %s: %w", string(out), err)
+		}
 	}
 
-	_ = os.WriteFile(appliedPath, []byte(fullConfig), 0o644)
 	return builderName, nil
 }
 
@@ -980,13 +1004,13 @@ func copyCertsToBuilder(ctx context.Context, builderName, hostCertDir, container
 // updateBuilderConfig bootstraps the buildx builder container (if not already
 // running), writes a new buildkitd.toml into it, and restarts so the updated
 // configuration takes effect.
-func updateBuilderConfig(ctx context.Context, builderName, config string) error {
-	fmt.Fprintf(os.Stderr, "[buildx] bootstrapping builder %q\n", builderName)
+func updateBuilderConfig(ctx context.Context, builderName, config string, w io.Writer) error {
+	fmt.Fprintf(w, "[buildx] bootstrapping builder %q\n", builderName)
 	bootstrapCmd := exec.CommandContext(ctx, "docker", "buildx", "inspect", "--bootstrap", "--builder", builderName)
 	if out, err := bootstrapCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("bootstrapping builder: %s: %w", string(out), err)
 	}
-	fmt.Fprintf(os.Stderr, "[buildx] bootstrap done\n")
+	fmt.Fprintf(w, "[buildx] bootstrap done\n")
 
 	containerName := "buildx_buildkit_" + builderName + "0"
 	const containerConfigPath = "/etc/buildkit/buildkitd.toml"
@@ -1004,7 +1028,7 @@ func updateBuilderConfig(ctx context.Context, builderName, config string) error 
 	}
 	tmp.Close()
 
-	fmt.Fprintf(os.Stderr, "[buildx] copying config into container %q\n", containerName)
+	fmt.Fprintf(w, "[buildx] copying config into container %q\n", containerName)
 	cmd := exec.CommandContext(ctx, "docker", "cp", tmp.Name(), containerName+":"+containerConfigPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("docker cp config: %s: %w", string(out), err)
@@ -1014,35 +1038,35 @@ func updateBuilderConfig(ctx context.Context, builderName, config string) error 
 	// Linux inside Colima) does not call docker-credential-osxkeychain, which
 	// is a macOS binary that does not exist on Linux and causes "signal: killed"
 	// errors when pulling public base images (e.g. python:3.11-slim).
-	fmt.Fprintf(os.Stderr, "[buildx] injecting clean docker config into container %q\n", containerName)
+	fmt.Fprintf(w, "[buildx] injecting clean docker config into container %q\n", containerName)
 	injectCmd := exec.CommandContext(ctx, "docker", "exec", containerName,
 		"sh", "-c", `mkdir -p /root/.docker && printf '{"auths":{}}' > /root/.docker/config.json`)
 	if out, err := injectCmd.CombinedOutput(); err != nil {
 		// Non-fatal: log the error but proceed. The credential helper may still
 		// fail for private images, but public images will work without credentials.
-		fmt.Fprintf(os.Stderr, "[buildx] warning: could not inject docker config: %s\n", string(out))
+		fmt.Fprintf(w, "[buildx] warning: could not inject docker config: %s\n", string(out))
 	} else {
-		fmt.Fprintf(os.Stderr, "[buildx] docker config injected\n")
+		fmt.Fprintf(w, "[buildx] docker config injected\n")
 	}
 
-	fmt.Fprintf(os.Stderr, "[buildx] restarting container %q\n", containerName)
+	fmt.Fprintf(w, "[buildx] restarting container %q\n", containerName)
 	cmd = exec.CommandContext(ctx, "docker", "restart", containerName)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("restarting builder: %s: %w", string(out), err)
 	}
-	fmt.Fprintf(os.Stderr, "[buildx] container restarted, waiting for buildkitd\n")
+	fmt.Fprintf(w, "[buildx] container restarted, waiting for buildkitd\n")
 
 	bootstrapAfterRestart := exec.CommandContext(ctx, "docker", "buildx", "inspect", "--bootstrap", "--builder", builderName)
 	if out, err := bootstrapAfterRestart.CombinedOutput(); err != nil {
 		return fmt.Errorf("waiting for builder after restart: %s: %w", string(out), err)
 	}
-	fmt.Fprintf(os.Stderr, "[buildx] builder ready\n")
+	fmt.Fprintf(w, "[buildx] builder ready\n")
 
 	return nil
 }
 
-func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, platform, dockerfile string, buildArgs map[string]string, streamOutput io.Writer, useMTLS bool) error {
-	builder, effectiveAddr, err := ensureBuildxBuilder(ctx, registryAddr, useMTLS)
+func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, platform, dockerfile string, buildArgs map[string]string, streamOutput, logOutput io.Writer, useMTLS bool) error {
+	builder, effectiveAddr, err := ensureBuildxBuilder(ctx, registryAddr, useMTLS, logOutput)
 	if err != nil {
 		return err
 	}
@@ -1144,7 +1168,7 @@ func buildAndPushImage(ctx context.Context, dir, registryAddr, registryImage, pl
 		".",
 	)
 
-	fmt.Fprintf(os.Stderr, "[buildx] starting build: docker %s\n", strings.Join(args, " "))
+	fmt.Fprintf(logOutput, "[buildx] starting build: docker %s\n", strings.Join(args, " "))
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = dir
 	cmd.Stdout = streamOutput
@@ -1231,6 +1255,11 @@ func resolveRegistry(ctx context.Context, host string, port int) (registryAddr s
 	registryAddr = fmt.Sprintf("host.docker.internal:%d", proxy.Port())
 	return registryAddr, proxy.Close, nil
 }
+
+// ensureBuildxBuilderMu serializes builder creation so that concurrent service
+// builds don't race on "docker buildx create --name <builder>": the second
+// caller would fail with "existing instance for … but no append mode".
+var ensureBuildxBuilderMu sync.Mutex
 
 // dockerRegistryProxyAddrs caches one proxy address per AgentConnection. The
 // proxy is allocated once (port 0 → OS-assigned) and reused for all pushes on

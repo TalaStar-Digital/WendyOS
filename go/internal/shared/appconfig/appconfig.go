@@ -332,6 +332,13 @@ func ValidateAppID(id string) error {
 	if !appIDPattern.MatchString(id) {
 		return fmt.Errorf("appId %q is invalid: only letters, digits, '.', '_', and '-' are allowed (max 253 chars)", id)
 	}
+	// Reject appIDs whose every character is a dot (".", "..", "..." …).
+	// Such names would traverse the filesystem when used as a directory component
+	// (e.g. "/run/wendy/hosts/.."), which no legitimate Wendy app ID ever requires
+	// (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
+	if strings.ReplaceAll(id, ".", "") == "" {
+		return fmt.Errorf("appId %q is invalid: must contain at least one non-dot character", id)
+	}
 	return nil
 }
 
@@ -638,4 +645,18 @@ func validateHooksJSON(hooksRaw json.RawMessage) []string {
 		}
 	}
 	return nil
+}
+
+// IsSharedNamespaceIsolation reports whether isolation is a mode that shares
+// Linux namespaces across containers in an app group.
+func IsSharedNamespaceIsolation(isolation string) bool {
+	return isolation == "shared-ipc" || isolation == "shared-network"
+}
+
+// GetROS2Config returns the ROS2 framework config if set, nil otherwise.
+func (a *AppConfig) GetROS2Config() *ROS2Config {
+	if a.Frameworks == nil {
+		return nil
+	}
+	return a.Frameworks.ROS2
 }
