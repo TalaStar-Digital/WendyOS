@@ -97,9 +97,9 @@ The camera entitlement provides access to video capture devices like USB cameras
 The older `{ "type": "video" }` entitlement is still accepted for compatibility, but new projects should use `camera`.
 
 When enabled, this entitlement:
-- Mounts `/dev/video0` into your container
+- Mounts `/dev` to expose all video capture devices (USB and CSI)
 - Configures device permissions for video capture
-- Enables access to V4L2 (Video4Linux2) interfaces
+- Enables access to V4L2 (Video4Linux2) and libcamera interfaces
 
 ### Audio Entitlement
 

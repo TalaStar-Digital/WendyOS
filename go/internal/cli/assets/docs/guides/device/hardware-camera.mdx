@@ -23,7 +23,7 @@ Use the device video commands to see which cameras WendyOS can see:
 wendy device video list
 ```
 
-The output includes a device ID, name, and path such as `/dev/video0`. Use the ID with stream commands:
+The output includes a device ID, transport type (usb or csi), name, and path such as `/dev/video0`. Use the ID with stream commands:
 
 ```bash
 wendy device video stream --id 0

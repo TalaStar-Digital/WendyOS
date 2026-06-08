@@ -68,9 +68,9 @@ Provides access to video capture devices (USB cameras, CSI cameras).
 ```
 
 When enabled:
-- Mounts `/dev/video0` into container
+- Mounts `/dev` to expose all video capture devices
 - Configures device permissions for video capture
-- Enables V4L2 (Video4Linux2) interfaces
+- Enables V4L2 (Video4Linux2) and libcamera interfaces
 
 ### Audio Entitlement
 
@@ -197,7 +197,7 @@ wendy project entitlements list
 |---------|----------|
 | Can't access network | Add `{ "type": "network", "mode": "host" }` |
 | GPU not detected | Add `{ "type": "gpu" }` (Jetson devices only) |
-| Camera not found | Add `{ "type": "video" }`, verify camera at `/dev/video0` |
+| Camera not found | Add `{ "type": "camera" }`, verify camera at `/dev/video0` |
 | Audio permission denied | Add `{ "type": "audio" }` |
 | Bluetooth operations failing | Add `{ "type": "bluetooth", "mode": "kernel" }` or `"mode": "bluez"` |
 
