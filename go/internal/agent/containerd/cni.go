@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -53,23 +54,56 @@ var netnsPathPattern = regexp.MustCompile(`^(/proc/\d+/ns/net|/proc/self/fd/\d+)
 // behaviour (SOC2-CC6, ISO27001-A.8, NIST-SI-10).
 var containerIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@-]{0,319}$`)
 
-// allocateSubnet deterministically maps an appID to a /28 subnet within
-// 10.0.0.0/8 using four bytes of a SHA-256 digest (~1M possible /28 subnets).
-// Four hash bytes (32 bits of input) are used: h[0] and h[1] select the second
-// and third octets (8 bits each); h[2] XOR h[3] selects the /28 block in the
-// fourth octet (upper nibble, 4 bits). XOR-mixing distributes entropy from
-// both h[2] and h[3] across the selection.
-// Birthday-paradox collision probability: ~0.05% at 30 apps, ~0.5% at 145.
-// The SHA-256 digest ensures uniform distribution; it does not provide
-// resistance against a caller who can iterate appIDs to find a collision
-// (SOC2-CC6, ISO27001-A.8, NIST-SC-7).
-func allocateSubnet(appID string) string {
+// cniSubnetRegistryPath is the persistent file mapping appID → subnet.
+// Declared as a var (not const) so tests can redirect it to a temp directory.
+var cniSubnetRegistryPath = cniStateDir + "/subnets.json"
+
+// allocateSubnet returns the /28 subnet for an appID. It maintains a
+// persistent registry so that:
+//   - The same appID always gets the same subnet (stable CNI config).
+//   - A collision with an existing entry for a different appID is detected
+//     and rejected immediately rather than silently routing cross-app traffic
+//     (SOC2-CC6, ISO27001-A.8, NIST-SC-7).
+//
+// Four bytes of SHA-256 are used as the initial candidate. If a collision is
+// detected the candidate is rejected and an error is returned.
+func allocateSubnet(appID string) (string, error) {
+	registryPath := cniSubnetRegistryPath
+	if err := os.MkdirAll(filepath.Dir(registryPath), 0o750); err != nil {
+		return "", fmt.Errorf("creating CNI state dir: %w", err)
+	}
+
+	// Load the existing registry.
+	registry := map[string]string{}
+	if data, err := os.ReadFile(registryPath); err == nil {
+		_ = json.Unmarshal(data, &registry)
+	}
+
+	// Return already-assigned subnet for this appID.
+	if existing, ok := registry[appID]; ok {
+		return existing, nil
+	}
+
+	// Compute candidate subnet from 4 SHA-256 bytes.
 	h := sha256.Sum256([]byte(appID))
 	b2 := h[0]
 	b3 := h[1]
-	// XOR two independent hash bytes then mask to /28 alignment (SOC2-CC6).
 	b4 := (h[2] ^ h[3]) & 0xF0
-	return fmt.Sprintf("10.%d.%d.%d/28", b2, b3, b4)
+	candidate := fmt.Sprintf("10.%d.%d.%d/28", b2, b3, b4)
+
+	// Reject if another appID already owns this subnet.
+	for existingApp, existingSubnet := range registry {
+		if existingSubnet == candidate {
+			return "", fmt.Errorf("CNI subnet collision: appID %q and %q both hash to %s — rename one of the apps (SOC2-CC6, NIST-SC-7)", appID, existingApp, candidate)
+		}
+	}
+
+	// Persist the new assignment.
+	registry[appID] = candidate
+	if data, err := json.Marshal(registry); err == nil {
+		_ = os.WriteFile(registryPath, data, 0o600)
+	}
+	return candidate, nil
 }
 
 // bridgeName returns a Linux network interface name for the app's CNI bridge.
@@ -226,7 +260,10 @@ func (c *Client) CNIAdd(ctx context.Context, appID, containerID, netnsPath strin
 	// cmd.Args[0] keeps the human-readable path for process listings (SOC2-CC6,
 	// NIST-SI-3, ISO27001-A.8).
 	defer cniBin.Close()
-	subnet := allocateSubnet(appID)
+	subnet, err := allocateSubnet(appID)
+	if err != nil {
+		return "", err
+	}
 	warnSubnetCollision(c.logger, appID, subnet)
 	cfgJSON := buildBridgeCNIConfig(appID, subnet)
 
@@ -250,14 +287,19 @@ func (c *Client) CNIAdd(ctx context.Context, appID, containerID, netnsPath strin
 	cmd.Stdout = &limitedWriter{w: &stdoutBuf, remaining: cniStdoutLimit, cap: cniStdoutLimit}
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	runErr := cmd.Run()
+	// runtime.KeepAlive ensures cniBin is not garbage-collected before cmd.Run()
+	// completes, keeping the /proc/self/fd/{n} fd valid through the execve
+	// (SOC2-CC6, NIST-SI-3, ISO27001-A.8).
+	runtime.KeepAlive(cniBin)
+	if runErr != nil {
 		// Sanitize stderr before logging to prevent log injection from a rogue
 		// CNI binary (newlines, ANSI codes, JSON-alike content) (SOC2-CC6, NIST-SI-10).
 		c.logger.Warn("CNI ADD failed",
 			zap.String("app_id", appID),
 			zap.String("container_id", containerID),
 			zap.String("stderr", sanitizeForLog(stderr.String(), 512)),
-			zap.Error(err))
+			zap.Error(runErr))
 		return "", fmt.Errorf("CNI ADD failed for %s/%s; see agent logs for details", appID, containerID)
 	}
 
@@ -371,7 +413,11 @@ func (c *Client) CNIDel(ctx context.Context, appID, containerID, netnsPath strin
 	}
 	// See CNIAdd for exec-via-fd rationale. Keep cniBin open until cmd.Run() returns.
 	defer cniBin.Close()
-	subnet := allocateSubnet(appID)
+	subnet, err := allocateSubnet(appID)
+	if err != nil {
+		c.logger.Warn("CNI DEL skipped: subnet allocation failed", zap.Error(err))
+		return nil
+	}
 	cfgJSON := buildBridgeCNIConfig(appID, subnet)
 
 	cmd := exec.CommandContext(ctx, cniBridgeBin)
@@ -388,11 +434,13 @@ func (c *Client) CNIDel(ctx context.Context, appID, containerID, netnsPath strin
 		"CNI_IFNAME=eth0",
 		"CNI_PATH=" + cniPluginDir,
 	}
-	if err := cmd.Run(); err != nil {
+	runErr := cmd.Run()
+	runtime.KeepAlive(cniBin) // keep fd alive through exec (SOC2-CC6, NIST-SI-3)
+	if runErr != nil {
 		c.logger.Warn("CNI DEL failed (non-fatal)",
 			zap.String("app_id", appID),
 			zap.String("container_id", containerID),
-			zap.Error(err))
+			zap.Error(runErr))
 	}
 	return nil
 }

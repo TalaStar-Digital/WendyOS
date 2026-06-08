@@ -1574,6 +1574,18 @@ func (c *Client) stopOne(ctx context.Context, containerID string) error {
 		return fmt.Errorf("getting task for %q: %w", containerID, err)
 	}
 
+	// For isolated multi-service containers, call CNI DEL while the task's
+	// network namespace still exists (the PID is live, so /proc/PID/ns/net is
+	// valid). After SIGTERM/SIGKILL the netns reference disappears. CNI DEL is
+	// best-effort — failure is logged but does not block the stop path.
+	if appID, svcName, parseErr := ParseContainerName(containerID); parseErr == nil && svcName != "" {
+		netnsPath := fmt.Sprintf("/proc/%d/ns/net", task.Pid())
+		if cniErr := c.CNIDel(ctx, appID, containerID, netnsPath); cniErr != nil {
+			c.logger.Warn("CNI DEL failed during stop (non-fatal)",
+				zap.String("container_id", containerID), zap.Error(cniErr))
+		}
+	}
+
 	// Send SIGTERM first for graceful shutdown.
 	if err := task.Kill(ctx, syscall.SIGTERM); err != nil {
 		if !errdefs.IsNotFound(err) {

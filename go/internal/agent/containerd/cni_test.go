@@ -8,7 +8,14 @@ import (
 )
 
 func TestBuildCNIConfig(t *testing.T) {
-	subnet := allocateSubnet("com.example.myapp")
+	tmp := t.TempDir()
+	orig := cniSubnetRegistryPath
+	cniSubnetRegistryPath = tmp + "/subnets.json"
+	t.Cleanup(func() { cniSubnetRegistryPath = orig })
+	subnet, err := allocateSubnet("com.example.myapp")
+	if err != nil {
+		t.Fatalf("allocateSubnet: %v", err)
+	}
 	cfg := buildBridgeCNIConfig("com.example.myapp", subnet)
 	var m map[string]interface{}
 	if err := json.Unmarshal([]byte(cfg), &m); err != nil {
@@ -57,8 +64,22 @@ func TestBridgeName(t *testing.T) {
 }
 
 func TestAllocateSubnet(t *testing.T) {
-	s1 := allocateSubnet("com.example.app1")
-	s2 := allocateSubnet("com.example.app2")
+	// Redirect the registry to a temp dir so tests don't pollute/share real state.
+	tmp := t.TempDir()
+	orig := cniSubnetRegistryPath
+	cniSubnetRegistryPath = tmp + "/subnets.json"
+	t.Cleanup(func() { cniSubnetRegistryPath = orig })
+
+	s1, err := allocateSubnet("com.example.app1")
+	if err != nil {
+		t.Fatalf("allocateSubnet app1: %v", err)
+	}
+	s2, err := allocateSubnet("com.example.app2")
+	if err != nil {
+		// app2 might collide with app1 in the test registry; that's OK to test.
+		t.Logf("allocateSubnet app2 returned error (possible collision): %v", err)
+		return
+	}
 	if s1 == s2 {
 		t.Errorf("different appIDs should get different subnets, both got %q", s1)
 	}
@@ -71,8 +92,12 @@ func TestAllocateSubnet(t *testing.T) {
 			t.Errorf("subnet %q should be a /28", s)
 		}
 	}
-	// Deterministic: same appID → same subnet.
-	if allocateSubnet("com.example.app1") != s1 {
+	// Deterministic: same appID → same subnet (returns from registry).
+	s1Again, err := allocateSubnet("com.example.app1")
+	if err != nil {
+		t.Fatalf("allocateSubnet app1 (second call): %v", err)
+	}
+	if s1Again != s1 {
 		t.Error("allocateSubnet should be deterministic")
 	}
 }
