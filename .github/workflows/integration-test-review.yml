@@ -9,7 +9,7 @@ jobs:
   integration-test-review:
     name: Review integration test coverage
     if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: runs-on,runner=c7i.2xlarge+linux
+    runs-on: runs-on,runner=c7i.2xlarge
     permissions:
       contents: read
       pull-requests: write

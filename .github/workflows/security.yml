@@ -22,7 +22,7 @@ concurrency:
 jobs:
   govulncheck:
     name: govulncheck
-    runs-on: runs-on,runner=c7i.2xlarge+linux
+    runs-on: runs-on,runner=c7i.2xlarge
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
