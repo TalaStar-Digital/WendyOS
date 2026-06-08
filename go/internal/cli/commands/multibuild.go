@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -155,7 +156,7 @@ func runMultiServiceWithAgent(ctx context.Context, conn *grpcclient.AgentConnect
 		}
 
 		cliLogln("Creating container for service %s...", name)
-		if err := createContainerWithoutProgress(ctx, conn.ContainerService, createReq); err != nil {
+		if err := createContainerWithProgress(ctx, conn.ContainerService, createReq); err != nil {
 			return fmt.Errorf("creating container for service %s: %w", name, err)
 		}
 		cliLogln("Service %s container created.", name)
@@ -191,6 +192,7 @@ func buildServicesParallel(
 		name string
 		err  error
 		dur  time.Duration
+		log  string
 	}
 
 	results := make(chan result, len(names))
@@ -222,11 +224,20 @@ func buildServicesParallel(
 			imageName := fmt.Sprintf("%s/%s-%s:latest",
 				registryAddr, strings.ToLower(appID), strings.ToLower(name))
 
-			buildOut := io.Writer(os.Stdout)
+			var buildOut io.Writer
+			var logBuf bytes.Buffer
 			if prog != nil {
-				buildOut = io.Discard
+				// In interactive mode, buffer all output (setup logs + build output).
+				// On error the buffer is printed after the spinner exits.
+				buildOut = &logBuf
+			} else {
+				buildOut = os.Stdout
 			}
-			err := buildAndPushImage(ctx, contextDir, registryAddr, imageName, platform, "", buildArgs, buildOut, useMTLS)
+			logOut := buildOut
+			if prog == nil {
+				logOut = os.Stderr
+			}
+			err := buildAndPushImage(ctx, contextDir, registryAddr, imageName, platform, "", buildArgs, buildOut, logOut, useMTLS)
 			dur := time.Since(start)
 
 			if prog != nil {
@@ -237,7 +248,7 @@ func buildServicesParallel(
 				cliLogln("Service %s built (%s).", name, dur.Round(time.Millisecond))
 			}
 
-			results <- result{name: name, err: err, dur: dur}
+			results <- result{name: name, err: err, dur: dur, log: logBuf.String()}
 		}(name, services[name])
 	}
 
@@ -256,11 +267,15 @@ func buildServicesParallel(
 		}
 	}
 
-	// Collect errors from all builds.
+	// Collect errors. For failed services, print their buffered output now that
+	// the spinner has exited and the terminal is clean.
 	var errs []error
 	for r := range results {
 		if r.err != nil {
 			errs = append(errs, fmt.Errorf("service %s: %w", r.name, r.err))
+			if r.log != "" {
+				fmt.Fprintf(os.Stderr, "\n[%s] build log:\n%s", r.name, r.log)
+			}
 		}
 	}
 	if len(errs) > 0 {

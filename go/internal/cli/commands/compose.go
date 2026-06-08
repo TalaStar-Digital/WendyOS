@@ -681,7 +681,7 @@ func runComposeWithAgent(ctx context.Context, conn *grpcclient.AgentConnection, 
 			return fmt.Errorf("service %s: custom Dockerfile path %q is not yet supported; rename it to 'Dockerfile'", name, dockerfile)
 		}
 
-		if err := buildAndPushImage(ctx, ctxDir, registryAddr, imageName, platform, "", allBuildArgs, os.Stdout, conn.IsMTLS); err != nil {
+		if err := buildAndPushImage(ctx, ctxDir, registryAddr, imageName, platform, "", allBuildArgs, os.Stdout, os.Stderr, conn.IsMTLS); err != nil {
 			return fmt.Errorf("building service %s: %w", name, err)
 		}
 		cliLogln("Service %s image built and pushed.", name)
