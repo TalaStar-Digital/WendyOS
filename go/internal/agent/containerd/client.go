@@ -72,6 +72,12 @@ type Client struct {
 	// serviceIPs maps appID → serviceName → IP for isolated-mode apps.
 	// Updated after each successful CNI ADD. Protected by mu.
 	serviceIPs map[string]map[string]string
+
+	// appStopping tracks appIDs that are currently being stopped.
+	// Set before releasing c.mu in StopContainer; cleared in the cleanup phase.
+	// Checked by CreateContainerWithProgress to reject concurrent create/stop races
+	// (SOC2-CC6, NIST-AC-3, ISO27001-A.8).
+	appStopping map[string]bool
 }
 
 func NewClient(logger *zap.Logger, address string, proxyMgr *dbusproxy.Manager) (*Client, error) {
@@ -445,6 +451,14 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 
 	// Both values are now validated; promote to short names for readability.
 	appID, serviceName := rawAppID, rawServiceName
+
+	// Reject creation while a concurrent StopContainer is tearing down this app.
+	// Without this check a new container could be created after resolveStopOrder
+	// snapshots the container list, leaving it running after StopContainer returns
+	// (TOCTOU; SOC2-CC6, NIST-AC-3, ISO27001-A.8).
+	if c.appStopping[appID] {
+		return fmt.Errorf("app %q is currently being stopped; retry after stop completes", appID)
+	}
 
 	containerName := ContainerName(appID, serviceName)
 
@@ -940,6 +954,17 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 			c.logger.Error("CNI ADD failed", zap.String("app_id", appID), zap.Error(cniErr))
 		} else {
 			c.mu.Lock()
+			// Guard against a concurrent StopContainer that may have deleted
+			// c.appIsolation[appID] during the window between CNI ADD and this
+			// re-lock. If the app is already gone, discard the IP silently rather
+			// than writing stale state (SOC2-CC6, NIST-SI-16, ISO27001-A.8).
+			if c.appIsolation[appID] == "" {
+				c.mu.Unlock()
+				c.logger.Warn("CNI ADD: app already stopped before IP could be recorded, discarding IP",
+					zap.String("app_id", appID), zap.String("ip", ip))
+				_, _ = task.Delete(ctx, containerd.WithProcessKill)
+				return nil, fmt.Errorf("app %q stopped during CNI ADD; container not started", appID)
+			}
 			c.recordServiceIP(appID, serviceName, ip)
 			hostsPath, pathErr := safeJoin("/run/wendy/hosts", appID)
 			if pathErr != nil {
@@ -1679,6 +1704,12 @@ func (c *Client) StopContainer(ctx context.Context, appID string) error {
 		return nil
 	}
 	stopOrder := c.resolveStopOrder(ctx, appID, ctrs)
+	// Mark app as stopping before releasing the mutex so any concurrent
+	// CreateContainerWithProgress call will see it and abort (SOC2-CC6, NIST-AC-3).
+	if c.appStopping == nil {
+		c.appStopping = make(map[string]bool)
+	}
+	c.appStopping[appID] = true
 	c.mu.Unlock()
 
 	var errs []error
@@ -1701,6 +1732,7 @@ func (c *Client) StopContainer(ctx context.Context, appID string) error {
 	delete(c.appServices, appID)
 	delete(c.appIsolation, appID)
 	delete(c.serviceIPs, appID)
+	delete(c.appStopping, appID)
 	c.mu.Unlock()
 	return errors.Join(errs...)
 }
