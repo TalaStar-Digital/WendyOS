@@ -151,7 +151,7 @@ The local collector handles forwarding telemetry to your backend infrastructure.
 | Device not found | Check USB/LAN connection, run `wendy discover` |
 | Network access denied | Add network entitlement with host mode |
 | GPU not detected | Add gpu entitlement (Jetson only) |
-| Camera not found | Add video entitlement, verify camera at `/dev/video0` |
+| Camera not found | Add camera entitlement, verify camera at `/dev/video0` (for CSI cameras also check `/run/udev` is present on host) |
 | Build fails | Check Swift version compatibility, try `wendy run --verbose` |
 
 ## Reference Files

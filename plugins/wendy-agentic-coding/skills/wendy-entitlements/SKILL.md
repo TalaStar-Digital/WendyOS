@@ -34,7 +34,7 @@ Use this table as the starting point, then verify against the local repo when ch
 | `network` | none | `mode` as `host` or `none` | Defaults to host networking when `mode` is empty; `host` removes the network namespace and mounts host DNS config. |
 | `gpu` | none | none | Adds NVIDIA device nodes, NVIDIA env vars, and relies on CDI for full Jetson/NVIDIA library/device wiring. |
 | `audio` | none | none | Adds audio group, mounts `/dev/snd`, allows sound devices, and mounts PipeWire/Pulse sockets when present. |
-| `camera` | none | `mode`, `allowlist` | Canonical V4L2/camera entitlement; allows major 81 and bind-mounts host `/dev` for live camera hotplug. |
+| `camera` | none | `mode`, `allowlist` | Canonical V4L2/camera entitlement; allows major 81, bind-mounts host `/dev` for live camera hotplug, and bind-mounts `/run/udev` read-only for libcamera CSI enumeration. |
 | `video` | none | `mode`, `allowlist` | Deprecated compatibility alias for `camera`; prefer `camera` in new configs. |
 | `persist` | `name`, `path` | none | Creates/binds `/var/lib/wendy/volumes/<name>` to the container `path`; volume names are shared across apps. |
 | `bluetooth` | none | `mode` | Uses a filtered `xdg-dbus-proxy` socket for BlueZ. Do not assume unrestricted host D-Bus access. |
