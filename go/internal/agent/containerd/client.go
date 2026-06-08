@@ -667,9 +667,16 @@ func (c *Client) CreateContainerWithProgress(ctx context.Context, req *agentpb.C
 		if !strings.HasPrefix(hostsPath, "/run/wendy/hosts/") {
 			return fmt.Errorf("security: appID %q produces path outside /run/wendy/hosts", appID)
 		}
-		if _, statErr := os.Stat(hostsPath); os.IsNotExist(statErr) {
-			_ = os.MkdirAll("/run/wendy/hosts", 0o755)
-			_ = os.WriteFile(hostsPath, []byte("127.0.0.1\tlocalhost\n"), 0o644)
+		// Always create the directory (os.MkdirAll is idempotent) and seed the
+		// hosts file atomically via writeHostsFile rather than check-then-act.
+		// Two concurrent CreateContainerWithProgress calls for the same app
+		// could both see the file absent in a Stat check; the atomic rename in
+		// writeHostsFile ensures neither sees a truncated file (SOC2-CC6, NIST-SI-10).
+		if err := os.MkdirAll("/run/wendy/hosts", 0o755); err != nil {
+			return fmt.Errorf("creating hosts dir: %w", err)
+		}
+		if err := writeHostsFile(hostsPath, nil); err != nil {
+			return fmt.Errorf("initialising hosts file for %s: %w", appID, err)
 		}
 		localoci.InjectHostsMount(spec, hostsPath)
 	}

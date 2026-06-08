@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -136,7 +137,7 @@ func (c *Client) CNIAdd(ctx context.Context, appID, containerID, netnsPath strin
 	// Bound stdout to cniStdoutLimit to guard against a rogue or replaced
 	// binary emitting unbounded data that would exhaust agent memory.
 	var stdoutBuf, stderr bytes.Buffer
-	cmd.Stdout = &limitedWriter{w: &stdoutBuf, remaining: cniStdoutLimit}
+	cmd.Stdout = &limitedWriter{w: &stdoutBuf, remaining: cniStdoutLimit, cap: cniStdoutLimit}
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
@@ -173,29 +174,31 @@ func (c *Client) CNIAdd(ctx context.Context, appID, containerID, netnsPath strin
 	return ip, nil
 }
 
-// limitedWriter is an io.Writer that accepts at most `remaining` bytes,
-// silently discarding any excess. Prevents unbounded buffer growth when
-// piping output from an external binary (SOC2-CC6, NIST-SI-10).
+// limitedWriter is an io.Writer that returns an error if more than `cap`
+// bytes are written. Unlike silent truncation, an error causes cmd.Run() to
+// fail, preventing a truncated (potentially garbage) buffer from being parsed
+// as a valid CNI result (SOC2-CC6, NIST-SI-10: fail-safe over silent discard).
 type limitedWriter struct {
 	w         io.Writer
 	remaining int
+	cap       int
 }
 
 func (lw *limitedWriter) Write(p []byte) (int, error) {
-	if lw.remaining <= 0 {
-		return len(p), nil // discard
-	}
-	if len(p) > lw.remaining {
-		p = p[:lw.remaining]
+	if lw.remaining <= 0 || len(p) > lw.remaining {
+		return 0, fmt.Errorf("CNI plugin output exceeded %d-byte safety limit", lw.cap)
 	}
 	n, err := lw.w.Write(p)
 	lw.remaining -= n
 	return n, err
 }
 
-// writeHostsFile writes a hosts-format file at path with entries for each
-// service name → IP mapping. Always includes 127.0.0.1 localhost.
+// writeHostsFile atomically replaces path with a hosts-format file containing
+// entries for each service name → IP mapping plus 127.0.0.1 localhost.
 // Entries are written in sorted order for determinism.
+// Atomicity is achieved via a temp-file write + os.Rename, so a container
+// reading /etc/hosts never sees a truncated or zero-byte file during the
+// update (SOC2-CC6, NIST-SC-7, ISO27001-A.8).
 func writeHostsFile(path string, serviceIPs map[string]string) error {
 	var sb strings.Builder
 	sb.WriteString("127.0.0.1\tlocalhost\n")
@@ -207,7 +210,24 @@ func writeHostsFile(path string, serviceIPs map[string]string) error {
 	for _, name := range names {
 		fmt.Fprintf(&sb, "%s\t%s\n", serviceIPs[name], name)
 	}
-	return os.WriteFile(path, []byte(sb.String()), 0o644)
+
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".hosts-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp hosts file: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.WriteString(sb.String()); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("writing temp hosts file: %w", err)
+	}
+	tmp.Close()
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("chmod temp hosts file: %w", err)
+	}
+	return os.Rename(tmpName, path)
 }
 
 // CNIDel calls the CNI bridge plugin DEL to release a container's IP.
