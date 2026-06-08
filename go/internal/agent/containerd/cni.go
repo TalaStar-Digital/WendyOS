@@ -7,6 +7,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"regexp"
@@ -26,7 +28,7 @@ const (
 // cniResult is a minimal subset of the CNI ADD result.
 type cniResult struct {
 	IPs []struct {
-		Address string `json:"address"` // "10.89.X.Y/24"
+		Address string `json:"address"` // CIDR notation, e.g. "10.x.y.z/28"
 	} `json:"ips"`
 }
 
@@ -106,9 +108,15 @@ func buildBridgeCNIConfig(appID, subnet string) string {
 	return string(b)
 }
 
+// cniStdoutLimit is the maximum bytes read from the CNI plugin's stdout.
+// A valid CNI ADD response is well under 1 KB; this cap prevents memory
+// exhaustion if the binary at cniPluginDir is replaced or emits junk
+// (SOC2-CC6, NIST-SI-10: input bounds enforcement).
+const cniStdoutLimit = 64 << 10 // 64 KB
+
 // CNIAdd calls the CNI bridge plugin ADD for a container, returning its
 // assigned IP address. netnsPath is the container's network namespace path
-// (e.g. /proc/{pid}/ns/net).
+// (e.g. /proc/self/fd/{n} for fd-anchored references, or /proc/{pid}/ns/net).
 func (c *Client) CNIAdd(ctx context.Context, appID, containerID, netnsPath string) (string, error) {
 	if err := validateCNIInputs(appID, containerID, netnsPath); err != nil {
 		return "", err
@@ -125,27 +133,62 @@ func (c *Client) CNIAdd(ctx context.Context, appID, containerID, netnsPath strin
 		"CNI_IFNAME=eth0",
 		"CNI_PATH=" + cniPluginDir,
 	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	// Bound stdout to cniStdoutLimit to guard against a rogue or replaced
+	// binary emitting unbounded data that would exhaust agent memory.
+	var stdoutBuf, stderr bytes.Buffer
+	cmd.Stdout = &limitedWriter{w: &stdoutBuf, remaining: cniStdoutLimit}
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("CNI ADD failed for %s/%s: %w (stderr: %s)", appID, containerID, err, stderr.String())
+		c.logger.Warn("CNI ADD failed",
+			zap.String("app_id", appID),
+			zap.String("container_id", containerID),
+			zap.String("stderr", stderr.String()),
+			zap.Error(err))
+		return "", fmt.Errorf("CNI ADD failed for %s/%s; see agent logs for details", appID, containerID)
 	}
 
 	var result cniResult
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		return "", fmt.Errorf("parsing CNI ADD result: %w", err)
+	if err := json.Unmarshal(stdoutBuf.Bytes(), &result); err != nil {
+		return "", fmt.Errorf("parsing CNI ADD result for %s/%s: %w", appID, containerID, err)
 	}
 	if len(result.IPs) == 0 {
 		return "", fmt.Errorf("CNI ADD returned no IPs for %s/%s", appID, containerID)
 	}
-	ip, _, _ := strings.Cut(result.IPs[0].Address, "/")
+	rawIP, _, _ := strings.Cut(result.IPs[0].Address, "/")
+	// Validate and normalise the IP before using it in /etc/hosts bind-mounts.
+	// An unvalidated string from CNI stdout could contain newlines or tabs that
+	// poison the hosts file injected into sibling containers (SOC2-CC6, NIST-SC-7).
+	parsed := net.ParseIP(rawIP)
+	if parsed == nil {
+		return "", fmt.Errorf("CNI ADD returned invalid IP %q for %s/%s", rawIP, appID, containerID)
+	}
+	ip := parsed.String()
 	c.logger.Info("CNI ADD: assigned IP",
 		zap.String("app_id", appID),
 		zap.String("container_id", containerID),
 		zap.String("ip", ip))
 	return ip, nil
+}
+
+// limitedWriter is an io.Writer that accepts at most `remaining` bytes,
+// silently discarding any excess. Prevents unbounded buffer growth when
+// piping output from an external binary (SOC2-CC6, NIST-SI-10).
+type limitedWriter struct {
+	w         io.Writer
+	remaining int
+}
+
+func (lw *limitedWriter) Write(p []byte) (int, error) {
+	if lw.remaining <= 0 {
+		return len(p), nil // discard
+	}
+	if len(p) > lw.remaining {
+		p = p[:lw.remaining]
+	}
+	n, err := lw.w.Write(p)
+	lw.remaining -= n
+	return n, err
 }
 
 // writeHostsFile writes a hosts-format file at path with entries for each
