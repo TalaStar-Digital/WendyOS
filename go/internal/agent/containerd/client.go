@@ -78,6 +78,15 @@ type Client struct {
 	// Checked by CreateContainerWithProgress to reject concurrent create/stop races
 	// (SOC2-CC6, NIST-AC-3, ISO27001-A.8).
 	appStopping map[string]bool
+
+	// pendingCNI tracks appIDs that have started a container task but have not
+	// yet completed CNI ADD (i.e. the mutex is released during the blocking
+	// subprocess exec). Set before c.mu.Unlock() in the CNI ADD path of
+	// StartContainer; cleared after the mutex is re-acquired post-ADD.
+	// StopContainer reads this in its cleanup phase and re-enumerates containers
+	// to catch any that appeared after resolveStopOrder ran (SOC2-CC6, NIST-AC-3,
+	// ISO27001-A.8).
+	pendingCNI map[string]bool
 }
 
 func NewClient(logger *zap.Logger, address string, proxyMgr *dbusproxy.Manager) (*Client, error) {
@@ -937,6 +946,14 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 
 	// Release the mutex before launching the streaming goroutine, which does
 	// not need it (it only reads from pipes).
+	// Mark pendingCNI before unlock so StopContainer can detect the in-progress
+	// CNI ADD and re-check containers in its cleanup phase (SOC2-CC6, NIST-AC-3).
+	if isolation == "isolated" && serviceName != "" && netnsRef != nil {
+		if c.pendingCNI == nil {
+			c.pendingCNI = make(map[string]bool)
+		}
+		c.pendingCNI[appID] = true
+	}
 	muHeld = false
 	c.mu.Unlock()
 
@@ -951,9 +968,13 @@ func (c *Client) StartContainer(ctx context.Context, appName, postStartAgentComm
 		ip, cniErr := c.CNIAdd(ctx, appID, appName, netnsPath)
 		cleanupNetns()
 		if cniErr != nil {
+			c.mu.Lock()
+			delete(c.pendingCNI, appID)
+			c.mu.Unlock()
 			c.logger.Error("CNI ADD failed", zap.String("app_id", appID), zap.Error(cniErr))
 		} else {
 			c.mu.Lock()
+			delete(c.pendingCNI, appID) // CNI ADD complete; StopContainer cleanup no longer needs to re-check
 			// Guard against a concurrent StopContainer that may have deleted
 			// c.appIsolation[appID] during the window between CNI ADD and this
 			// re-lock. If the app is already gone, discard the IP silently rather
@@ -1747,7 +1768,29 @@ func (c *Client) StopContainer(ctx context.Context, appID string) error {
 	delete(c.appIsolation, appID)
 	delete(c.serviceIPs, appID)
 	delete(c.appStopping, appID)
+	// If a concurrent StartContainer was mid-CNI-ADD during resolveStopOrder,
+	// its new container may not have been in stopOrder. Re-enumerate and stop
+	// any containers that appeared in the window (SOC2-CC6, NIST-AC-3,
+	// ISO27001-A.8). pendingCNI is already cleared by StartContainer on re-lock,
+	// so this fires only when the race window was actually open.
+	hasPending := c.pendingCNI[appID]
+	delete(c.pendingCNI, appID)
 	c.mu.Unlock()
+
+	if hasPending {
+		c.logger.Warn("StopContainer: possible concurrent CNI ADD detected; re-checking for orphaned containers",
+			zap.String("app_id", sanitizeForLog(appID, 253)))
+		if lateCtrs, lateErr := c.containersForApp(ctx, appID); lateErr == nil {
+			for _, ctr := range lateCtrs {
+				if stopErr := c.stopOne(ctx, ctr.ID()); stopErr != nil {
+					c.logger.Error("StopContainer: failed to stop late-appearing container",
+						zap.String("container_id", ctr.ID()), zap.Error(stopErr))
+					errs = append(errs, stopErr)
+				}
+			}
+		}
+	}
+
 	return errors.Join(errs...)
 }
 

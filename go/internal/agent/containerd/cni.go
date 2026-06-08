@@ -76,8 +76,17 @@ var cniSubnetRegistryPath = cniStateDir + "/subnets.json"
 func allocateSubnet(appID string) (string, error) {
 	registryPath := cniSubnetRegistryPath
 	stateDir := filepath.Dir(registryPath)
-	if err := os.MkdirAll(stateDir, 0o750); err != nil {
+	// 0o700: owner-only. subnets.json maps every appID to its subnet, which is
+	// internal routing topology. Group-0 access would expose this inventory to
+	// any setgid binary or GID-0 daemon on the host (SOC2-CC6, NIST-SC-7,
+	// ISO27001-A.8).
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return "", fmt.Errorf("creating CNI state dir: %w", err)
+	}
+	// Explicit chmod covers pre-existing directories (MkdirAll is a no-op for
+	// them and would leave a previously-wider mode unchanged).
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		return "", fmt.Errorf("setting permissions on CNI state dir: %w", err)
 	}
 
 	// Serialise concurrent read-modify-writes with an exclusive file lock.
@@ -237,7 +246,7 @@ const cniHashesPath = "/etc/wendy/cni-hashes.json"
 // pinned SHA-256 digest to guard against supply-chain compromise. The caller
 // MUST keep the returned file open until exec completes (SOC2-CC6,
 // ISO27001-A.8, NIST-SI-3).
-func openAndVerifyCNIBinary() (*os.File, error) {
+func openAndVerifyCNIBinary(logger *zap.Logger) (*os.File, error) {
 	// Verify parent directory is root-owned and not group/world-writable.
 	dirInfo, err := os.Stat(cniPluginDir)
 	if err != nil {
@@ -271,8 +280,13 @@ func openAndVerifyCNIBinary() (*os.File, error) {
 	// Optional content-hash verification: if cniHashesPath lists a "bridge"
 	// digest, compare against the SHA-256 of the opened fd. Reading via the fd
 	// is TOCTOU-safe — the hash covers exactly the inode that will be exec'd.
-	// If no hash file is present, log-only (operators may not have pinned yet).
-	if hashData, err := os.ReadFile(cniHashesPath); err == nil {
+	// Always log a warning when the file is absent so operators see it in audit
+	// logs and can pin the digest (SOC2-CC6, NIST-SI-3, ISO27001-A.8).
+	hashData, hashErr := os.ReadFile(cniHashesPath)
+	if hashErr != nil {
+		logger.Warn("CNI binary integrity check skipped: hash file absent — pin the digest to enforce supply-chain verification",
+			zap.String("hash_file", cniHashesPath))
+	} else {
 		var hashes map[string]string
 		if json.Unmarshal(hashData, &hashes) == nil {
 			if pinned := hashes["bridge"]; pinned != "" {
@@ -339,7 +353,7 @@ func (c *Client) CNIAdd(ctx context.Context, appID, containerID, netnsPath strin
 	}
 	// Open and verify the binary on its fd — fd-anchored stat eliminates the
 	// TOCTOU window between the integrity check and exec (SOC2-CC6, NIST-SI-3).
-	cniBin, err := openAndVerifyCNIBinary()
+	cniBin, err := openAndVerifyCNIBinary(c.logger)
 	if err != nil {
 		return "", err
 	}
@@ -518,7 +532,7 @@ func (c *Client) CNIDel(ctx context.Context, appID, containerID, netnsPath strin
 		c.logger.Warn("CNI DEL skipped: invalid inputs", zap.Error(err))
 		return nil
 	}
-	cniBin, err := openAndVerifyCNIBinary()
+	cniBin, err := openAndVerifyCNIBinary(c.logger)
 	if err != nil {
 		c.logger.Warn("CNI DEL skipped: binary check failed", zap.Error(err))
 		return nil
