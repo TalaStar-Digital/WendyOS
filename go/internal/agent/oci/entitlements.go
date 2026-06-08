@@ -356,6 +356,13 @@ var statMajor = func(p string) (int64, error) {
 // simulate Jetson/RPi/Generic hosts.
 var boardDetect = board.Detect
 
+// udevRuntimeDir is the host udev runtime directory bind-mounted into camera
+// containers. libcamera enumerates media/CSI devices through libudev, which
+// reads the udevd-maintained database under /run/udev/data; without it the
+// in-container enumerator returns nothing (WDY-1342). Behind a var so tests
+// can point it at a path that exists on the test host.
+var udevRuntimeDir = "/run/udev"
+
 // applyCamera adds camera/V4L2 device access, plus the additional kernel
 // device majors that libcamera (and on Jetson, nvargus/nvhost) require. The
 // camera entitlement is intentionally one-size-fits-all: it covers both
@@ -406,6 +413,26 @@ func applyCamera(spec *Spec) {
 		for _, glob := range jetsonExtraGlobs {
 			allowMajorsFromGlob(spec, glob)
 		}
+	}
+
+	// Bind the host udev runtime read-only. libcamera enumerates cameras
+	// through libudev, which reads the udevd-maintained database under
+	// /run/udev/data. The device nodes and cgroup rules above are necessary
+	// but not sufficient for CSI/libcamera: with /run/udev absent the udev
+	// enumerator returns nothing and `cam -l` is empty, so apps fall back to a
+	// synthetic source (WDY-1342). USB/V4L2 capture does not need this, but the
+	// camera entitlement is one-size-fits-all so it is added unconditionally.
+	// ro/nosuid/noexec/nodev: the container only reads the udev database, never
+	// writes it or executes from it. Skipped when the host has no udev runtime
+	// (e.g. minimal/non-systemd hosts) so the bind's missing source cannot stop
+	// the container from starting.
+	if _, err := os.Stat(udevRuntimeDir); err == nil {
+		spec.Mounts = append(spec.Mounts, Mount{
+			Destination: "/run/udev",
+			Source:      udevRuntimeDir,
+			Type:        "bind",
+			Options:     []string{"rbind", "ro", "nosuid", "noexec", "nodev"},
+		})
 	}
 }
 

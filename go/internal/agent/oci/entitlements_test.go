@@ -552,6 +552,72 @@ func TestApplyEntitlements_Camera(t *testing.T) {
 	assertCameraEntitlement(t, spec, "camera")
 }
 
+// TestApplyEntitlements_Camera_UdevMount verifies the camera entitlement
+// bind-mounts the host udev runtime read-only. libcamera enumerates CSI
+// cameras through libudev, which reads /run/udev/data; without this mount the
+// in-container enumerator finds no cameras even though the device nodes and
+// cgroup rules are present (WDY-1342). udevRuntimeDir is redirected to a real
+// temp dir so the os.Stat guard is deterministic across CI hosts.
+func TestApplyEntitlements_Camera_UdevMount(t *testing.T) {
+	orig := udevRuntimeDir
+	t.Cleanup(func() { udevRuntimeDir = orig })
+	udevRuntimeDir = t.TempDir()
+
+	spec := DefaultSpec("/rootfs", []string{"/bin/sh"})
+	cfg := &appconfig.AppConfig{
+		AppID: "test-app",
+		Entitlements: []appconfig.Entitlement{
+			{Type: appconfig.EntitlementCamera},
+		},
+	}
+
+	if err := ApplyEntitlements(spec, cfg, ApplyOptions{}); err != nil {
+		t.Fatalf("ApplyEntitlements() error = %v", err)
+	}
+
+	m, ok := mountForDest(spec, "/run/udev")
+	if !ok {
+		t.Fatal("camera entitlement did not bind-mount /run/udev (libcamera CSI enumeration needs it)")
+	}
+	if m.Source != udevRuntimeDir {
+		t.Errorf("/run/udev mount source = %q, want %q", m.Source, udevRuntimeDir)
+	}
+	if m.Type != "bind" {
+		t.Errorf("/run/udev mount type = %q, want \"bind\"", m.Type)
+	}
+	if !slices.Contains(m.Options, "rbind") {
+		t.Error("/run/udev mount missing rbind option")
+	}
+	if !slices.Contains(m.Options, "ro") {
+		t.Error("/run/udev mount must be read-only (ro)")
+	}
+}
+
+// TestApplyEntitlements_Camera_UdevMountSkippedWhenAbsent verifies that a host
+// without a udev runtime directory does not get a /run/udev mount, so the
+// container can still start (runc fails a bind mount whose source is missing).
+func TestApplyEntitlements_Camera_UdevMountSkippedWhenAbsent(t *testing.T) {
+	orig := udevRuntimeDir
+	t.Cleanup(func() { udevRuntimeDir = orig })
+	udevRuntimeDir = filepath.Join(t.TempDir(), "does-not-exist")
+
+	spec := DefaultSpec("/rootfs", []string{"/bin/sh"})
+	cfg := &appconfig.AppConfig{
+		AppID: "test-app",
+		Entitlements: []appconfig.Entitlement{
+			{Type: appconfig.EntitlementCamera},
+		},
+	}
+
+	if err := ApplyEntitlements(spec, cfg, ApplyOptions{}); err != nil {
+		t.Fatalf("ApplyEntitlements() error = %v", err)
+	}
+
+	if hasMountDest(spec, "/run/udev") {
+		t.Error("camera entitlement mounted /run/udev despite host udev runtime being absent")
+	}
+}
+
 func TestApplyEntitlements_Multiple(t *testing.T) {
 	spec := DefaultSpec("/rootfs", []string{"/bin/sh"})
 	cfg := &appconfig.AppConfig{
