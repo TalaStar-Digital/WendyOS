@@ -3,8 +3,10 @@ package commands
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -924,9 +926,11 @@ func ensureMTLSBuilder(ctx context.Context, configDir, registryAddr, containerCe
 	keypair := &[2]string{containerCertDir + "/client-key.pem", containerCertDir + "/client-cert.pem"}
 	fullConfig := buildkitRegistryConfig(registryAddr, false, keypair)
 
-	// appliedState combines the buildkitd config with the cert content so that
-	// changes to either (new device, rotated cert) are detected reliably.
-	appliedState := fullConfig + "\n---CERT---\n" + leafCertPEM + "\n" + certInfo.PemPrivateKey
+	// appliedState combines the buildkitd config with the cert and a SHA-256
+	// digest of the private key so that changes to any component are detected
+	// without storing the raw key material on disk (SOC2-C1, NIST-SC-28).
+	keyDigest := sha256.Sum256([]byte(certInfo.PemPrivateKey))
+	appliedState := fullConfig + "\n---CERT---\n" + leafCertPEM + "\n---KEYHASH---\n" + hex.EncodeToString(keyDigest[:])
 
 	appliedConfig, _ := os.ReadFile(appliedPath)
 	configChanged := string(appliedConfig) != appliedState
@@ -960,7 +964,7 @@ func ensureMTLSBuilder(ctx context.Context, configDir, registryAddr, containerCe
 		if err := updateBuilderConfig(ctx, builderName, fullConfig, w); err != nil {
 			return "", fmt.Errorf("updating builder config: %w", err)
 		}
-		_ = os.WriteFile(appliedPath, []byte(appliedState), 0o644)
+		_ = os.WriteFile(appliedPath, []byte(appliedState), 0o600)
 	} else {
 		// Builder exists with correct config — just ensure it's running.
 		bootstrapCmd := exec.CommandContext(ctx, "docker", "buildx", "inspect", "--bootstrap", "--builder", builderName)
