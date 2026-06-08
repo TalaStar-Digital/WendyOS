@@ -117,33 +117,37 @@ func allocateSubnet(appID string) (string, error) {
 		return existing, nil
 	}
 
-	// Compute candidate subnet from 4 SHA-256 bytes; use linear probing across
-	// all 16 /28 blocks in the same /24 to handle hash collisions without
-	// returning a hard error (birthday probability ~50% at ~1400 apps without
-	// probing; SOC2-CC6, NIST-SC-7, ISO27001-A.8).
+	// Compute a /28 candidate from 4 SHA-256 bytes.  When the derived /24 is
+	// full, extend probing into adjacent /24s by incrementing b3 (then b2) to
+	// prevent a targeted DoS where an attacker registers 16 apps that all hash
+	// to the same b2.b3 prefix and exhausts allocation for a victim appID.
+	// Each outer step covers 16 /28 blocks in one /24; up to 256 /24s are tried
+	// within the same b2 octet before failing (SOC2-CC6, NIST-SC-7, ISO27001-A.8).
 	h := sha256.Sum256([]byte(appID))
 	b2 := h[0]
-	b3 := h[1]
+	b3Start := h[1]
 	b4base := (h[2] ^ h[3]) & 0xF0
 
+	allocated := make(map[string]struct{}, len(registry))
+	for _, s := range registry {
+		allocated[s] = struct{}{}
+	}
+
 	var candidate string
-	for probe := 0; probe < 16; probe++ {
-		b4 := byte((int(b4base)+probe*0x10)&0xFF) & 0xF0
-		c := fmt.Sprintf("10.%d.%d.%d/28", b2, b3, b4)
-		taken := false
-		for _, existingSubnet := range registry {
-			if existingSubnet == c {
-				taken = true
-				break
+outer:
+	for b3Offset := 0; b3Offset < 256; b3Offset++ {
+		b3 := byte((int(b3Start) + b3Offset) & 0xFF)
+		for probe := 0; probe < 16; probe++ {
+			b4 := byte((int(b4base)+probe*0x10)&0xFF) & 0xF0
+			c := fmt.Sprintf("10.%d.%d.%d/28", b2, b3, b4)
+			if _, taken := allocated[c]; !taken {
+				candidate = c
+				break outer
 			}
-		}
-		if !taken {
-			candidate = c
-			break
 		}
 	}
 	if candidate == "" {
-		return "", fmt.Errorf("all 16 /28 subnets in 10.%d.%d.0/24 are allocated (SOC2-CC6, NIST-SC-7)", b2, b3)
+		return "", fmt.Errorf("all /28 subnets in 10.%d.x.0/8 are allocated — consider releasing unused apps (SOC2-CC6, NIST-SC-7)", b2)
 	}
 
 	// Persist the new assignment atomically via temp-file + rename so the
@@ -246,7 +250,7 @@ const cniHashesPath = "/etc/wendy/cni-hashes.json"
 // pinned SHA-256 digest to guard against supply-chain compromise. The caller
 // MUST keep the returned file open until exec completes (SOC2-CC6,
 // ISO27001-A.8, NIST-SI-3).
-func openAndVerifyCNIBinary(logger *zap.Logger) (*os.File, error) {
+func openAndVerifyCNIBinary() (*os.File, error) {
 	// Verify parent directory is root-owned and not group/world-writable.
 	dirInfo, err := os.Stat(cniPluginDir)
 	if err != nil {
@@ -290,22 +294,26 @@ func openAndVerifyCNIBinary(logger *zap.Logger) (*os.File, error) {
 	if hashErr != nil {
 		f.Close()
 		return nil, fmt.Errorf("CNI binary integrity check: hash file %q is required but missing or unreadable — pin the bridge digest to enable CNI (SOC2-CC6, NIST-SI-3): %w", cniHashesPath, hashErr)
-	} else {
-		var hashes map[string]string
-		if json.Unmarshal(hashData, &hashes) == nil {
-			if pinned := hashes["bridge"]; pinned != "" {
-				hasher := sha256.New()
-				if _, err := io.Copy(hasher, f); err != nil {
-					f.Close()
-					return nil, fmt.Errorf("hashing CNI bridge binary: %w", err)
-				}
-				actual := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
-				if actual != pinned {
-					f.Close()
-					return nil, fmt.Errorf("CNI bridge binary hash mismatch: got %s, want %s — update %s or reinstall the plugin (SOC2-CC6, NIST-SI-3)", actual, pinned, cniHashesPath)
-				}
-			}
-		}
+	}
+	var hashes map[string]string
+	if err := json.Unmarshal(hashData, &hashes); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("CNI hash file %q is malformed — must be valid JSON (SOC2-CC6, NIST-SI-3): %w", cniHashesPath, err)
+	}
+	pinned, ok := hashes["bridge"]
+	if !ok || pinned == "" {
+		f.Close()
+		return nil, fmt.Errorf("CNI hash file %q must contain a non-empty 'bridge' digest — run: sha256sum /opt/cni/bin/bridge | awk '{print \"sha256:\"$1}' (SOC2-CC6, NIST-SI-3)", cniHashesPath)
+	}
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("hashing CNI bridge binary: %w", err)
+	}
+	actual := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	if actual != pinned {
+		f.Close()
+		return nil, fmt.Errorf("CNI bridge binary hash mismatch: got %s, want %s — update %s or reinstall the plugin (SOC2-CC6, NIST-SI-3)", actual, pinned, cniHashesPath)
 	}
 	return f, nil
 }
@@ -357,7 +365,7 @@ func (c *Client) CNIAdd(ctx context.Context, appID, containerID, netnsPath strin
 	}
 	// Open and verify the binary on its fd — fd-anchored stat eliminates the
 	// TOCTOU window between the integrity check and exec (SOC2-CC6, NIST-SI-3).
-	cniBin, err := openAndVerifyCNIBinary(c.logger)
+	cniBin, err := openAndVerifyCNIBinary()
 	if err != nil {
 		return "", err
 	}
@@ -536,7 +544,7 @@ func (c *Client) CNIDel(ctx context.Context, appID, containerID, netnsPath strin
 		c.logger.Warn("CNI DEL skipped: invalid inputs", zap.Error(err))
 		return nil
 	}
-	cniBin, err := openAndVerifyCNIBinary(c.logger)
+	cniBin, err := openAndVerifyCNIBinary()
 	if err != nil {
 		c.logger.Warn("CNI DEL skipped: binary check failed", zap.Error(err))
 		return nil

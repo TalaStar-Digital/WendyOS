@@ -1746,14 +1746,15 @@ func (c *Client) StopContainer(ctx context.Context, appID string) error {
 	delete(c.appServices, appID)
 	delete(c.appIsolation, appID)
 	delete(c.serviceIPs, appID)
-	delete(c.appStopping, appID)
+	// appStopping is cleared AFTER the late-sweep so that concurrent
+	// CreateContainerWithProgress calls remain blocked during the sweep window
+	// (SOC2-CC6, NIST-AC-3, ISO27001-A.8).
 	c.mu.Unlock()
 
 	// Re-enumerate unconditionally to catch any containers that appeared after
 	// resolveStopOrder snapshotted the list (e.g. a concurrent StartContainer
 	// mid-CNI-ADD). stopOne is idempotent for already-stopped containers.
-	// This is the only reliable way to close the TOCTOU window without a
-	// flag-based race (SOC2-CC6, NIST-AC-3, ISO27001-A.8).
+	// appStopping is still set during this sweep to block new concurrent creates.
 	if lateCtrs, lateErr := c.containersForApp(ctx, appID); lateErr == nil && len(lateCtrs) > 0 {
 		for _, ctr := range lateCtrs {
 			if stopErr := c.stopOne(ctx, ctr.ID()); stopErr != nil {
@@ -1763,6 +1764,12 @@ func (c *Client) StopContainer(ctx context.Context, appID string) error {
 			}
 		}
 	}
+
+	// Clear appStopping only after the late sweep so no new container slips
+	// through the guard window.
+	c.mu.Lock()
+	delete(c.appStopping, appID)
+	c.mu.Unlock()
 
 	return errors.Join(errs...)
 }
