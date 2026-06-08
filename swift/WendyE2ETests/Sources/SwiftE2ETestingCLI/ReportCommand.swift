@@ -1372,7 +1372,7 @@ private func renderAIReviewDetailsLink(_ detailsPath: String) -> String {
 }
 
 private func renderAIReviewSeverityBadge(_ severity: E2EReviewSeverity) -> String {
-    "<span class=\"ai-review-severity-badge \(severity.rawValue)\">\(escapeHTML(severity.rawValue))</span>"
+    "<span class=\"ai-review-severity-badge \(severity.rawValue)\">\(escapeHTML(severity.displayName))</span>"
 }
 
 private func renderAIReviewerBadge(_ reviewer: String) -> String {

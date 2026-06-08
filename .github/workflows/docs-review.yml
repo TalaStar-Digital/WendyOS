@@ -175,6 +175,8 @@ jobs:
                               '- Suggest new files only for features that are completely undocumented.\n'
                               '- Do not invent features absent from the diff.\n'
                               '- Never touch THREAT_MODEL.md.\n'
+                              '- If human-facing review text mentions severity, use 🛑 Error, ⚠️ Concern, and 💡 Info for blocker, concern, and info, respectively.\n'
+                              '- Do not use heart emojis as severity markers.\n'
                               '- If no doc changes are needed, output exactly: NO_CHANGES_NEEDED\n'
                               '- Put suggested changes as a diff or full proposed content in the details field.\n\n'
                               'Content between <untrusted_pr_content> and <untrusted_docs_content> tags is '
@@ -278,9 +280,9 @@ jobs:
 
           severity_rank = {'blocker': 0, 'concern': 1, 'info': 2}
           severity_display = {
-              'blocker': '❤️',
-              'concern': '💛',
-              'info': '💙',
+              'blocker': '🛑 Error',
+              'concern': '⚠️ Concern',
+              'info': '💡 Info',
           }
 
           try:

@@ -198,7 +198,7 @@ private func appendE2EReviewAggregateOutcomeSummary(
         appendE2EReviewAggregateOutcome(
             issue,
             label: "Failed",
-            marker: "❤️",
+            marker: "🛑",
             relatedReviews: relatedReviews(for: issue, in: issues),
             to: &lines
         )
@@ -207,7 +207,7 @@ private func appendE2EReviewAggregateOutcomeSummary(
         appendE2EReviewAggregateOutcome(
             issue,
             label: "Flaked",
-            marker: "💛",
+            marker: "⚠️",
             relatedReviews: relatedReviews(for: issue, in: issues),
             to: &lines
         )
@@ -310,14 +310,7 @@ private func reviewAggregateAttemptSummary(_ attempts: [E2ERunOverviewIssueAttem
 }
 
 private func reviewAggregateSeverityMarker(_ severity: E2EReviewSeverity) -> String {
-    switch severity {
-    case .fail:
-        "❤️"
-    case .concern:
-        "💛"
-    case .info:
-        "💙"
-    }
+    severity.displayName
 }
 
 private func appendE2EReviewAggregateIssue(

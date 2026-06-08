@@ -1031,7 +1031,7 @@ private func appendReviewOutputContract(
         "The file name must be the review title slug with `.md`: lowercase ASCII letters/digits, non-alphanumerics replaced by `-`, repeated dashes collapsed, and leading/trailing dashes removed. Example: `seed-cache-fixtures-before-listing.md`."
     )
     lines.append(
-        "Use JSON `severity` to classify each issue as `info`, `concern`, or `fail`. Do not write prose status/severity lines such as `Status: pass`, `Status: concern`, or `Status: fail`."
+        "Use JSON `severity` to classify each issue as `info`, `concern`, or `fail`. Keep those exact JSON values. If human-facing review text mentions a severity label, use `🛑 Error`, `⚠️ Concern`, and `💡 Info` for `fail`, `concern`, and `info`, respectively. Do not use heart emojis as severity markers. Do not write prose status/severity lines such as `Status: pass`, `Status: concern`, or `Status: fail`."
     )
     lines.append(
         "If nothing is noteworthy at a scope, leave that `\(reviewDirectoryName)/` directory absent or empty."

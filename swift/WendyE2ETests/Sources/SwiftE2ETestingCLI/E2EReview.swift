@@ -41,11 +41,11 @@ enum E2EReviewSeverity: String, Codable, Sendable {
     var displayName: String {
         switch self {
         case .fail:
-            "Fail"
+            "🛑 Error"
         case .concern:
-            "Concern"
+            "⚠️ Concern"
         case .info:
-            "Info"
+            "💡 Info"
         }
     }
 }

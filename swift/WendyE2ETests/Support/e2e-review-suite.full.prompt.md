@@ -16,7 +16,10 @@ Guidelines:
   scope.
 - Do not write pass/OK reviews for tests or suites.
 - Use JSON `severity` to classify each issue as `info`, `concern`, or
-  `fail`. Do not write prose status/severity lines such as `Status: pass`,
+  `fail`. Keep those exact JSON values. If human-facing review text mentions a
+  severity label, use `🛑 Error`, `⚠️ Concern`, and `💡 Info` for `fail`,
+  `concern`, and `info`, respectively. Do not use heart emojis as severity
+  markers. Do not write prose status/severity lines such as `Status: pass`,
   `Status: concern`, or `Status: fail`.
 - Each review summary should be GitHub-comment-sized: one concise explanation
   plus the suggested action.
