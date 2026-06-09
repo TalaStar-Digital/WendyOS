@@ -22,10 +22,11 @@ wendy device list --json=false | cat
 
 ## `--device`
 
-Specifies a target device by IP address or hostname, bypassing [device selection](./device-selection.md).
+Specifies a target device by IP address, hostname, provider key, or explicit `host:port`, bypassing [device selection](./device-selection.md).
 
 ```sh
 wendy --device 192.168.1.42 device apps list
+wendy --device my-mac.local:50051 device info --json
 ```
 
 ## Environment variables

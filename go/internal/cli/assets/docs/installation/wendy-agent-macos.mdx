@@ -30,7 +30,7 @@ brew tap wendylabsinc/tap
 brew install --cask wendy-agent
 ```
 
-For the nightly beta build, use:
+For the nightly build, use:
 
 ```bash
 brew install --cask wendy-agent-nightly
@@ -60,12 +60,33 @@ only if the CLI and agent are on the same Mac.
 The JSON response should report `"os": "darwin"` and
 `"cpuArchitecture": "arm64"`.
 
+## Discovery and Device Selection
+
+Wendy Agent for Mac advertises over Bonjour/mDNS as `_wendyos._udp`. The
+`wendy discover --json` command can list Mac agents in `lanDevices` with
+`"os": "darwin"` when the network and macOS Local Network permission allow it.
+
+For scripts, CI, SSH sessions, and other non-interactive shells, pass
+`--device` or set a default device first. The CLI does not open the interactive
+picker when it is not attached to a TTY; without `--device` or a saved default,
+device commands fail with an error asking you to specify or configure a device.
+Use `--json` for stable machine-readable output.
+
 ## Set the Mac as Your Default Device
 
-Once the CLI can connect, set the Mac target as your default Wendy device:
+Once the CLI can connect, you can save the Mac target as your default Wendy
+device:
 
 ```bash
 wendy device set-default {hostname}:50051
+wendy device info --json
+wendy run
+```
+
+Clear the default when you want commands to require an explicit target again:
+
+```bash
+wendy device unset-default
 ```
 
 ## Deploying Native macOS Apps
@@ -76,22 +97,31 @@ From a native macOS app project configured for a Darwin target, run:
 wendy run --device {hostname}:50051
 ```
 
-The CLI builds the app on the Mac development machine, syncs the build output to Wendy Agent for Mac, and starts it as a native macOS process. These apps currently run natively on macOS, not inside a Linux-style container.
+If you saved the Mac target as the default device, you can omit `--device`:
 
-## What Works in the Mac Beta
+```bash
+wendy run
+```
+
+The CLI builds the app on the Mac development machine, syncs the build output
+to Wendy Agent for Mac, and starts it as a native macOS process. These apps
+currently run natively on macOS, not inside a Linux-style container.
+
+## What Works
 
 Wendy for Mac is focused on native macOS app deployment first. Apps run as regular macOS processes, not Linux containers.
 
 ### Should work
 
 - Apple Silicon Mac targets running macOS 15 or later.
-- Installing WendyAgentMac with Homebrew or the release zip.
-- Running WendyAgentMac as a menu bar app.
+- Installing Wendy Agent for Mac with Homebrew or the release zip.
+- Running Wendy Agent for Mac as a menu bar app.
 - Connecting from the Wendy CLI with an explicit `{hostname}:50051` address.
+- Discovering Wendy Agent for Mac over Bonjour/mDNS when the network and macOS Local Network permission allow it.
 - Setting the Mac as your default Wendy device.
 - Deploying native SwiftPM macOS apps with `wendy run` and `platform: "darwin"`.
 
-### Not supported in this beta
+### Not supported
 
 - Intel Macs.
 - Linux-container deployment to Mac targets, including Dockerfile and Compose projects.
@@ -99,7 +129,11 @@ Wendy for Mac is focused on native macOS app deployment first. Apps run as regul
   audio, camera/video, GPU, USB, GPIO, and I2C. Hardware commands such as
   `wendy --device {hostname}:50051 device hardware list` should fail with a
   clear not-supported error.
-- WendyOS OTA updates with `wendy os update`. Update macOS and WendyAgentMac through their normal macOS installation/update path.
+- WendyOS OTA updates with `wendy os update`. Update macOS and Wendy Agent for
+  Mac through their normal macOS installation/update path.
+
+Unsupported features should either be hidden, clearly marked as unsupported, or
+fail with an actionable unsupported message.
 
 ## Troubleshooting
 
@@ -112,8 +146,12 @@ If the CLI cannot connect:
    wendy --device {hostname}:50051 device info --json
    ```
 
-3. Quit and reopen Wendy Agent from the menu bar.
-4. If you installed both stable and nightly builds, quit both apps and open only the one you want to test.
+3. If `wendy discover` does not show the Mac agent, use the explicit
+   `--device` command above and check macOS Local Network permission for the CLI
+   process.
+4. Quit and reopen Wendy Agent from the menu bar.
+5. If you installed both stable and nightly builds, quit both apps and open only
+   the one you want to test.
 
 ## Next Steps
 

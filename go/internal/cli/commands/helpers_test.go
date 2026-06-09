@@ -334,6 +334,42 @@ func TestResolveDeviceAddress_DefaultDevice(t *testing.T) {
 	}
 }
 
+func TestResolveDeviceAddress_ExplicitHostPortFlag(t *testing.T) {
+	origFlag := deviceFlag
+	defer func() { deviceFlag = origFlag }()
+	deviceFlag = "my-mac.local:50051"
+
+	addr, isDefault, err := resolveDeviceAddress()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isDefault {
+		t.Fatal("expected isDefault=false when --device flag is set")
+	}
+	if addr != "my-mac.local:50051" {
+		t.Fatalf("addr = %q, want %q", addr, "my-mac.local:50051")
+	}
+}
+
+func TestResolveDeviceAddress_ExplicitHostPortDefault(t *testing.T) {
+	origFlag := deviceFlag
+	defer func() { deviceFlag = origFlag }()
+	deviceFlag = ""
+
+	setTempConfig(t, &config.Config{DefaultDevice: "my-mac.local:50051"})
+
+	addr, isDefault, err := resolveDeviceAddress()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isDefault {
+		t.Fatal("expected isDefault=true when using default device from config")
+	}
+	if addr != "my-mac.local:50051" {
+		t.Fatalf("addr = %q, want %q", addr, "my-mac.local:50051")
+	}
+}
+
 func TestResolveDeviceAddress_IPv6ZoneFlag(t *testing.T) {
 	origFlag := deviceFlag
 	defer func() { deviceFlag = origFlag }()
