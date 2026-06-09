@@ -5,16 +5,12 @@ established, the CLI goes down a list in order to connect to this device.
 
 If the `--device` flag is specified, a connection is made against that target IP
 address or hostname. Include a port when the target should not use the default
-agent port, or when you want to make the beta Mac-agent path explicit:
+agent port:
 
 ```sh
-wendy --device localhost:50051 device info --json
+wendy --device 192.168.1.42 device apps list
 wendy run --device my-mac.local:50051
 ```
-
-For WendyAgentMac, `localhost:50051` targets an agent running on the same Mac as
-the CLI. To target a different Mac, use that Mac's `.local` hostname or IP
-address; `localhost` never points at a remote machine.
 
 Failing to connect to an explicit device results in a failure.
 
@@ -24,11 +20,10 @@ Failing to connect to an explicit device results in a failure.
 
 If a Default Device is set using [`wendy device set-default`](./commands/device/set-default.md),
 the CLI attempts to connect to it. The saved value may be a hostname, IP
-address, provider key, or explicit `host:port` value such as
-`localhost:50051`.
+address, provider key, or explicit `host:port` value.
 
 ```sh
-wendy device set-default localhost:50051
+wendy device set-default my-mac.local:50051
 wendy device info --json
 wendy run
 ```
@@ -46,8 +41,8 @@ mDNS and BLE discover nearby [WendyOS](../../wendyos/),
 A device picker is shown only when the terminal is interactive, so a user can
 select their target device for the current command invocation.
 
-WendyAgentMac advertises over Bonjour/mDNS as `_wendyos._udp` and appears as a
-LAN device when local discovery is allowed by the network and macOS Local
+Wendy Agent for Mac advertises over Bonjour/mDNS as `_wendyos._udp` and appears
+as a LAN device when local discovery is allowed by the network and macOS Local
 Network permissions.
 
 In scripts, CI, SSH sessions without a TTY, or any other non-interactive

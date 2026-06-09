@@ -26,7 +26,7 @@ Specifies a target device by IP address, hostname, provider key, or explicit `ho
 
 ```sh
 wendy --device 192.168.1.42 device apps list
-wendy --device localhost:50051 device info --json
+wendy --device my-mac.local:50051 device info --json
 ```
 
 ## Environment variables
