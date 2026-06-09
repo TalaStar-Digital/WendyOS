@@ -86,6 +86,7 @@ var allowedKeys = map[string][]string{
 const (
 	PlatformWendyOS   = "wendyos"
 	PlatformWendyLite = "wendy-lite"
+	PlatformDarwin    = "darwin"
 )
 
 // FileSyncEntry describes a file or directory to sync to the device's app
