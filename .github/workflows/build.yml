@@ -651,7 +651,6 @@ jobs:
 
   integration-tests:
     name: Integration Tests (macOS, stable gate)
-    if: false # temporarily disabled
     uses: ./.github/workflows/integration-tests.yml
     with:
       platform: macos
