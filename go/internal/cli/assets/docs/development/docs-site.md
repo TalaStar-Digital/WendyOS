@@ -83,6 +83,10 @@ The `.github/workflows/fumadocs.yml` workflow runs when `docs`,
 | Manual dispatch (no inputs) | Builds a branch-style preview artifact without deploying |
 | Manual dispatch with `release_tag` input | Deploys a release, identical to a published-release trigger. The `release_prerelease` input selects the target: `false` (default) deploys `release-<version>/` and updates `latest/`; `true` deploys `release-nightly-<version>/` and updates `latest-nightly/`. The dispatch ref must match `release_tag` (dispatch with `--ref "<release_tag>"`), otherwise the deploy fails fast so docs built from one ref are never published under a different release path. |
 
+Preview URLs are posted to same-repository PR comments and are visible to anyone
+who can read the PR. This is intentional; deploy paths are public preview paths
+and should not include sensitive information.
+
 The deploy job authenticates to GCP with Workload Identity Federation and syncs
 static files to `gs://wendy-docs-public/<deploy-path>`. Static exports include
 SHA-256 manifests that are verified before each deploy path is synced.

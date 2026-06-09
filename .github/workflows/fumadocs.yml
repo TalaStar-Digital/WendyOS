@@ -382,6 +382,7 @@ jobs:
       needs.build.result == 'success' &&
       needs.deploy.result == 'success'
     permissions:
+      contents: none
       pull-requests: write
     steps:
       - name: Comment with docs preview URL
@@ -403,6 +404,8 @@ jobs:
             echo "::error::Unexpected PR number: ${PR_NUMBER}"
             exit 1
           fi
+          # This regex is the trust boundary for needs.build.outputs.url. Keep it
+          # in sync with Compute docs path if preview URL formats change.
           if ! [[ "${DOCS_PREVIEW_URL}" =~ ^https://docs\.wendy\.dev/[a-z0-9][a-z0-9._-]{0,200}/$ ]]; then
             echo "::error::Unexpected docs preview URL: ${DOCS_PREVIEW_URL}"
             exit 1
@@ -412,22 +415,10 @@ jobs:
           trap 'rm -rf "${tmp_dir}"' EXIT
           payload_file="${tmp_dir}/payload.json"
 
-          MARKER="${marker}" DOCS_PREVIEW_URL="${DOCS_PREVIEW_URL}" python3 - "${payload_file}" <<'PY'
-          import json
-          import os
-          import pathlib
-          import sys
-
-          marker = os.environ["MARKER"]
-          preview_url = os.environ["DOCS_PREVIEW_URL"]
-          body = (
-              f"{marker}\n"
-              "## Docs preview\n\n"
-              f"Preview this PR's docs at: <{preview_url}>\n\n"
-              "_This comment is updated automatically when the docs preview is redeployed._\n"
-          )
-          pathlib.Path(sys.argv[1]).write_text(json.dumps({"body": body}))
-          PY
+          printf -v body '%s\n## Docs preview\n\nPreview this PR'"'"'s docs at: <%s>\n\n_This comment is updated automatically when the docs preview is redeployed._\n' \
+            "${marker}" \
+            "${DOCS_PREVIEW_URL}"
+          jq -n --arg body "${body}" '{ body: $body }' > "${payload_file}"
 
           mapfile -t comment_ids < <(gh api "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
             --paginate \
