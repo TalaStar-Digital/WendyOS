@@ -18,25 +18,15 @@ import (
 // Certificates valid for longer than this are rejected because they cannot be
 // promptly revoked: Go's crypto/tls does not fetch CRL distribution points
 // during the TLS handshake, and doing so from server code introduces SSRF
-// vectors, cache-poisoning risk, and availability dependencies. Short-lived
-// credentials are the compensating control, as recommended by NIST SP 800-63B
-// §5.1.1 and PKIX operational guidance (RFC 5280 §6.3).
+// vectors, cache-poisoning risk, and availability dependencies.
 //
-// The value is 24 h + 1 h clock-skew tolerance (RFC 5280 §6.1.3): a device
-// whose RTC drifts by up to one hour will still accept a cert issued at the
-// edge of the 24-hour window. Issue certs with NotAfter–NotBefore ≤ 24 h.
-const maxCertLifetime = 25 * time.Hour
+// The value is 732 days (2 × 365 + 2) to cover any real-world "2-year"
+// certificate whose validity window includes a leap-year Feb 29 (max 731 days).
+const maxCertLifetime = (2*365 + 2) * 24 * time.Hour
 
 // checkRevocation enforces that leaf was issued with a validity window short
 // enough that a compromised credential expires within maxCertLifetime even
 // without an explicit CRL/OCSP revocation check.
-//
-// CRL distribution point fetching is intentionally not implemented here:
-// outbound HTTP(S) requests from a TLS handshake callback introduce SSRF risk
-// (the attacker controls the URLs embedded in the certificate), create an
-// availability dependency on the CRL server, and open a MITM window on the
-// CRL itself. Short-lived certificate enforcement provides an equivalent
-// security bound without those attack surfaces.
 func checkRevocation(leaf *x509.Certificate) error {
 	lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
 	if lifetime > maxCertLifetime {
