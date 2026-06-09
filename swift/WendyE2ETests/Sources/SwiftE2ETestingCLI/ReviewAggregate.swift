@@ -235,7 +235,7 @@ private func appendE2EReviewAggregateOutcome(
             let review = reviewIssue.review
             lines.append("- AI review: **\(reviewAggregateSingleLine(review.title))**")
             lines.append("")
-            lines.append(review.summaryMarkdown)
+            lines.append(reviewAggregateSummaryMarkdown(review.summaryMarkdown))
             lines.append("")
         }
     }
@@ -310,7 +310,7 @@ private func reviewAggregateAttemptSummary(_ attempts: [E2ERunOverviewIssueAttem
 }
 
 private func reviewAggregateSeverityMarker(_ severity: E2EReviewSeverity) -> String {
-    severity.displayName
+    severity.symbol
 }
 
 private func appendE2EReviewAggregateIssue(
@@ -321,7 +321,7 @@ private func appendE2EReviewAggregateIssue(
     let review = issue.review
     lines.append(reviewAggregateTitleLine(for: issue, headingLevel: headingLevel))
     lines.append("")
-    lines.append(review.summaryMarkdown)
+    lines.append(reviewAggregateSummaryMarkdown(review.summaryMarkdown))
     lines.append("")
     lines.append("<details>")
     lines.append("<summary>Details</summary>")
@@ -390,4 +390,33 @@ private func reviewAggregateSingleLine(_ value: String) -> String {
         .replacingOccurrences(of: "\r", with: " ")
         .replacingOccurrences(of: "\n", with: " ")
         .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func reviewAggregateSummaryMarkdown(_ value: String) -> String {
+    let original = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    let patterns = [
+        #"^(?:\*\*|__)?\s*(?:🛑|⚠️|💡)\s*(?:(?:Error|Fail(?:ure)?|Concern|Info)\b)?\s*(?::|[-–—])?\s*(?:\*\*|__)?\s*"#,
+        #"^(?:\*\*|__)?\s*(?:Error|Fail(?:ure)?|Concern|Info)\b\s*(?::|[-–—])\s*(?:\*\*|__)?\s*"#,
+    ]
+
+    for pattern in patterns {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            continue
+        }
+        let range = NSRange(original.startIndex..<original.endIndex, in: original)
+        guard let match = regex.firstMatch(in: original, range: range), match.range.location == 0,
+            match.range.length > 0,
+            let swiftRange = Range(match.range, in: original)
+        else {
+            continue
+        }
+
+        let stripped = String(original[swiftRange.upperBound...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stripped.isEmpty {
+            return stripped
+        }
+    }
+
+    return original
 }

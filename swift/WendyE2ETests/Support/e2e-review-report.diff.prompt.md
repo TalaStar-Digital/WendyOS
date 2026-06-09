@@ -20,11 +20,11 @@ Guidelines:
   explicitly explain why the outcome may be nondeterministic and how to
   investigate or stabilize it.
 - Use JSON `severity` to classify each issue as `info`, `concern`, or
-  `fail`. Keep those exact JSON values. If human-facing review text mentions a
-  severity label, use `🛑 Error`, `⚠️ Concern`, and `💡 Info` for `fail`,
-  `concern`, and `info`, respectively. Do not use heart emojis as severity
-  markers. Do not write prose status/severity lines such as `Status: pass`,
-  `Status: concern`, or `Status: fail`.
+  `fail`. Keep those exact JSON values. Do not include severity labels or
+  severity emoji in review titles, Markdown headings, or summary text; the
+  aggregate renderer adds the severity emoji from JSON. Do not use heart emojis
+  as severity markers. Do not write prose status/severity lines such as
+  `Status: pass`, `Status: concern`, or `Status: fail`.
 - Each review summary should be GitHub-comment-sized: one concise explanation
   tied to the diff plus the suggested action.
 - Put evidence, reasoning, targeted diff references, links to relevant suite/test

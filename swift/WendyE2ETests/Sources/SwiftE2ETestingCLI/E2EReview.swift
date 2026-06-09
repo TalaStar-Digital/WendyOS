@@ -48,6 +48,17 @@ enum E2EReviewSeverity: String, Codable, Sendable {
             "💡 Info"
         }
     }
+
+    var symbol: String {
+        switch self {
+        case .fail:
+            "🛑"
+        case .concern:
+            "⚠️"
+        case .info:
+            "💡"
+        }
+    }
 }
 
 struct E2EReviewLocation: Codable, Sendable {
