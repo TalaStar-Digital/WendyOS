@@ -94,25 +94,33 @@ wendy run --device {hostname}:50051
 
 The CLI builds the app on the Mac development machine, syncs the build output to Wendy Agent for Mac, and starts it as a native macOS process. These apps currently run natively on macOS, not inside a Linux-style container.
 
-## Beta Support Notes
+## Beta Support Matrix
 
 Wendy for Mac beta is intentionally smaller than WendyOS on Raspberry Pi or NVIDIA Jetson. macOS does not currently provide the same app containerization path that Wendy Agent uses on Linux, so apps run as native macOS processes rather than Linux containers.
 
-Currently supported first:
+Use this matrix as the current beta contract. Unknown items are called out explicitly instead of implied as supported.
 
-- Apple Silicon Mac targets
-- WendyAgentMac running as a menu bar app
-- CLI connection to the Mac agent
-- Native macOS app deployment through file sync
-- Native, non-containerized app execution on macOS
-- Native app lifecycle management where supported by the current agent
-
-Current limitations:
-
-- Intel Macs are not supported
-- Native macOS app deployment requires a Mac development machine
-- Wi-Fi management, Bluetooth peripheral control, camera/video, audio, GPU, USB, GPIO, and I2C access are not available through Wendy hardware APIs in the initial Mac beta
-- Virtualized Linux containers, once enabled later, are intended for self-contained services such as databases, queues, and web workers, not hardware access
+| Area | Beta status | Notes |
+| --- | --- | --- |
+| Apple Silicon Mac targets | Supported | Requires an Apple Silicon Mac running macOS 15 or later. Intel Macs are not supported. |
+| WendyAgentMac menu bar app | Supported | The agent runs as a macOS menu bar app. Confirm the menu bar item is present after launch. |
+| CLI connection by explicit address | Supported | `wendy --device localhost:50051 device info --json` works when the CLI and agent are on the same Mac. Remote Mac targets can be addressed by hostname or IP address on the local network. |
+| Default device selection | Supported | `wendy device set-default localhost:50051` can make the Mac agent the default target. |
+| Discovery and interactive device picker | Unknown | Explicit `--device` and default-device flows are the current recommended beta paths. Discovery and picker behavior still need a dedicated verification pass. |
+| Native macOS app deployment | Supported | The CLI builds Darwin apps on the Mac development machine, syncs build output to the Mac agent, and starts the app as a native macOS process. |
+| SwiftPM native macOS apps | Supported | A minimal SwiftPM executable with `platform: "darwin"` has been manually verified. |
+| Xcode project deployment | Unknown | Xcode project support needs a dedicated verification pass before it is described as supported. |
+| Native app lifecycle commands | Limited | Basic start/stop/list/remove behavior is expected for native macOS processes, but lifecycle edge cases still need verification. |
+| Logs and telemetry | Unknown | Log streaming, dashboards, and telemetry flows need a dedicated Mac beta verification pass. |
+| Wi-Fi management | Unsupported | Wendy Wi-Fi APIs are not available through Wendy Agent for Mac in the initial beta. |
+| Bluetooth control | Unsupported | Wendy Bluetooth APIs are not available through Wendy Agent for Mac in the initial beta. |
+| Audio APIs | Unsupported | Wendy audio APIs are not available through Wendy Agent for Mac in the initial beta. |
+| Camera and video APIs | Unsupported | Wendy camera/video APIs are not available through Wendy Agent for Mac in the initial beta. |
+| GPU and hardware APIs | Unsupported | Wendy GPU, USB, GPIO, I2C, and general hardware APIs are not available through Wendy Agent for Mac in the initial beta. |
+| WendyOS updates | Unsupported | `wendy os update` is for WendyOS OTA targets, not macOS hosts. Update macOS and WendyAgentMac through their normal macOS installation/update path. |
+| MCP workflows | Unknown | MCP tools should be treated as supported only for command families that are supported on the Mac agent. Mac-specific MCP behavior still needs an audit. |
+| Linux containers on Mac | Planned | Virtualized Linux containers, once enabled later, are intended for self-contained services such as databases, queues, and web workers, not hardware access. |
+| Install and docs | Supported, beta | Homebrew cask and release-zip installation are documented for Apple Silicon Macs. Troubleshooting, reset, and uninstall docs will expand during beta. |
 
 Unsupported features should either be hidden, clearly marked as unsupported, or fail with an actionable unsupported message.
 
