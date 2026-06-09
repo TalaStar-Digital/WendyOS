@@ -48,31 +48,17 @@ Wendy Agent appears in the macOS menu bar. Open the menu to confirm that the age
 
 ## Verify the Installation
 
-From the Mac development machine, check that the CLI can reach the Mac agent.
-
-If the CLI and agent are on the same Mac, use `localhost`:
-
-```bash
-wendy --device localhost:50051 device info --json
-```
-
-If the agent is running on another Mac on your network, replace `localhost` with that Mac's hostname or IP address:
+From the Mac development machine, check that the CLI can reach the Mac agent:
 
 ```bash
 wendy --device {hostname}:50051 device info --json
 ```
 
-Replace `{hostname}` with the Mac target's hostname or IP address.
+Replace `{hostname}` with the Mac target's hostname or IP address. Use `localhost` if the CLI and agent are on the same Mac.
 
 ## Set the Mac as Your Default Device
 
 Once the CLI can connect, set the Mac target as your default Wendy device:
-
-```bash
-wendy device set-default localhost:50051
-```
-
-For a remote Mac target, use its hostname or IP address instead:
 
 ```bash
 wendy device set-default {hostname}:50051
@@ -83,46 +69,30 @@ wendy device set-default {hostname}:50051
 From a native macOS app project configured for a Darwin target, run:
 
 ```bash
-wendy run --device localhost:50051
-```
-
-For a remote Mac target, pass that target explicitly:
-
-```bash
 wendy run --device {hostname}:50051
 ```
 
 The CLI builds the app on the Mac development machine, syncs the build output to Wendy Agent for Mac, and starts it as a native macOS process. These apps currently run natively on macOS, not inside a Linux-style container.
 
-## Beta Support Matrix
+## What Works in the Mac Beta
 
-Wendy for Mac beta is intentionally smaller than WendyOS on Raspberry Pi or NVIDIA Jetson. macOS does not currently provide the same app containerization path that Wendy Agent uses on Linux, so apps run as native macOS processes rather than Linux containers.
+Wendy for Mac is focused on native macOS app deployment first. Apps run as regular macOS processes, not Linux containers.
 
-Use this matrix as the current beta contract. Unknown items are called out explicitly instead of implied as supported.
+### Should work
 
-| Area | Beta status | Notes |
-| --- | --- | --- |
-| Apple Silicon Mac targets | Supported | Requires an Apple Silicon Mac running macOS 15 or later. Intel Macs are not supported. |
-| WendyAgentMac menu bar app | Supported | The agent runs as a macOS menu bar app. Confirm the menu bar item is present after launch. |
-| CLI connection by explicit address | Supported | `wendy --device localhost:50051 device info --json` works when the CLI and agent are on the same Mac. Remote Mac targets can be addressed by hostname or IP address on the local network. |
-| Default device selection | Supported | `wendy device set-default localhost:50051` can make the Mac agent the default target. |
-| Discovery and interactive device picker | Unknown | Explicit `--device` and default-device flows are the recommended beta paths. Discovery and picker behavior still need a dedicated Mac verification pass. |
-| Native macOS app deployment with `wendy run` | Supported | The CLI builds Darwin apps on the Mac development machine, syncs build output to the Mac agent, and starts the app as a native macOS process. These apps do not run in Linux containers. |
-| SwiftPM native macOS apps | Supported | A minimal SwiftPM executable with `platform: "darwin"` has been manually verified. |
-| Xcode project deployment | Limited | The CLI has a macOS Xcode build-and-sync path, but Xcode projects still need a dedicated beta verification pass before they become the recommended path. |
-| Native app lifecycle commands | Limited | `wendy run` can start native macOS processes. Standalone app lifecycle commands such as list, start, stop, and remove need more Mac-specific verification. |
-| Logs, dashboard, and telemetry | Unknown | `wendy run`, `wendy device logs`, dashboards, and telemetry streams need a dedicated Mac beta verification pass. |
-| Wi-Fi management | Unsupported | Wendy target Wi-Fi APIs are not available through Wendy Agent for Mac in the initial beta. |
-| Bluetooth control | Unsupported | Wendy Bluetooth APIs are not available through Wendy Agent for Mac in the initial beta. |
-| Audio APIs | Unsupported | Wendy audio APIs are not available through Wendy Agent for Mac in the initial beta. |
-| Camera and video APIs | Unsupported | Wendy camera/video APIs are not available through Wendy Agent for Mac in the initial beta. |
-| GPU and hardware APIs | Unsupported | Wendy GPU, USB, GPIO, I2C, and general hardware APIs are not available through Wendy Agent for Mac in the initial beta. |
-| WendyOS OTA updates | Unsupported | `wendy os update` is for WendyOS OTA targets, not macOS hosts. Update macOS and WendyAgentMac through their normal macOS installation/update path. |
-| MCP workflows | Unknown | The MCP server can be installed on macOS development machines, but Mac-agent-specific MCP tool behavior still needs an audit. Use the CLI commands in this page as the beta source of truth. |
-| Dockerfile, Compose, and Linux containers on Mac | Planned | Linux-container deployment to Mac targets is not available in the initial beta. Future virtualized Linux containers are intended for self-contained services such as databases, queues, and web workers, not hardware access. |
-| Install and docs | Supported | Homebrew cask and release-zip installation are documented for Apple Silicon Macs. Troubleshooting, reset, and uninstall docs will expand during beta. |
+- Apple Silicon Mac targets running macOS 15 or later.
+- Installing WendyAgentMac with Homebrew or the release zip.
+- Running WendyAgentMac as a menu bar app.
+- Connecting from the Wendy CLI with an explicit `{hostname}:50051` address.
+- Setting the Mac as your default Wendy device.
+- Deploying native SwiftPM macOS apps with `wendy run` and `platform: "darwin"`.
 
-Unsupported features should either be hidden, clearly marked as unsupported, or fail with an actionable unsupported message.
+### Not supported in this beta
+
+- Intel Macs.
+- Linux-container deployment to Mac targets, including Dockerfile and Compose projects.
+- Wendy hardware APIs on the Mac agent, including Wi-Fi management, Bluetooth, audio, camera/video, GPU, USB, GPIO, and I2C.
+- WendyOS OTA updates with `wendy os update`. Update macOS and WendyAgentMac through their normal macOS installation/update path.
 
 ## Troubleshooting
 
@@ -132,13 +102,12 @@ If the CLI cannot connect:
 2. Run the command with an explicit device address:
 
    ```bash
-   wendy --device localhost:50051 device info --json
+   wendy --device {hostname}:50051 device info --json
    ```
 
-3. If the agent is on another Mac, use that Mac's hostname or IP address instead of `localhost`.
-4. Quit and reopen Wendy Agent from the menu bar.
-5. If you installed both stable and nightly builds, quit both apps and open only the one you want to test.
+3. Quit and reopen Wendy Agent from the menu bar.
+4. If you installed both stable and nightly builds, quit both apps and open only the one you want to test.
 
 ## Next Steps
 
-Once the Mac target is reachable, deploy a native macOS app with `wendy run`. The Mac beta support matrix and smoke checklist will expand this page as more flows are verified.
+Once the Mac target is reachable, deploy a native macOS app with `wendy run`.
