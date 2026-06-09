@@ -405,7 +405,7 @@ jobs:
               for comment in comments:
                   body = comment.get("body") or ""
                   comment_id = comment.get("id")
-                  if marker in body:
+                  if body.startswith(marker):
                       if not isinstance(comment_id, int):
                           raise SystemExit(f"Unexpected comment id: {comment_id!r}")
                       print(comment_id)
