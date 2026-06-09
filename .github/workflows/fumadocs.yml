@@ -245,7 +245,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      pull-requests: write
     environment:
       name: docs
       url: ${{ needs.build.outputs.url }}
@@ -341,8 +340,46 @@ jobs:
             grep -q "WendyOS Docs" "${response_file}"
           done <<< "${DEPLOY_PATHS}"
 
+      - name: Delete expired branch previews
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          DOCS_BUCKET: wendy-docs-public
+          RETENTION_DAYS: "30"
+        run: |
+          set -euo pipefail
+
+          cutoff_epoch="$(date -u -d "${RETENTION_DAYS} days ago" +%s)"
+          listing_file="$(mktemp)"
+          delete_file="$(mktemp)"
+
+          gcloud storage ls -l --recursive "gs://${DOCS_BUCKET}/branch-*/**" \
+            --project="${GCP_PROJECT_ID}" > "${listing_file}" 2>/dev/null || true
+
+          while read -r size updated_at object_url _; do
+            [[ "${size}" =~ ^[0-9]+$ ]] || continue
+            [[ "${object_url}" == gs://* ]] || continue
+
+            object_epoch="$(date -u -d "${updated_at}" +%s 2>/dev/null || echo 0)"
+            if (( object_epoch > 0 && object_epoch < cutoff_epoch )); then
+              printf '%s\n' "${object_url}" >> "${delete_file}"
+            fi
+          done < "${listing_file}"
+
+          if [[ -s "${delete_file}" ]]; then
+            xargs -r -n 100 gcloud storage rm --quiet --project="${GCP_PROJECT_ID}" < "${delete_file}"
+          fi
+
+  comment-preview:
+    name: Comment with docs preview URL
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - deploy
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      pull-requests: write
+    steps:
       - name: Comment with docs preview URL
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ github.token }}
           DOCS_PREVIEW_URL: ${{ needs.build.outputs.url }}
@@ -376,7 +413,7 @@ jobs:
           ${marker}
           ## Docs preview
 
-          Preview this PR's docs at: ${DOCS_PREVIEW_URL}
+          Preview this PR's docs at: <${DOCS_PREVIEW_URL}>
 
           _This comment is updated automatically when the docs preview is redeployed._
           EOF
@@ -421,33 +458,4 @@ jobs:
             done
           else
             gh api --method POST "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" --input "${payload_file}"
-          fi
-
-      - name: Delete expired branch previews
-        env:
-          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-          DOCS_BUCKET: wendy-docs-public
-          RETENTION_DAYS: "30"
-        run: |
-          set -euo pipefail
-
-          cutoff_epoch="$(date -u -d "${RETENTION_DAYS} days ago" +%s)"
-          listing_file="$(mktemp)"
-          delete_file="$(mktemp)"
-
-          gcloud storage ls -l --recursive "gs://${DOCS_BUCKET}/branch-*/**" \
-            --project="${GCP_PROJECT_ID}" > "${listing_file}" 2>/dev/null || true
-
-          while read -r size updated_at object_url _; do
-            [[ "${size}" =~ ^[0-9]+$ ]] || continue
-            [[ "${object_url}" == gs://* ]] || continue
-
-            object_epoch="$(date -u -d "${updated_at}" +%s 2>/dev/null || echo 0)"
-            if (( object_epoch > 0 && object_epoch < cutoff_epoch )); then
-              printf '%s\n' "${object_url}" >> "${delete_file}"
-            fi
-          done < "${listing_file}"
-
-          if [[ -s "${delete_file}" ]]; then
-            xargs -r -n 100 gcloud storage rm --quiet --project="${GCP_PROJECT_ID}" < "${delete_file}"
           fi
