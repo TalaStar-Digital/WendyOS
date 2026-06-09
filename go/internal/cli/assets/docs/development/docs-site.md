@@ -77,7 +77,7 @@ The `.github/workflows/fumadocs.yml` workflow runs when `docs`,
 | Trigger | Behavior |
 |---|---|
 | `main` branch push | Builds and deploys a branch preview |
-| Pull request to `main` from this repository | Builds and deploys a branch preview |
+| Pull request to `main` from this repository | Builds and deploys a branch preview, then posts or updates a sticky PR comment with the preview URL. Fork PRs do not receive preview comments. |
 | Published stable release | Deploys `release-<version>/` and updates `latest/` |
 | Published prerelease/nightly | Deploys `release-nightly-<version>/` and updates `latest-nightly/` |
 | Manual dispatch (no inputs) | Builds a branch-style preview artifact without deploying |

@@ -372,10 +372,15 @@ jobs:
   comment-preview:
     name: Comment with docs preview URL
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs:
       - build
       - deploy
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.build.result == 'success' &&
+      needs.deploy.result == 'success'
     permissions:
       pull-requests: write
     steps:
@@ -405,57 +410,52 @@ jobs:
 
           tmp_dir="$(mktemp -d)"
           trap 'rm -rf "${tmp_dir}"' EXIT
-          body_file="${tmp_dir}/body.md"
           payload_file="${tmp_dir}/payload.json"
-          comments_file="${tmp_dir}/comments.json"
 
-          cat > "${body_file}" <<EOF
-          ${marker}
-          ## Docs preview
-
-          Preview this PR's docs at: <${DOCS_PREVIEW_URL}>
-
-          _This comment is updated automatically when the docs preview is redeployed._
-          EOF
-
-          python3 - "${body_file}" "${payload_file}" <<'PY'
+          MARKER="${marker}" DOCS_PREVIEW_URL="${DOCS_PREVIEW_URL}" python3 - "${payload_file}" <<'PY'
           import json
+          import os
           import pathlib
           import sys
 
-          body = pathlib.Path(sys.argv[1]).read_text()
-          pathlib.Path(sys.argv[2]).write_text(json.dumps({"body": body}))
-          PY
-
-          gh api "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate --slurp > "${comments_file}"
-          mapfile -t comment_ids < <(MARKER="${marker}" python3 - "${comments_file}" <<'PY'
-          import json
-          import os
-          import sys
-
           marker = os.environ["MARKER"]
-          with open(sys.argv[1], encoding="utf-8") as file:
-              pages = json.load(file)
-
-          for page in pages:
-              comments = page if isinstance(page, list) else [page]
-              for comment in comments:
-                  body = comment.get("body") or ""
-                  comment_id = comment.get("id")
-                  if body.startswith(marker):
-                      if not isinstance(comment_id, int):
-                          raise SystemExit(f"Unexpected comment id: {comment_id!r}")
-                      print(comment_id)
-          PY
+          preview_url = os.environ["DOCS_PREVIEW_URL"]
+          body = (
+              f"{marker}\n"
+              "## Docs preview\n\n"
+              f"Preview this PR's docs at: <{preview_url}>\n\n"
+              "_This comment is updated automatically when the docs preview is redeployed._\n"
           )
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({"body": body}))
+          PY
+
+          mapfile -t comment_ids < <(gh api "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --paginate \
+            --jq '.[] | select((.body // "") | startswith("<!-- wendy-docs-preview -->")) | .id')
+
+          for comment_id in "${comment_ids[@]}"; do
+            if ! [[ "${comment_id}" =~ ^[0-9]+$ ]]; then
+              echo "::error::Unexpected comment ID: ${comment_id}"
+              exit 1
+            fi
+          done
 
           if (( ${#comment_ids[@]} > 0 )); then
             comment_id="${comment_ids[$((${#comment_ids[@]} - 1))]}"
-            gh api --method PATCH "repos/${REPOSITORY}/issues/comments/${comment_id}" --input "${payload_file}"
+            updated_id="$(gh api --method PATCH "repos/${REPOSITORY}/issues/comments/${comment_id}" \
+              --input "${payload_file}" \
+              --jq '.id')"
+            echo "Updated docs preview comment ${updated_id}"
 
-            for stale_comment_id in "${comment_ids[@]:0:$((${#comment_ids[@]} - 1))}"; do
+            stale_count=$((${#comment_ids[@]} - 1))
+            for (( i = 0; i < stale_count; i++ )); do
+              stale_comment_id="${comment_ids[$i]}"
               gh api --method DELETE "repos/${REPOSITORY}/issues/comments/${stale_comment_id}" >/dev/null
+              echo "Deleted stale docs preview comment ${stale_comment_id}"
             done
           else
-            gh api --method POST "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" --input "${payload_file}"
+            created_id="$(gh api --method POST "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --input "${payload_file}" \
+              --jq '.id')"
+            echo "Created docs preview comment ${created_id}"
           fi
