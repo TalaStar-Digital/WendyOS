@@ -77,11 +77,15 @@ The `.github/workflows/fumadocs.yml` workflow runs when `docs`,
 | Trigger | Behavior |
 |---|---|
 | `main` branch push | Builds and deploys a branch preview |
-| Pull request to `main` from this repository | Builds and deploys a branch preview |
+| Pull request to `main` from this repository | Builds and deploys a branch preview, then posts or updates a sticky PR comment with the preview URL. Fork PRs do not receive preview comments. |
 | Published stable release | Deploys `release-<version>/` and updates `latest/` |
 | Published prerelease/nightly | Deploys `release-nightly-<version>/` and updates `latest-nightly/` |
 | Manual dispatch (no inputs) | Builds a branch-style preview artifact without deploying |
 | Manual dispatch with `release_tag` input | Deploys a release, identical to a published-release trigger. The `release_prerelease` input selects the target: `false` (default) deploys `release-<version>/` and updates `latest/`; `true` deploys `release-nightly-<version>/` and updates `latest-nightly/`. The dispatch ref must match `release_tag` (dispatch with `--ref "<release_tag>"`), otherwise the deploy fails fast so docs built from one ref are never published under a different release path. |
+
+Preview URLs are posted to same-repository PR comments and are visible to anyone
+who can read the PR. This is intentional; deploy paths are public preview paths
+and should not include sensitive information.
 
 The deploy job authenticates to GCP with Workload Identity Federation and syncs
 static files to `gs://wendy-docs-public/<deploy-path>`. Static exports include

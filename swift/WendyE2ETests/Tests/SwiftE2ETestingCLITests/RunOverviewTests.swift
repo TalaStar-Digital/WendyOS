@@ -109,7 +109,10 @@ struct `run overview` {
         #expect(markdown.contains("## Failed and flaked tests"))
         #expect(markdown.contains("### 🛑 `wendy-device-info/prints-json-device-information`"))
         #expect(markdown.contains("AI review: **Agent rejected CLI auth**"))
-        #expect(markdown.contains("### 🛑 Error Agent rejected CLI auth"))
+        #expect(markdown.contains("### 🛑 Agent rejected CLI auth"))
+        #expect(!markdown.contains("### 🛑 Error Agent rejected CLI auth"))
+        #expect(markdown.contains("The target rejected an otherwise valid authenticated request."))
+        #expect(!markdown.contains("🛑 Error: The target rejected an otherwise valid authenticated request."))
         #expect(!markdown.contains("Fail: Agent rejected CLI auth"))
     }
 }
@@ -130,7 +133,7 @@ private func writeTestReview(in testURL: URL) throws {
         "---",
         "# Agent rejected CLI auth",
         "",
-        "The target rejected an otherwise valid authenticated request.",
+        "🛑 Error: The target rejected an otherwise valid authenticated request.",
         "Recheck the agent auth state before rerunning this route.",
         "",
         "## Details",
