@@ -180,14 +180,14 @@ jobs:
             validate_deploy_path "${PATH_TO_VALIDATE}"
           done
 
-          echo "deploy_path=${DEPLOY_PATH}" >> "$GITHUB_OUTPUT"
           {
+            echo "deploy_path=${DEPLOY_PATH}"
             echo "deploy_paths<<EOF"
             printf '%s\n' "${DEPLOY_PATHS[@]}"
             echo "EOF"
+            echo "is_release_deploy=${IS_RELEASE_DEPLOY}"
+            echo "url=https://docs.wendy.dev/${DEPLOY_PATH}/"
           } >> "$GITHUB_OUTPUT"
-          echo "is_release_deploy=${IS_RELEASE_DEPLOY}" >> "$GITHUB_OUTPUT"
-          echo "url=https://docs.wendy.dev/${DEPLOY_PATH}/" >> "$GITHUB_OUTPUT"
 
       - name: Build static site exports
         env:
@@ -367,4 +367,86 @@ jobs:
 
           if [[ -s "${delete_file}" ]]; then
             xargs -r -n 100 gcloud storage rm --quiet --project="${GCP_PROJECT_ID}" < "${delete_file}"
+          fi
+
+  comment-preview:
+    name: Comment with docs preview URL
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - build
+      - deploy
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.build.result == 'success' &&
+      needs.deploy.result == 'success'
+    permissions:
+      contents: none
+      pull-requests: write
+    steps:
+      - name: Comment with docs preview URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCS_PREVIEW_URL: ${{ needs.build.outputs.url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          marker='<!-- wendy-docs-preview -->'
+
+          if ! [[ "${REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Unexpected repository value: ${REPOSITORY}"
+            exit 1
+          fi
+          if ! [[ "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Unexpected PR number: ${PR_NUMBER}"
+            exit 1
+          fi
+          # This regex is the trust boundary for needs.build.outputs.url. Keep it
+          # in sync with Compute docs path if preview URL formats change.
+          if ! [[ "${DOCS_PREVIEW_URL}" =~ ^https://docs\.wendy\.dev/[a-z0-9][a-z0-9._-]{0,200}/$ ]]; then
+            echo "::error::Unexpected docs preview URL: ${DOCS_PREVIEW_URL}"
+            exit 1
+          fi
+
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          payload_file="${tmp_dir}/payload.json"
+
+          printf -v body '%s\n## Docs preview\n\nPreview this PR'"'"'s docs at: <%s>\n\n_This comment is updated automatically when the docs preview is redeployed._\n' \
+            "${marker}" \
+            "${DOCS_PREVIEW_URL}"
+          jq -n --arg body "${body}" '{ body: $body }' > "${payload_file}"
+
+          mapfile -t comment_ids < <(gh api "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --paginate \
+            --jq '.[] | select((.body // "") | startswith("<!-- wendy-docs-preview -->")) | .id')
+
+          for comment_id in "${comment_ids[@]}"; do
+            if ! [[ "${comment_id}" =~ ^[0-9]+$ ]]; then
+              echo "::error::Unexpected comment ID: ${comment_id}"
+              exit 1
+            fi
+          done
+
+          if (( ${#comment_ids[@]} > 0 )); then
+            comment_id="${comment_ids[$((${#comment_ids[@]} - 1))]}"
+            updated_id="$(gh api --method PATCH "repos/${REPOSITORY}/issues/comments/${comment_id}" \
+              --input "${payload_file}" \
+              --jq '.id')"
+            echo "Updated docs preview comment ${updated_id}"
+
+            stale_count=$((${#comment_ids[@]} - 1))
+            for (( i = 0; i < stale_count; i++ )); do
+              stale_comment_id="${comment_ids[$i]}"
+              gh api --method DELETE "repos/${REPOSITORY}/issues/comments/${stale_comment_id}" >/dev/null
+              echo "Deleted stale docs preview comment ${stale_comment_id}"
+            done
+          else
+            created_id="$(gh api --method POST "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --input "${payload_file}" \
+              --jq '.id')"
+            echo "Created docs preview comment ${created_id}"
           fi
