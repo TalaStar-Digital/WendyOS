@@ -4,7 +4,8 @@
     "developer-machine-setup",
     "wendyos-nvidia-jetson",
     "wendyos-raspberry-pi-5",
-    "esp32",
-    "linux-wendy-agent"
+    "wendy-lite-esp32",
+    "wendy-agent-linux",
+    "wendy-agent-macos"
   ]
 }
