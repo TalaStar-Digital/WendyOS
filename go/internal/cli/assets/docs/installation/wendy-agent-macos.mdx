@@ -54,7 +54,11 @@ From the Mac development machine, check that the CLI can reach the Mac agent:
 wendy --device {hostname}:50051 device info --json
 ```
 
-Replace `{hostname}` with the Mac target's hostname or IP address.
+Replace `{hostname}` with the Mac target's hostname or IP address. Use `localhost`
+only if the CLI and agent are on the same Mac.
+
+The JSON response should report `"os": "darwin"` and
+`"cpuArchitecture": "arm64"`.
 
 ## Discovery and Device Selection
 
@@ -121,8 +125,12 @@ Wendy for Mac is focused on native macOS app deployment first. Apps run as regul
 
 - Intel Macs.
 - Linux-container deployment to Mac targets, including Dockerfile and Compose projects.
-- Wendy hardware APIs on the Mac agent, including Wi-Fi management, Bluetooth, audio, camera/video, GPU, USB, GPIO, and I2C.
-- WendyOS OTA updates with `wendy os update`. Update macOS and Wendy Agent for Mac through their normal macOS installation/update path.
+- Wendy hardware APIs on the Mac agent, including Wi-Fi management, Bluetooth,
+  audio, camera/video, GPU, USB, GPIO, and I2C. Hardware commands such as
+  `wendy --device {hostname}:50051 device hardware list` should fail with a
+  clear not-supported error.
+- WendyOS OTA updates with `wendy os update`. Update macOS and Wendy Agent for
+  Mac through their normal macOS installation/update path.
 
 Unsupported features should either be hidden, clearly marked as unsupported, or
 fail with an actionable unsupported message.

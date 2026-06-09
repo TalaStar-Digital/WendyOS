@@ -169,7 +169,7 @@ jobs:
           print(report)
 
           severities = re.findall(
-              r'^\|\s*(CRITICAL|HIGH|MEDIUM|LOW|INFORMATIONAL)\s*\|',
+              r'^\|\s*\*{0,2}(CRITICAL|HIGH|MEDIUM|LOW|INFORMATIONAL)\*{0,2}\s*\|',
               report,
               re.MULTILINE,
           )

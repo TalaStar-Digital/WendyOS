@@ -41,6 +41,9 @@ func newCameraListCmd() *cobra.Command {
 
 			resp, err := conn.VideoService.ListVideoDevices(ctx, &agentpb.ListVideoDevicesRequest{})
 			if err != nil {
+				if macErr := macOSBetaUnsupportedFeatureError(ctx, conn.AgentService, err, "Camera listing"); macErr != nil {
+					return fmt.Errorf("listing cameras: %w", macErr)
+				}
 				return fmt.Errorf("listing cameras: %w", err)
 			}
 

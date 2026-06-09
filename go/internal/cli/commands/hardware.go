@@ -80,6 +80,9 @@ func newHardwareListCmd() *cobra.Command {
 			}
 			resp, respErr := target.Agent.AgentService.ListHardwareCapabilities(ctx, req)
 			if respErr != nil {
+				if macErr := macOSBetaUnsupportedFeatureError(ctx, target.Agent.AgentService, respErr, "Hardware capability discovery"); macErr != nil {
+					return fmt.Errorf("listing hardware capabilities: %w", macErr)
+				}
 				return fmt.Errorf("listing hardware capabilities: %w", respErr)
 			}
 			caps := resp.GetCapabilities()
