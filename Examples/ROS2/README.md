@@ -28,8 +28,8 @@ vars into the container at start time:
 | `ROS_DOMAIN_ID` | `frameworks.ros2.domainId` | `42` |
 | `RMW_IMPLEMENTATION` | `frameworks.ros2.rmw` | `rmw_cyclonedds_cpp` |
 
-These are injected **after** user-supplied env vars and **before** the Wendy
-system vars (same ordering as all other Wendy env injections from WDY-1268).
+These are injected after user-supplied env and Wendy system vars. OTEL vars
+(when applicable) are injected last. OCI last-wins semantics apply throughout.
 
 You can set `frameworks.ros2` at the **top level** of `wendy.json` (applies
 to single-service apps) or **per service** inside `services.<name>.frameworks`
